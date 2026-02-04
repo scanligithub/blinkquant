@@ -1,0 +1,31 @@
+name: Daily Cluster Cold Start (03:00 CST)
+
+on:
+  schedule:
+    # 北京时间凌晨 03:00 对应 UTC 时间 19:00
+    - cron: '0 19 * * *'
+  workflow_dispatch: # 保留手动触发按钮
+
+jobs:
+  restart-nodes:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Force Push to HF Space Node ${{ matrix.node }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          cd backend
+          git init
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+          git commit -m "Daily Auto-Restart: $(date)"
+          # 强制推送将触发 HF Space 的重新构建与容器重启
+          git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main
