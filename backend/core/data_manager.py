@@ -51,13 +51,16 @@ class DataManager:
             print(f"Sector Data Loaded. Rows: {len(self.df_sector_daily)}")
 
         # 3. 加载成分股映射 (Replicated)
-        # 假设文件名为 sector_constituents_2026.parquet 或类似，取最新的一个
         mapping_files = sorted([f for f in all_files if "constituents" in f and f.endswith(".parquet")])
         if mapping_files:
             path = hf_hub_download(repo_id=self.repo_id, filename=mapping_files[-1], repo_type="dataset", token=self.hf_token)
-            # 映射表通常包含：code (个股), sector_code (板块代码)
-            self.df_mapping = pl.read_parquet(path).select(["code", "sector_code"])
-            print("Stock-Sector Mapping Loaded.")
+            
+            # 【修正点】：将 stock_code 重命名为 code，确保与个股行情表的字段名一致
+            self.df_mapping = pl.read_parquet(path).select([
+                pl.col("stock_code").alias("code"), 
+                pl.col("sector_code")
+            ])
+            print(f"Stock-Sector Mapping Loaded. Count: {len(self.df_mapping)}")
 
         # 4. 执行全量重采样
         self._resample_all()
