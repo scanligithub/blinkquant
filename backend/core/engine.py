@@ -1,6 +1,7 @@
 import polars as pl
 from .data_manager import data_manager
 from .security import blink_parser
+from .data_types import AShareDataSchema
 
 class SelectionEngine:
     def execute_selector(self, formula: str, timeframe: str = 'D'):
@@ -12,45 +13,60 @@ class SelectionEngine:
         else:
             df_stock, df_sect = data_manager.df_daily, data_manager.df_sector_daily
 
-        if df_stock is None: return []
+        if df_stock is None: 
+            return {"error": "Stock data not loaded"}
 
-        # 2. 转换为 LazyFrame 以获得最佳性能并允许 collect()
+        # 2. 转换为 LazyFrame 以获得最佳性能
         lf_stock = df_stock.lazy()
         
-        # 3. 关联板块数据 (如果 mapping 存在)
+        # 3. 动态关联板块数据
         if data_manager.df_mapping is not None and df_sect is not None:
-            sect_cols = df_sect.lazy().select([
+            # 【核心修复】：动态构建板块选择列，防止因缺失 pctChg 导致崩溃
+            sect_select_cols = [
                 pl.col("date"),
                 pl.col("code").alias("sector_code"),
                 pl.col("close").alias("s_close"),
                 pl.col("open").alias("s_open"),
-                pl.col("pctChg").alias("s_pctChg")
-            ])
+                pl.col("high").alias("s_high"),
+                pl.col("low").alias("s_low"),
+            ]
             
+            # 只有当板块数据中有涨跌幅时才加入
+            if "pctChg" in df_sect.columns:
+                sect_select_cols.append(pl.col("pctChg").alias("s_pctChg"))
+            else:
+                # 容错：如果缺失，则用 0 或 null 填充，防止 AST 解析时字段不存在报错
+                sect_select_cols.append(pl.lit(None).alias("s_pctChg"))
+
+            sect_cols_lazy = df_sect.lazy().select(sect_select_cols)
+            
+            # 执行关联
             lf_stock = (
                 lf_stock.join(data_manager.df_mapping.lazy(), on="code", how="left")
-                .join(sect_cols, on=["date", "sector_code"], how="left")
+                .join(sect_cols_lazy, on=["date", "sector_code"], how="left")
             )
 
-        # 4. 【核心逻辑】：先在全量时间轴上计算指标
+        # 4. 执行公式计算
         try:
             expr = blink_parser.parse_expression(formula)
-            # 将表达式结果存入临时列 "_signal"
+            # 在全量时间序列上计算指标 (如 MA60)
             lf_stock = lf_stock.with_columns(expr.alias("_signal"))
             
-            # 5. 【最后过滤】：只取最后一天且信号为 True 的股票
+            # 5. 获取最新交易日并过滤信号
             last_date = df_stock.select(pl.col("date").max()).item()
             
             result_df = (
                 lf_stock.filter(pl.col("date") == last_date)
                 .filter(pl.col("_signal") == True)
                 .select("code")
-                .collect() # 此时执行计算
+                .collect() # 此时正式执行并行计算
             )
+            
             return result_df["code"].to_list()
             
         except Exception as e:
-            print(f"Engine Error: {str(e)}") # 后端打印详细错误
+            # 在后端日志打印具体错误，方便调试
+            print(f"Engine Selection Error: {str(e)}")
             return {"error": str(e)}
 
 selection_engine = SelectionEngine()
