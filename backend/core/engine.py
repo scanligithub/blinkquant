@@ -12,35 +12,45 @@ class SelectionEngine:
         else:
             df_stock, df_sect = data_manager.df_daily, data_manager.df_sector_daily
 
-        if df_stock is None or data_manager.df_mapping is None:
-            return []
+        if df_stock is None: return []
 
-        # 2. 准备板块数据 (重命名列以防冲突)
-        sect_cols = df_sect.select([
-            pl.col("date"),
-            pl.col("code").alias("sector_code"),
-            pl.col("close").alias("s_close"),
-            pl.col("open").alias("s_open"),
-            pl.col("pctChg").alias("s_pctChg")
-        ])
-
-        # 3. 关联数据: 个股 -> 映射表 -> 板块指数
-        # 仅取最后一天数据进行选股以节省内存
-        last_date = df_stock.select(pl.col("date").max()).item()
+        # 2. 转换为 LazyFrame 以获得最佳性能并允许 collect()
+        lf_stock = df_stock.lazy()
         
-        # 在 engine.py 中的关联逻辑 (确认代码如下即可，无需再次修改)
-        combined_df = (
-            df_stock.filter(pl.col("date") == last_date)
-            .join(data_manager.df_mapping, on="code", how="left") # 这里的 code 现在能匹配上了
-            .join(sect_cols.filter(pl.col("date") == last_date), on=["date", "sector_code"], how="left")
-        )
+        # 3. 关联板块数据 (如果 mapping 存在)
+        if data_manager.df_mapping is not None and df_sect is not None:
+            sect_cols = df_sect.lazy().select([
+                pl.col("date"),
+                pl.col("code").alias("sector_code"),
+                pl.col("close").alias("s_close"),
+                pl.col("open").alias("s_open"),
+                pl.col("pctChg").alias("s_pctChg")
+            ])
+            
+            lf_stock = (
+                lf_stock.join(data_manager.df_mapping.lazy(), on="code", how="left")
+                .join(sect_cols, on=["date", "sector_code"], how="left")
+            )
 
-        # 4. 执行选股公式
+        # 4. 【核心逻辑】：先在全量时间轴上计算指标
         try:
             expr = blink_parser.parse_expression(formula)
-            result = combined_df.filter(expr).select("code").collect()
-            return result["code"].to_list()
+            # 将表达式结果存入临时列 "_signal"
+            lf_stock = lf_stock.with_columns(expr.alias("_signal"))
+            
+            # 5. 【最后过滤】：只取最后一天且信号为 True 的股票
+            last_date = df_stock.select(pl.col("date").max()).item()
+            
+            result_df = (
+                lf_stock.filter(pl.col("date") == last_date)
+                .filter(pl.col("_signal") == True)
+                .select("code")
+                .collect() # 此时执行计算
+            )
+            return result_df["code"].to_list()
+            
         except Exception as e:
+            print(f"Engine Error: {str(e)}") # 后端打印详细错误
             return {"error": str(e)}
 
 selection_engine = SelectionEngine()
