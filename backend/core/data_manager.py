@@ -10,67 +10,77 @@ class DataManager:
         self.hf_token = os.getenv("HF_TOKEN")
         self.repo_id = "scanli/stocka-data"
 
-        # 内存存储
         self.df_daily = None
         self.df_weekly = None
         self.df_monthly = None
-        
         self.df_sector_daily = None
         self.df_sector_weekly = None
         self.df_sector_monthly = None
-        
-        # 个股与板块的映射 (stock_code -> sector_code)
         self.df_mapping = None
+
+    def _clean_numeric_columns(self, df):
+        """强制转换数值列，处理可能的字符串脏数据"""
+        numeric_cols = [
+            AShareDataSchema.OPEN, AShareDataSchema.HIGH, AShareDataSchema.LOW, 
+            AShareDataSchema.CLOSE, AShareDataSchema.VOLUME, AShareDataSchema.AMOUNT,
+            AShareDataSchema.TURN, AShareDataSchema.PCT_CHG
+        ]
+        # 只转换存在于当前 df 中的列
+        existing_cols = [c for c in numeric_cols if c in df.columns]
+        return df.with_columns([
+            pl.col(c).cast(pl.Float64, strict=False) for c in existing_cols
+        ])
 
     def load_data(self):
         print(f"Node {self.node_index}: Starting data loading sequence...")
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         
-        # 1. 加载个股数据 (分片)
+        # 1. 加载个股数据
         stock_files = sorted([f for f in all_files if f.startswith("stock_kline_") and f.endswith(".parquet")])
         daily_dfs = []
         for file in stock_files:
             path = hf_hub_download(repo_id=self.repo_id, filename=file, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
             lf = pl.scan_parquet(path)
-            # 分片过滤逻辑
             lf = lf.filter((pl.col(AShareDataSchema.CODE).hash() % self.total_nodes) == self.node_index)
             daily_dfs.append(lf.collect())
             
         if daily_dfs:
-            self.df_daily = pl.concat(daily_dfs).with_columns(pl.col(AShareDataSchema.DATE).str.to_date("%Y-%m-%d"))
+            self.df_daily = pl.concat(daily_dfs).with_columns(
+                pl.col(AShareDataSchema.DATE).str.to_date("%Y-%m-%d")
+            )
+            self.df_daily = self._clean_numeric_columns(self.df_daily)
             print(f"Stock Data Loaded. Rows: {len(self.df_daily)}")
 
-        # 2. 加载板块数据 (全量复制)
+        # 2. 加载板块数据
         sector_files = sorted([f for f in all_files if f.startswith("sector_kline_") and f.endswith(".parquet")])
         s_dfs = []
         for file in sector_files:
             path = hf_hub_download(repo_id=self.repo_id, filename=file, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
             s_dfs.append(pl.read_parquet(path))
         if s_dfs:
-            self.df_sector_daily = pl.concat(s_dfs).with_columns(pl.col(AShareDataSchema.DATE).str.to_date("%Y-%m-%d"))
+            self.df_sector_daily = pl.concat(s_dfs).with_columns(
+                pl.col(AShareDataSchema.DATE).str.to_date("%Y-%m-%d")
+            )
+            self.df_sector_daily = self._clean_numeric_columns(self.df_sector_daily)
             print(f"Sector Data Loaded. Rows: {len(self.df_sector_daily)}")
 
-        # 3. 加载成分股映射 (Replicated)
+        # 3. 加载映射表
         mapping_files = sorted([f for f in all_files if "constituents" in f and f.endswith(".parquet")])
         if mapping_files:
             path = hf_hub_download(repo_id=self.repo_id, filename=mapping_files[-1], repo_type="dataset", token=self.hf_token)
-            
-            # 【修正点】：将 stock_code 重命名为 code，确保与个股行情表的字段名一致
             self.df_mapping = pl.read_parquet(path).select([
                 pl.col("stock_code").alias("code"), 
                 pl.col("sector_code")
             ])
-            print(f"Stock-Sector Mapping Loaded. Count: {len(self.df_mapping)}")
+            print("Stock-Sector Mapping Loaded.")
 
-        # 4. 执行全量重采样
+        # 4. 执行重采样
         self._resample_all()
 
     def _resample_all(self):
-        """动态生成重采样规则，解决个股与板块字段不统一的问题"""
-        print("Resampling Weekly/Monthly data for Stocks and Sectors...")
+        print("Resampling Weekly/Monthly data...")
         
-        def get_dynamic_agg_rules(df):
-            # 1. 基础必选列
+        def get_rules(df):
             rules = [
                 pl.col(AShareDataSchema.OPEN).first(),
                 pl.col(AShareDataSchema.HIGH).max(),
@@ -79,35 +89,19 @@ class DataManager:
                 pl.col(AShareDataSchema.VOLUME).sum(),
                 pl.col(AShareDataSchema.AMOUNT).sum(),
             ]
-            # 2. 可选列：仅当 DataFrame 中存在时才加入聚合
-            if AShareDataSchema.PCT_CHG in df.columns:
-                rules.append(pl.col(AShareDataSchema.PCT_CHG).sum())
-            if AShareDataSchema.TURN in df.columns:
-                rules.append(pl.col(AShareDataSchema.TURN).sum())
+            if AShareDataSchema.PCT_CHG in df.columns: rules.append(pl.col(AShareDataSchema.PCT_CHG).sum())
+            if AShareDataSchema.TURN in df.columns: rules.append(pl.col(AShareDataSchema.TURN).sum())
             return rules
 
-        # --- 个股重采样 ---
         if self.df_daily is not None:
-            rules = get_dynamic_agg_rules(self.df_daily)
-            self.df_weekly = self.df_daily.sort("date").group_by_dynamic(
-                "date", every="1w", by="code"
-            ).agg(rules)
-            
-            self.df_monthly = self.df_daily.sort("date").group_by_dynamic(
-                "date", every="1mo", by="code"
-            ).agg(rules)
+            rules = get_rules(self.df_daily)
+            self.df_weekly = self.df_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(rules)
+            self.df_monthly = self.df_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(rules)
 
-        # --- 板块重采样 ---
         if self.df_sector_daily is not None:
-            rules = get_dynamic_agg_rules(self.df_sector_daily)
-            self.df_sector_weekly = self.df_sector_daily.sort("date").group_by_dynamic(
-                "date", every="1w", by="code"
-            ).agg(rules)
-            
-            self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic(
-                "date", every="1mo", by="code"
-            ).agg(rules)
-            
+            rules = get_rules(self.df_sector_daily)
+            self.df_sector_weekly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(rules)
+            self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(rules)
         print("Resampling Complete.")
 
 data_manager = DataManager()
