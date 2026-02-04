@@ -1,0 +1,40 @@
+name: Deploy Backend to HF Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Node 0 (scanli-blinkquant-node1)
+        uses: appleboy/git-push-action@master
+        with:
+          directory: backend
+          repository: https://scanli:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/scanli/blinkquant-node1
+          branch: main
+          force: true
+
+      - name: Push to Node 1 (scanli-blinkquant-node2)
+        uses: appleboy/git-push-action@master
+        with:
+          directory: backend
+          repository: https://scanli:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/scanli/blinkquant-node2
+          branch: main
+          force: true
+
+      - name: Push to Node 2 (scanli-blinkquant-node3)
+        uses: appleboy/git-push-action@master
+        with:
+          directory: backend
+          repository: https://scanli:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/scanli/blinkquant-node3
+          branch: main
+          force: true
