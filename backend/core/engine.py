@@ -1,41 +1,45 @@
 import polars as pl
 from .data_manager import data_manager
 from .security import blink_parser
-from .data_types import AShareDataSchema
 
 class SelectionEngine:
-    """
-    负责执行选股逻辑
-    """
     def execute_selector(self, formula: str, timeframe: str = 'D'):
-        # 1. 获取对应周期的数据
+        # 1. 确定数据周期
         if timeframe == 'W':
-            df = data_manager.df_weekly
+            df_stock, df_sect = data_manager.df_weekly, data_manager.df_sector_weekly
         elif timeframe == 'M':
-            df = data_manager.df_monthly
+            df_stock, df_sect = data_manager.df_monthly, data_manager.df_sector_monthly
         else:
-            df = data_manager.df_daily
+            df_stock, df_sect = data_manager.df_daily, data_manager.df_sector_daily
 
-        if df is None:
+        if df_stock is None or data_manager.df_mapping is None:
             return []
 
-        # 2. 解析公式为 Polars 表达式
-        try:
-            expr = blink_parser.parse_expression(formula)
-        except Exception as e:
-            return {"error": str(e)}
+        # 2. 准备板块数据 (重命名列以防冲突)
+        sect_cols = df_sect.select([
+            pl.col("date"),
+            pl.col("code").alias("sector_code"),
+            pl.col("close").alias("s_close"),
+            pl.col("open").alias("s_open"),
+            pl.col("pctChg").alias("s_pctChg")
+        ])
 
-        # 3. 执行过滤 (分布式节点只处理自己的分片)
-        # 我们取最后一天的数据进行选股
-        last_date = df.select(pl.col(AShareDataSchema.DATE).max()).item()
+        # 3. 关联数据: 个股 -> 映射表 -> 板块指数
+        # 仅取最后一天数据进行选股以节省内存
+        last_date = df_stock.select(pl.col("date").max()).item()
         
-        result = (
-            df.filter(pl.col(AShareDataSchema.DATE) == last_date)
-            .filter(expr)
-            .select(pl.col(AShareDataSchema.CODE))
-            .collect() # 执行计算
+        combined_df = (
+            df_stock.filter(pl.col("date") == last_date)
+            .join(data_manager.df_mapping, on="code", how="left")
+            .join(sect_cols.filter(pl.col("date") == last_date), on=["date", "sector_code"], how="left")
         )
 
-        return result[AShareDataSchema.CODE].to_list()
+        # 4. 执行选股公式
+        try:
+            expr = blink_parser.parse_expression(formula)
+            result = combined_df.filter(expr).select("code").collect()
+            return result["code"].to_list()
+        except Exception as e:
+            return {"error": str(e)}
 
 selection_engine = SelectionEngine()
