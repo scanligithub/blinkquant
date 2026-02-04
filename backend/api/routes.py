@@ -103,3 +103,18 @@ def health_check():
     if data_manager.df_daily is not None:
         return {"status": "healthy"}
     return {"status": "loading"}
+
+@router.get("/peek")
+def peek_data():
+    """窥探内存中前 10 条数据，确认 code 格式"""
+    if data_manager.df_daily is None:
+        return {"error": "data not loaded"}
+    
+    # 采样前 5 行数据看一眼
+    sample = data_manager.df_daily.head(5).to_dicts()
+    return {
+        "sample_data": sample,
+        "total_rows": len(data_manager.df_daily)
+    }
+
+
