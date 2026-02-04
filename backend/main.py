@@ -1,36 +1,18 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
+from api.routes import router as api_router
 from core.data_manager import data_manager
-from core.engine import selection_engine
-import os, psutil
+import os
 
-app = FastAPI()
+app = FastAPI(title="BlinkQuant Node")
 
-class SelectionRequest(BaseModel):
-    formula: str
-    timeframe: str = "D"
+# 注册路由 (这将开启 /api/v1/select, /api/v1/kline 等)
+app.include_router(api_router)
 
 @app.on_event("startup")
 async def startup_event():
+    print(f"Booting Node {os.getenv('NODE_INDEX')}...")
     data_manager.load_data()
 
 @app.get("/")
-def status():
-    mem = psutil.Process(os.getpid()).memory_info().rss / (1024**3)
-    return {
-        "node": os.getenv("NODE_INDEX"),
-        "mem_gb": round(mem, 2),
-        "stock_rows": len(data_manager.df_daily) if data_manager.df_daily is not None else 0,
-        "mapping_ok": data_manager.df_mapping is not None
-    }
-
-@app.post("/api/v1/select")
-async def select(req: SelectionRequest):
-    res = selection_engine.execute_selector(req.formula, req.timeframe)
-    if isinstance(res, dict) and "error" in res:
-        raise HTTPException(status_code=400, detail=res["error"])
-    return {"results": res, "count": len(res)}
-
-@app.get("/health")
-def health():
-    return {"status": "healthy" if data_manager.df_daily is not None else "loading"}
+def index():
+    return {"message": "BlinkQuant Compute Node Online", "node": os.getenv("NODE_INDEX")}
