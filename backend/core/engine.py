@@ -28,9 +28,10 @@ class SelectionEngine:
         # 仅取最后一天数据进行选股以节省内存
         last_date = df_stock.select(pl.col("date").max()).item()
         
+        # 在 engine.py 中的关联逻辑 (确认代码如下即可，无需再次修改)
         combined_df = (
             df_stock.filter(pl.col("date") == last_date)
-            .join(data_manager.df_mapping, on="code", how="left")
+            .join(data_manager.df_mapping, on="code", how="left") # 这里的 code 现在能匹配上了
             .join(sect_cols.filter(pl.col("date") == last_date), on=["date", "sector_code"], how="left")
         )
 
