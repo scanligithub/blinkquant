@@ -66,24 +66,48 @@ class DataManager:
         self._resample_all()
 
     def _resample_all(self):
+        """动态生成重采样规则，解决个股与板块字段不统一的问题"""
         print("Resampling Weekly/Monthly data for Stocks and Sectors...")
-        agg_rules = [
-            pl.col(AShareDataSchema.OPEN).first(),
-            pl.col(AShareDataSchema.HIGH).max(),
-            pl.col(AShareDataSchema.LOW).min(),
-            pl.col(AShareDataSchema.CLOSE).last(),
-            pl.col(AShareDataSchema.VOLUME).sum(),
-            pl.col(AShareDataSchema.AMOUNT).sum(),
-            pl.col(AShareDataSchema.PCT_CHG).sum(),
-        ]
+        
+        def get_dynamic_agg_rules(df):
+            # 1. 基础必选列
+            rules = [
+                pl.col(AShareDataSchema.OPEN).first(),
+                pl.col(AShareDataSchema.HIGH).max(),
+                pl.col(AShareDataSchema.LOW).min(),
+                pl.col(AShareDataSchema.CLOSE).last(),
+                pl.col(AShareDataSchema.VOLUME).sum(),
+                pl.col(AShareDataSchema.AMOUNT).sum(),
+            ]
+            # 2. 可选列：仅当 DataFrame 中存在时才加入聚合
+            if AShareDataSchema.PCT_CHG in df.columns:
+                rules.append(pl.col(AShareDataSchema.PCT_CHG).sum())
+            if AShareDataSchema.TURN in df.columns:
+                rules.append(pl.col(AShareDataSchema.TURN).sum())
+            return rules
 
+        # --- 个股重采样 ---
         if self.df_daily is not None:
-            self.df_weekly = self.df_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(agg_rules)
-            self.df_monthly = self.df_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(agg_rules)
+            rules = get_dynamic_agg_rules(self.df_daily)
+            self.df_weekly = self.df_daily.sort("date").group_by_dynamic(
+                "date", every="1w", by="code"
+            ).agg(rules)
+            
+            self.df_monthly = self.df_daily.sort("date").group_by_dynamic(
+                "date", every="1mo", by="code"
+            ).agg(rules)
 
+        # --- 板块重采样 ---
         if self.df_sector_daily is not None:
-            self.df_sector_weekly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(agg_rules)
-            self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(agg_rules)
+            rules = get_dynamic_agg_rules(self.df_sector_daily)
+            self.df_sector_weekly = self.df_sector_daily.sort("date").group_by_dynamic(
+                "date", every="1w", by="code"
+            ).agg(rules)
+            
+            self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic(
+                "date", every="1mo", by="code"
+            ).agg(rules)
+            
         print("Resampling Complete.")
 
 data_manager = DataManager()
