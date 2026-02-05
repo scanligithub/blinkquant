@@ -10,15 +10,15 @@ from core.engine import selection_engine
 
 router = APIRouter(prefix="/api/v1")
 
-# 正则表达式：用于从公式中提取指标，例如 MA(CLOSE, 20)
 METRIC_REGEX = re.compile(r'(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)', re.IGNORECASE)
 
 class SelectionRequest(BaseModel):
     formula: str
     timeframe: str = "D"
 
-def report_metrics_usage(formula: str):
-    """后台任务：将公式中的指标上报至 Vercel Postgres 计数"""
+# 修改函数签名，接收 timeframe
+def report_metrics_usage(formula: str, timeframe: str):
+    """后台任务：上报指标计数，包含周期后缀"""
     if not data_manager.postgres_url:
         return
     
@@ -26,12 +26,18 @@ def report_metrics_usage(formula: str):
     if not matches:
         return
 
+    # 关键修复：根据传入的 timeframe 生成后缀
+    suffix = ""
+    if timeframe == 'W': suffix = "_W"
+    elif timeframe == 'M': suffix = "_M"
+
     try:
         conn = psycopg2.connect(data_manager.postgres_url)
         cur = conn.cursor()
         for func, field, param in matches:
-            metric_key = f"{func.upper()}_{field.upper()}_{param}"
-            # UPSERT: 存在则自增，不存在则插入
+            # 生成带后缀的 Key，如 MA_CLOSE_20_M
+            metric_key = f"{func.upper()}_{field.upper()}_{param}{suffix}"
+            
             cur.execute("""
                 INSERT INTO metrics_stats (metric_key, usage_count, last_used)
                 VALUES (%s, 1, CURRENT_TIMESTAMP)
@@ -54,10 +60,12 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
     if isinstance(results, dict) and "error" in results:
         raise HTTPException(status_code=400, detail=results["error"])
     
-    # 选股成功后，异步上报指标使用热度
-    background_tasks.add_task(report_metrics_usage, req.formula)
+    # 关键修复：将 req.timeframe 传递给后台任务
+    background_tasks.add_task(report_metrics_usage, req.formula, req.timeframe)
     
     return {"node": os.getenv("NODE_INDEX"), "count": len(results), "results": results}
+
+# ... (其他接口保持不变)
 
 @router.get("/kline")
 def get_kline(code: str, timeframe: str = "D"):
