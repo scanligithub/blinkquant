@@ -6,3 +6,4 @@ huggingface-hub>=0.19.0
 python-multipart
 zstandard
 psutil
+psycopg2-binary
