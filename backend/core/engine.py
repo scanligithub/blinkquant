@@ -39,42 +39,44 @@ class SelectionEngine:
         
         lf = df.lazy()
 
-        # 2. 关联板块行情 (Safe Join 模式)
+        # 2. 关联板块行情 (防御性改名)
         if data_manager.df_mapping is not None and s_df is not None:
             try:
-                # 准备板块表的 LazyFrame
-                # 我们不再进行前置 select 过滤，而是直接 rename。如果列不存在，Polars 会在这里报错。
-                # 通过 alias 确保列名符合 AST 引擎的期望
-                s_lazy = s_df.lazy().select([
+                # 建立一个我们希望获取的列名清单
+                sector_exprs = [
                     pl.col("date"),
                     pl.col("code").alias("sector_code"),
                     pl.col("close").alias("s_close"),
-                    pl.col("pctChg").alias("s_pctChg")
-                ])
-
-                # 先关联映射表 (code -> sector_code)
-                lf = lf.join(data_manager.df_mapping.lazy(), on="code", how="left")
+                ]
                 
-                # 再关联板块行情 (date, sector_code)
-                lf = lf.join(s_lazy, on=["date", "sector_code"], how="left")
+                # 只有当数据源里确实有 pctChg 时，才尝试加载 s_pctChg
+                if "pctChg" in s_df.columns:
+                    sector_exprs.append(pl.col("pctChg").alias("s_pctChg"))
+                
+                s_lazy = s_df.lazy().select(sector_exprs)
+
+                # 联接映射表和板块行情
+                lf = (lf.join(data_manager.df_mapping.lazy(), on="code", how="left")
+                        .join(s_lazy, on=["date", "sector_code"], how="left"))
             except Exception as join_err:
-                logger.warning(f"Join sector data skipped due to schema mismatch: {join_err}")
-                # 如果关联失败，我们继续执行，只是公式里若引用 S_CLOSE 会报错，这比直接挂掉好。
+                logger.warning(f"Sector join failed (skipping): {join_err}")
 
         try:
             # 3. 解析 AST 公式
             expr = blink_parser.parse_expression(formula)
             
             # 4. 执行信号计算
-            # 增加 fill_null(False) 是为了防止指标计算不足(如MA250)产生的 null 导致过滤失败
             lf = lf.with_columns(expr.alias("_signal"))
             
-            # 获取当前数据的最后一天
-            # 注意：如果板块数据和个股数据最后一天不一致，join 结果会是 null
+            # 获取当前分片的最后一天
+            # 注意：如果 df 为空会报错，这里增加判断
+            if df.is_empty():
+                return []
+                
             last_date = df.select(pl.col("date").max()).item()
             
             # 执行过滤并收集结果
-            # 添加 .fill_null(False) 确保信号列没有空值
+            # 使用 fill_null(False) 解决指标计算不足时的空值问题
             result_df = (lf.filter(pl.col("date") == last_date)
                          .filter(pl.col("_signal").fill_null(False) == True)
                          .select("code")
