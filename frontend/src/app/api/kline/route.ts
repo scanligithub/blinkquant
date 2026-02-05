@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-const NODE_URLS = [
+const NODES = [
   'https://scanli-blinkquant-node1.hf.space/api/v1/kline',
   'https://scanli-blinkquant-node2.hf.space/api/v1/kline',
   'https://scanli-blinkquant-node3.hf.space/api/v1/kline'
 ];
 
-// 必须与 Python 端的简单 hash 逻辑匹配 (或者直接通过 Promise.any 并发尝试)
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code');
@@ -16,19 +15,38 @@ export async function GET(req: NextRequest) {
 
   if (!code) return NextResponse.json({ error: 'Code is required' }, { status: 400 });
 
-  // 策略：并发请求所有节点，谁先返回 200 就用谁 (最简单有效的分布式路由)
   try {
-    const fetchPromises = NODE_URLS.map(url => 
-      fetch(`${url}?code=${code}&timeframe=${timeframe}`, { signal: AbortSignal.timeout(5000) })
-        .then(res => {
-          if (res.ok) return res.json();
-          throw new Error('Not found');
-        })
+    // 1. 竞速路由 (Smart Routing)
+    // 同时询问三个节点，谁先返回 200 OK 且包含数据，就采用谁的结果
+    const data = await Promise.any(
+      NODES.map(async (url) => {
+        const res = await fetch(`${url}?code=${code}&timeframe=${timeframe}`, {
+           // 设置 5秒 超时，快速失败
+           signal: AbortSignal.timeout(5000) 
+        });
+        
+        if (!res.ok) throw new Error('Not on this node');
+        
+        const json = await res.json();
+        // 确保数据有效
+        if (!json.data || (Array.isArray(json.data) && json.data.length === 0)) {
+            throw new Error('Empty data');
+        }
+        return json;
+      })
     );
 
-    const data = await Promise.any(fetchPromises);
-    return NextResponse.json(data);
+    // 2. 添加 CDN 缓存头 (Cache-Control)
+    // s-maxage=3600: 在 Vercel 边缘节点缓存 1 小时
+    // stale-while-revalidate=60: 允许短暂返回旧数据以保持极致速度
+    return NextResponse.json(data, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=60'
+      }
+    });
+
   } catch (err) {
-    return NextResponse.json({ error: 'Stock not found across cluster' }, { status: 404 });
+    // 所有节点都失败（Promise.any 抛出 AggregateError）
+    return NextResponse.json({ error: 'Stock not found in cluster' }, { status: 404 });
   }
 }
