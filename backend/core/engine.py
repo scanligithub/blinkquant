@@ -40,7 +40,7 @@ class SelectionEngine:
             if timeframe == 'W': s_df = data_manager.df_sector_weekly
             elif timeframe == 'M': s_df = data_manager.df_sector_monthly
             
-            # --- 修复位置：将 meta.name() 改为 meta.output_name() ---
+            # --- 修复位置：将 meta.name() 改为 meta.output_name() --- 
             available_sector_cols = [c for c in sect_select if c.meta.output_name() in s_df.columns]
             
             lf = (lf.join(data_manager.df_mapping.lazy(), on="code", how="left")
