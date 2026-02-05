@@ -14,7 +14,8 @@
     "react-dom": "^18",
     "lightweight-charts": "^4.1.0",
     "clsx": "^2.0.0",
-    "tailwind-merge": "^2.0.0"
+    "tailwind-merge": "^2.0.0",
+    "@vercel/postgres": "^0.7.2" 
   },
   "devDependencies": {
     "@types/node": "^20",
