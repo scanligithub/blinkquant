@@ -78,7 +78,7 @@ class SelectionEngine:
 
         try:
             # 4. 解析公式 (此时 security.py 能实时感知到新 mount 的列)
-            expr = blink_parser.parse_expression(formula)
+            expr = blink_parser.parse_expression(formula, timeframe)
             lf = lf.with_columns(expr.alias("_signal"))
             
             # 取当前周期的最后交易日
