@@ -10,110 +10,95 @@ const NODES = [
 ];
 
 /**
- * 核心：公式特征提取器
- * 逻辑：扫描公式中的指标名、字段名和参数，生成标准化 Key (例如 MA_CLOSE_199)
+ * 强化版：公式特征提取
+ * 能够识别：MA(CLOSE,199), MA ( CLOSE , 199 ), ma(close,199) 等各种变体
  */
 function extractMetrics(formula: string): string[] {
   const metrics = new Set<string>();
-  // 更加鲁棒的正则：支持不同空格排版，不区分大小写
-  const regex = /(\bMA\b|\bEMA\b|\bSTD\b|\bROC\b)\s*\(\s*(\bCLOSE\b|\bOPEN\b|\bHIGH\b|\bLOW\b|\bVOL\b|\bAMOUNT\b|\bS_CLOSE\b|\bS_PCT_CHG\b)\s*,\s*(\d+)\s*\)/gi;
+  // 更加宽松的正则，专注于抓取 (函数名, 字段名, 数字)
+  const regex = /(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT|S_CLOSE|S_PCT_CHG)\s*,\s*(\d+)\s*\)/gi;
   
   let match;
+  // 每次运行前重置正则索引，防止状态残留
+  regex.lastIndex = 0; 
+  
   while ((match = regex.exec(formula)) !== null) {
     const func = match[1].toUpperCase();
     const field = match[2].toUpperCase();
     const param = match[3];
     metrics.add(`${func}_${field}_${param}`);
   }
-  return Array.from(metrics);
-}
-
-/**
- * 核心：异步数据库计数任务
- * 确保即使选股失败，只要公式合法，热度依然会被记录
- */
-async function trackMetricUsage(keys: string[]) {
-  if (keys.length === 0) return;
-
-  try {
-    // 串行或并行执行 Upsert 操作
-    const tasks = keys.map(key => sql`
-      INSERT INTO metrics_stats (metric_key, usage_count, last_used)
-      VALUES (${key}, 1, NOW())
-      ON CONFLICT (metric_key)
-      DO UPDATE SET 
-        usage_count = metrics_stats.usage_count + 1,
-        last_used = NOW();
-    `);
-    await Promise.all(tasks);
-    console.log(`Blink-Evolution: Successfully tracked [${keys.join(', ')}]`);
-  } catch (err) {
-    console.error('Blink-Evolution Error: Database write failed.', err);
-  }
+  
+  const results = Array.from(metrics);
+  console.log('DEBUG: Extracted Metric Keys ->', results); // 在 Vercel Logs 中查看
+  return results;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const { formula, timeframe } = await req.json();
 
-    if (!formula) {
-      return NextResponse.json({ error: 'Formula is required' }, { status: 400 });
-    }
+    if (!formula) return NextResponse.json({ error: 'Formula is required' }, { status: 400 });
 
-    // 1. 提取指标特征
     const metricKeys = extractMetrics(formula);
 
-    // 2. 准备并发任务队列
-    // A. 算力集群请求
+    // 1. 发起选股请求
     const nodeRequests = NODES.map(nodeUrl => 
       fetch(nodeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ formula, timeframe }),
-        signal: AbortSignal.timeout(15000) // 15秒超时，给现算逻辑留足时间
-      }).then(res => {
-        if (!res.ok) throw new Error(`Node ${nodeUrl} returned ${res.status}`);
-        return res.json();
-      })
+        signal: AbortSignal.timeout(12000) 
+      }).then(res => res.json())
     );
 
-    // B. 数据库计数任务 (必须在这里产生 Promise)
-    const dbTask = trackMetricUsage(metricKeys);
+    // 2. 发起数据库写入请求
+    // 我们将其包装成一个 Promise，确保它能被 await
+    const dbTask = (async () => {
+      if (metricKeys.length === 0) return;
+      try {
+        for (const key of metricKeys) {
+          await sql`
+            INSERT INTO metrics_stats (metric_key, usage_count, last_used)
+            VALUES (${key}, 1, NOW())
+            ON CONFLICT (metric_key)
+            DO UPDATE SET 
+              usage_count = metrics_stats.usage_count + 1,
+              last_used = NOW();
+          `;
+        }
+        console.log('DEBUG: DB Update Success for', metricKeys);
+      } catch (dbErr: any) {
+        console.error('DEBUG: DB Update Failed ->', dbErr.message);
+      }
+    })();
 
-    // 3. 并行执行：选股与计数同步进行
-    // 我们 await dbTask 以确保在 Edge 函数结束前写入完成
+    // 3. 同时等待：选股结果 + 数据库写入
+    // 只有当两者都（尝试）完成后，才返回响应，防止 Edge 函数过早退出
     const [responses] = await Promise.all([
       Promise.allSettled(nodeRequests),
-      dbTask 
+      dbTask
     ]);
 
-    // 4. 聚合分布式结果
+    // 4. 聚合逻辑
     let globalResults: string[] = [];
     let nodesOnline = 0;
-    let nodeErrors: string[] = [];
-
-    responses.forEach((res, idx) => {
-      if (res.status === 'fulfilled') {
-        globalResults.push(...(res.value.results || []));
+    responses.forEach((res: any) => {
+      if (res.status === 'fulfilled' && res.value.results) {
+        globalResults.push(...res.value.results);
         nodesOnline++;
-      } else {
-        nodeErrors.push(`Node ${idx} Error: ${res.reason}`);
       }
     });
 
-    // 5. 数据清洗：去重、排序
     const finalResults = Array.from(new Set(globalResults)).sort();
 
-    // 6. 返回最终响应
     return NextResponse.json({
       success: true,
       count: finalResults.length,
       data: finalResults,
       meta: {
         nodes_responding: nodesOnline,
-        total_nodes: NODES.length,
-        metrics_captured: metricKeys,
-        errors: nodeErrors.length > 0 ? nodeErrors : undefined
+        metrics_found: metricKeys // 返回给前端，方便观察正则是否抓到了
       }
     });
 
