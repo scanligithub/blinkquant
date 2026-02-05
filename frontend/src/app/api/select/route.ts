@@ -9,101 +9,81 @@ const NODES = [
   'https://scanli-blinkquant-node3.hf.space/api/v1/select'
 ];
 
-/**
- * 强化版：公式特征提取
- * 能够识别：MA(CLOSE,199), MA ( CLOSE , 199 ), ma(close,199) 等各种变体
- */
 function extractMetrics(formula: string): string[] {
   const metrics = new Set<string>();
-  // 更加宽松的正则，专注于抓取 (函数名, 字段名, 数字)
+  // 这里的正则极其重要：
   const regex = /(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT|S_CLOSE|S_PCT_CHG)\s*,\s*(\d+)\s*\)/gi;
-  
   let match;
-  // 每次运行前重置正则索引，防止状态残留
   regex.lastIndex = 0; 
-  
   while ((match = regex.exec(formula)) !== null) {
-    const func = match[1].toUpperCase();
-    const field = match[2].toUpperCase();
-    const param = match[3];
-    metrics.add(`${func}_${field}_${param}`);
+    metrics.add(`${match[1].toUpperCase()}_${match[2].toUpperCase()}_${match[3]}`);
   }
-  
-  const results = Array.from(metrics);
-  console.log('DEBUG: Extracted Metric Keys ->', results); // 在 Vercel Logs 中查看
-  return results;
+  return Array.from(metrics);
 }
 
 export async function POST(req: NextRequest) {
+  let debugMetrics: string[] = [];
   try {
     const { formula, timeframe } = await req.json();
+    if (!formula) return NextResponse.json({ error: 'No formula' }, { status: 400 });
 
-    if (!formula) return NextResponse.json({ error: 'Formula is required' }, { status: 400 });
+    // 1. 抓取指标
+    debugMetrics = extractMetrics(formula);
 
-    const metricKeys = extractMetrics(formula);
-
-    // 1. 发起选股请求
-    const nodeRequests = NODES.map(nodeUrl => 
-      fetch(nodeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formula, timeframe }),
-        signal: AbortSignal.timeout(12000) 
-      }).then(res => res.json())
-    );
-
-    // 2. 发起数据库写入请求
-    // 我们将其包装成一个 Promise，确保它能被 await
+    // 2. 数据库任务
     const dbTask = (async () => {
-      if (metricKeys.length === 0) return;
+      if (debugMetrics.length === 0) return "No metrics found";
       try {
-        for (const key of metricKeys) {
+        for (const key of debugMetrics) {
           await sql`
             INSERT INTO metrics_stats (metric_key, usage_count, last_used)
             VALUES (${key}, 1, NOW())
             ON CONFLICT (metric_key)
-            DO UPDATE SET 
-              usage_count = metrics_stats.usage_count + 1,
-              last_used = NOW();
+            DO UPDATE SET usage_count = metrics_stats.usage_count + 1, last_used = NOW();
           `;
         }
-        console.log('DEBUG: DB Update Success for', metricKeys);
-      } catch (dbErr: any) {
-        console.error('DEBUG: DB Update Failed ->', dbErr.message);
+        return "DB Update OK";
+      } catch (e: any) {
+        return `DB Error: ${e.message}`;
       }
     })();
 
-    // 3. 同时等待：选股结果 + 数据库写入
-    // 只有当两者都（尝试）完成后，才返回响应，防止 Edge 函数过早退出
-    const [responses] = await Promise.all([
+    // 3. 选股任务
+    const nodeRequests = NODES.map(url => 
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ formula, timeframe }),
+        signal: AbortSignal.timeout(12000)
+      }).then(res => res.json())
+    );
+
+    // 4. 强制等待两者完成 (Edge 生命周期保护)
+    const [responses, dbStatus] = await Promise.all([
       Promise.allSettled(nodeRequests),
       dbTask
     ]);
 
-    // 4. 聚合逻辑
+    // 5. 聚合结果
     let globalResults: string[] = [];
-    let nodesOnline = 0;
     responses.forEach((res: any) => {
       if (res.status === 'fulfilled' && res.value.results) {
         globalResults.push(...res.value.results);
-        nodesOnline++;
       }
     });
 
-    const finalResults = Array.from(new Set(globalResults)).sort();
-
+    // 6. 返回结果，同时带上调试信息
     return NextResponse.json({
       success: true,
-      count: finalResults.length,
-      data: finalResults,
-      meta: {
-        nodes_responding: nodesOnline,
-        metrics_found: metricKeys // 返回给前端，方便观察正则是否抓到了
+      count: new Set(globalResults).size,
+      data: Array.from(new Set(globalResults)).sort(),
+      debug: {
+        captured_keys: debugMetrics, // 如果这里是空的，说明正则没配上
+        database_status: dbStatus   // 这里会告诉你数据库写入的结果
       }
     });
 
   } catch (err: any) {
-    console.error('Gateway Error:', err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: err.message, keys: debugMetrics }, { status: 500 });
   }
 }
