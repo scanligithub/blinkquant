@@ -31,18 +31,15 @@ class DataManager:
         }
 
     def load_data(self):
-        """标准加载流程 (略，保持不变)"""
+        """启动加载流程"""
         try:
-            # ... (这部分代码与上一版相同，负责加载 parquet 和 resample) ...
-            # 为了节省篇幅，这里假设前面的 list_repo_files, scan_parquet, resample 都已就绪
-            # 直接调用 load_data 的框架逻辑
-            self._load_raw_parquet() 
+            self._load_raw_parquet()
             self._resample_all()
             self._evolve_from_db()
+            logger.info(f"Node {self.node_index}: Boot sequence complete.")
         except Exception as e:
             logger.error(f"Load Error: {e}")
 
-    # 将之前的 load_data 拆解为 _load_raw_parquet 便于阅读
     def _load_raw_parquet(self):
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         
@@ -80,48 +77,41 @@ class DataManager:
             self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
     def _evolve_from_db(self):
-        """从数据库进化：清洗后缀，使用统一名称挂载"""
+        """自进化：全周期广播"""
         if not self.postgres_url: return
         try:
             conn = psycopg2.connect(self.postgres_url)
             cur = conn.cursor()
-            cur.execute("SELECT metric_key FROM metrics_stats ORDER BY usage_count DESC LIMIT 200")
+            # 只读取纯净 Key (过滤掉可能的旧版本后缀 Key)
+            cur.execute("""
+                SELECT metric_key FROM metrics_stats 
+                WHERE metric_key NOT LIKE '%_W' AND metric_key NOT LIKE '%_M'
+                ORDER BY usage_count DESC LIMIT 150
+            """)
             top_keys = [row[0] for row in cur.fetchall()]
             cur.close(); conn.close()
 
-            groups = {'D': [], 'W': [], 'M': []}
-            for k in top_keys:
-                if k.endswith('_W'): groups['W'].append(k)
-                elif k.endswith('_M'): groups['M'].append(k)
-                else: groups['D'].append(k)
+            if not top_keys: return
 
-            self._apply_evolution('df_daily', groups['D'], "")
-            self._apply_evolution('df_weekly', groups['W'], "_W")
-            self._apply_evolution('df_monthly', groups['M'], "_M")
+            # 遍历日、周、月三张表
+            target_dfs = [('df_daily', self.df_daily), ('df_weekly', self.df_weekly), ('df_monthly', self.df_monthly)]
+
+            for attr_name, df in target_dfs:
+                if df is None: continue
+                exprs = []
+                for key in top_keys:
+                    parts = key.split('_')
+                    if len(parts) == 3:
+                        func, field, param = parts[0], parts[1].lower(), int(parts[2])
+                        if field in df.columns:
+                            exprs.append(self.INDICATOR_MAP[func](pl.col(field), param).alias(key))
+                
+                if exprs:
+                    updated_df = df.with_columns(exprs)
+                    setattr(self, attr_name, updated_df)
+                    logger.info(f"Broadcast Evolution: Added {len(exprs)} metrics to {attr_name}")
+
         except Exception as e:
             logger.error(f"Evolution failed: {e}")
-
-    def _apply_evolution(self, df_attr, db_keys, suffix):
-        df = getattr(self, df_attr)
-        if df is None or not db_keys: return
-        
-        exprs = []
-        for db_key in db_keys:
-            # 1. 剥离后缀：MA_CLOSE_20_W -> MA_CLOSE_20
-            pure_name = db_key
-            if suffix and db_key.endswith(suffix):
-                pure_name = db_key[:-len(suffix)]
-            
-            # 2. 解析参数
-            parts = pure_name.split('_')
-            if len(parts) == 3:
-                func, field, param = parts[0], parts[1].lower(), int(parts[2])
-                if field in df.columns:
-                    # 3. 挂载为统一名称
-                    exprs.append(self.INDICATOR_MAP[func](pl.col(field), param).alias(pure_name))
-        
-        if exprs:
-            setattr(self, df_attr, df.with_columns(exprs))
-            logger.info(f"Evolved {len(exprs)} metrics on {df_attr} (Aliased as pure names)")
 
 data_manager = DataManager()
