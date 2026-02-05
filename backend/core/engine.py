@@ -2,60 +2,52 @@ import polars as pl
 import re
 from .data_manager import data_manager
 from .security import blink_parser
-from .data_types import AShareDataSchema
 
 class SelectionEngine:
     def __init__(self):
-        # 识别算子模式: MA(CLOSE, 20)
-        self.metric_pattern = re.compile(r'(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)', re.IGNORECASE)
+        # 优化正则：不区分大小写，支持常用算子
+        self.metric_pattern = re.compile(
+            r'(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)', 
+            re.IGNORECASE
+        )
 
-    def _trigger_jit_caching(self, formula: str):
-        """解析公式并尝试将新指标挂载到内存"""
+    def _bg_jit_mount(self, formula: str):
+        """后台静默执行：不占用用户等待时间"""
         matches = self.metric_pattern.findall(formula)
         for func, field, param in matches:
-            func, field, param = func.upper(), field.upper(), int(param)
-            key = f"{func}_{field}_{param}"
+            func_name, field_name, p_val = func.upper(), field.upper(), int(param)
+            cache_key = f"{func_name}_{field_name}_{p_val}"
             
-            # 如果内存里已经有了，security 已经处理过 hits 了，直接跳过
-            if key in data_manager.df_daily.columns:
-                continue
-                
-            # 否则，动态生成表达式并挂载
-            try:
-                # 利用 data_manager 中定义的算子映射
-                if func in data_manager.INDICATOR_MAP:
-                    expr = data_manager.INDICATOR_MAP[func](pl.col(field.lower()), param)
-                    data_manager.mount_jit_column(key, expr)
-            except Exception as e:
-                print(f"JIT processing failed for {key}: {e}")
+            # 只有内存中不存在时，才执行耗时的计算和挂载
+            if data_manager.df_daily is not None and cache_key not in data_manager.df_daily.columns:
+                try:
+                    if func_name in data_manager.INDICATOR_MAP:
+                        # 生成计算表达式
+                        expr = data_manager.INDICATOR_MAP[func_name](pl.col(field_name.lower()), p_val)
+                        # 调用 DataManager 的安全挂载
+                        data_manager.mount_jit_column(cache_key, expr)
+                except Exception as e:
+                    print(f"Background JIT Failed for {cache_key}: {e}")
 
-    def execute_selector(self, formula: str, timeframe: str = 'D'):
-        if data_manager.df_daily is None: return {"error": "System loading..."}
-        
-        # 1. 设置数据源
+    def execute_selector(self, formula: str, timeframe: str, background_tasks):
         df = data_manager.df_daily if timeframe == 'D' else data_manager.df_weekly
-        lf = df.lazy()
-
-        # 2. 关联板块数据 (逻辑同之前)
-        if data_manager.df_mapping is not None and data_manager.df_sector_daily is not None:
-            sect_select = [pl.col("date"), pl.col("code").alias("sector_code"), pl.col("close").alias("s_close")]
-            lf = (lf.join(data_manager.df_mapping.lazy(), on="code", how="left")
-                    .join(data_manager.df_sector_daily.lazy().select(sect_select), on=["date", "sector_code"], how="left"))
+        if df is None: return {"error": "Data not ready"}
 
         try:
-            # 3. 计算选股信号
+            # 1. 解析公式并生成 LazyFrame
             expr = blink_parser.parse_expression(formula)
-            lf = lf.with_columns(expr.alias("_signal"))
+            lf = df.lazy().with_columns(expr.alias("_signal"))
             
+            # 2. 执行计算获取结果 (这是唯一的耗时点)
             last_date = df.select(pl.col("date").max()).item()
-            result = lf.filter(pl.col("date") == last_date).filter(pl.col("_signal") == True).select("code").collect()
+            result_df = lf.filter(pl.col("date") == last_date).filter(pl.col("_signal") == True).select("code").collect()
             
-            # 4. 【关键步骤】触发 JIT 即时驻留
-            # 选股完成后，顺便把没缓存的指标存进内存
+            # 3. 将“即时驻留”任务注册到后台，直接 Return 结果给用户
             if timeframe == 'D':
-                self._trigger_jit_caching(formula)
+                background_tasks.add_task(self._bg_jit_mount, formula)
 
-            return result["code"].to_list()
+            return result_df["code"].to_list()
+            
         except Exception as e:
             return {"error": str(e)}
 
