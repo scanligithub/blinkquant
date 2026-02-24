@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义滚动条样式，适配极客风格 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}
+
+body {
+  background-color: #020617; /* 兜底深色背景 */
+}
