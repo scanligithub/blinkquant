@@ -16,14 +16,20 @@ class DataManager:
         self.postgres_url = os.getenv("POSTGRES_URL")
         self.repo_id = "scanli/stocka-data"
 
+        # 行情数据表
         self.df_daily = None
         self.df_weekly = None
         self.df_monthly = None
-        self.df_mapping = None
+        
+        # 板块数据表
         self.df_sector_daily = None
         self.df_sector_weekly = None
         self.df_sector_monthly = None
         
+        # 关系映射表
+        self.df_mapping = None
+        
+        # 指标计算算子映射
         self.INDICATOR_MAP = {
             'MA': lambda col, p: col.rolling_mean(window_size=p).over("code"),
             'EMA': lambda col, p: col.ewm_mean(span=p, adjust=False).over("code"),
@@ -32,48 +38,52 @@ class DataManager:
         }
 
     def load_data(self):
-        """启动加载流程"""
+        """启动分布式数据加载与预处理流程"""
         try:
-            # 1. 加载并优化日线数据
+            # 1. 原始数据加载与分片
             self._load_raw_parquet()
             
-            # 显式 GC
-            gc.collect()
-            logger.info(f"Node {self.node_index}: Raw data loaded. Memory optimized.")
-
-            # 2. 生成周/月线
+            # 2. 执行前复权 (必须在重采样和内存优化之前)
+            self._apply_forward_adjustment()
+            
+            # 3. 内存类型优化 (Float64 -> Float32)
+            self._optimize_memory(self.df_daily, "df_daily")
+            self._optimize_memory(self.df_sector_daily, "df_sector_daily")
+            
+            # 4. 时间周期重采样 (W/M)
             self._resample_all()
             
-            # 3. 进化指标 (分批处理)
+            # 5. 指标自进化挂载 (从 DB 加载热点指标)
             self._evolve_from_db()
             
+            # 6. 最终内存回收
             gc.collect()
             logger.info(f"Node {self.node_index}: Boot sequence complete.")
+            
         except Exception as e:
-            logger.error(f"Load Error: {e}")
+            logger.error(f"Critical Load Error: {e}", exc_info=True)
 
     def _load_raw_parquet(self):
+        """从 Hugging Face 下载并执行流式惰性加载"""
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         
-        # --- 1. Stocks (Lazy Loading + Streaming) ---
+        # --- 1. 股票日线加载 ---
         stock_files = sorted([f for f in all_files if "stock_kline_" in f])
         lazy_frames = []
         
         for f in stock_files:
             path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
-            # 仅构建 LazyFrame，不立即加载
+            # 构建惰性分片逻辑
             lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
             lazy_frames.append(lf)
             
         if lazy_frames:
-            # 使用 streaming=True 避免内存峰值
-            # 并在加载后立即转换日期格式
+            logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
+            # collect(streaming=True) 是防止 OOM 的关键
             self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-            self._optimize_memory(self.df_daily, "df_daily")
 
-        # --- 2. Sectors (Direct Load) ---
-        # 板块数据量较小，可以直接加载，但同样做一下优化
+        # --- 2. 板块行情加载 ---
         sector_files = sorted([f for f in all_files if "sector_kline_" in f])
         s_dfs = []
         for f in sector_files:
@@ -82,47 +92,89 @@ class DataManager:
             
         if s_dfs:
             self.df_sector_daily = pl.concat(s_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-            self._optimize_memory(self.df_sector_daily, "df_sector_daily")
 
-        # --- 3. Mapping ---
+        # --- 3. 股票-板块映射表加载 ---
         map_file = [f for f in all_files if "sector_constituents" in f]
         if map_file:
             path = hf_hub_download(repo_id=self.repo_id, filename=map_file[-1], repo_type="dataset", token=self.hf_token)
-            self.df_mapping = pl.read_parquet(path).select([pl.col("stock_code").alias("code"), pl.col("sector_code")])
+            self.df_mapping = pl.read_parquet(path).select([
+                pl.col("stock_code").alias("code"), 
+                pl.col("sector_code")
+            ])
+
+    def _apply_forward_adjustment(self):
+        """执行前复权处理：OHLC * (当日复权因子 / 最新复权因子)"""
+        if self.df_daily is None: return
+        
+        if "adjustFactor" not in self.df_daily.columns:
+            logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
+            return
+
+        logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
+        
+        # 计算每只股票最新的复权因子
+        # 使用 over("code") 窗口函数定位每只股票时间轴上的最后一个因子
+        qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").last().over("code")
+        
+        self.df_daily = self.df_daily.with_columns([
+            (pl.col("open") * qfq_expr).alias("open"),
+            (pl.col("high") * qfq_expr).alias("high"),
+            (pl.col("low") * qfq_expr).alias("low"),
+            (pl.col("close") * qfq_expr).alias("close"),
+        ])
+        
+        # 计算完复权后，adjustFactor 任务完成，可以选择保留或后续转换
+        gc.collect()
 
     def _optimize_memory(self, df: pl.DataFrame, name: str):
-        """将 Float64 强制转换为 Float32 以节省 50% 内存"""
+        """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
         if df is None: return
         
-        # 查找所有 Float64 列
         f64_cols = [c for c, t in df.schema.items() if t == pl.Float64]
         if f64_cols:
-            df = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
+            optimized_df = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
             
-            # 回写到类属性
-            if name == "df_daily": self.df_daily = df
-            elif name == "df_sector_daily": self.df_sector_daily = df
+            # 写回实例属性
+            if name == "df_daily": self.df_daily = optimized_df
+            elif name == "df_sector_daily": self.df_sector_daily = optimized_df
             
-            logger.info(f"Optimized {name}: Converted {len(f64_cols)} columns to Float32")
+            logger.info(f"Node {self.node_index}: Optimized {name} ({len(f64_cols)} cols -> Float32)")
 
     def _resample_all(self):
+        """基于前复权后的日线数据，生成周线和月线表"""
         if self.df_daily is None: return
-        aggs = [pl.col("open").first(), pl.col("high").max(), pl.col("low").min(), pl.col("close").last(), pl.col("volume").sum(), pl.col("amount").sum()]
         
-        # Resample logic
-        self.df_weekly = self.df_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(aggs)
-        self.df_monthly = self.df_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+        # 定义 OHLCV 聚合规则
+        aggs = [
+            pl.col("open").first(), 
+            pl.col("high").max(), 
+            pl.col("low").min(), 
+            pl.col("close").last(), 
+            pl.col("volume").sum(), 
+            pl.col("amount").sum()
+        ]
         
+        logger.info(f"Node {self.node_index}: Resampling W/M timeframes...")
+        
+        # 个股重采样
+        base_df = self.df_daily.sort("date")
+        self.df_weekly = base_df.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+        self.df_monthly = base_df.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+        
+        # 板块重采样
         if self.df_sector_daily is not None:
-            self.df_sector_weekly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1w", by="code").agg(aggs)
-            self.df_sector_monthly = self.df_sector_daily.sort("date").group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+            s_base_df = self.df_sector_daily.sort("date")
+            self.df_sector_weekly = s_base_df.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+            self.df_sector_monthly = s_base_df.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
     def _evolve_from_db(self):
-        """自进化：分批广播，防止内存溢出"""
+        """自进化：从数据库加载高频指标并执行分批挂载，避免内存尖峰"""
         if not self.postgres_url: return
+        
         try:
             conn = psycopg2.connect(self.postgres_url)
             cur = conn.cursor()
+            # 获取最热的 150 个指标
             cur.execute("""
                 SELECT metric_key FROM metrics_stats 
                 WHERE metric_key NOT LIKE '%_W' AND metric_key NOT LIKE '%_M'
@@ -133,15 +185,18 @@ class DataManager:
 
             if not top_keys: return
 
-            target_dfs = [('df_daily', self.df_daily), ('df_weekly', self.df_weekly), ('df_monthly', self.df_monthly)]
+            # 目标数据集清单
+            target_configs = [
+                ('df_daily', self.df_daily), 
+                ('df_weekly', self.df_weekly), 
+                ('df_monthly', self.df_monthly)
+            ]
             
-            # --- 分批处理 (Batch Processing) ---
-            BATCH_SIZE = 20
+            BATCH_SIZE = 25 # 每批计算 25 个指标，降低计算时的临时内存压力
             
-            for attr_name, df in target_dfs:
+            for attr_name, df in target_configs:
                 if df is None: continue
                 
-                # 按批次遍历指标
                 total_added = 0
                 for i in range(0, len(top_keys), BATCH_SIZE):
                     batch = top_keys[i : i + BATCH_SIZE]
@@ -151,6 +206,7 @@ class DataManager:
                         parts = key.split('_')
                         if len(parts) == 3:
                             func, field, param = parts[0], parts[1].lower(), int(parts[2])
+                            # 确保基础列存在且指标尚未计算
                             if field in df.columns and key not in df.columns:
                                 try:
                                     exprs.append(self.INDICATOR_MAP[func](pl.col(field), param).alias(key))
@@ -159,12 +215,10 @@ class DataManager:
                     if exprs:
                         df = df.with_columns(exprs)
                         total_added += len(exprs)
-                        # 每一批处理完，显式 GC
-                        gc.collect()
+                        gc.collect() # 批次间显式回收
 
-                # 更新 DataManager 引用
                 setattr(self, attr_name, df)
-                logger.info(f"Broadcast Evolution: Added {total_added} metrics to {attr_name}")
+                logger.info(f"Node {self.node_index}: Evolution complete for {attr_name}, added {total_added} cols.")
 
         except Exception as e:
             logger.error(f"Evolution failed: {e}")
