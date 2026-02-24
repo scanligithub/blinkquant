@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import './globals.css' // <--- 必须添加这一行！
+import './globals.css'
 
 export const metadata: Metadata = {
   title: 'BlinkQuant',
@@ -13,7 +13,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-gray-950 text-slate-200">{children}</body>
+      {/* 移除 bg-gray-950，使用 globals.css 中的浅色定义 */}
+      <body>{children}</body>
     </html>
   )
 }
