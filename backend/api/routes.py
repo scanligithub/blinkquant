@@ -1,6 +1,3 @@
-================================================
-FILE: backend/api/routes.py
-================================================
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import polars as pl
