@@ -1,6 +1,3 @@
-================================================
-FILE: backend/core/data_manager.py
-================================================
 import os
 import gc
 import polars as pl
