@@ -178,7 +178,7 @@ class DataManager:
             cur.execute("""
                 SELECT metric_key FROM metrics_stats 
                 WHERE metric_key NOT LIKE '%_W' AND metric_key NOT LIKE '%_M'
-                ORDER BY usage_count DESC LIMIT 250
+                ORDER BY usage_count DESC LIMIT 10
             """)
             top_keys = [row[0] for row in cur.fetchall()]
             cur.close(); conn.close()
