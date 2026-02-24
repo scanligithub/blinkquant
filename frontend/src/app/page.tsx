@@ -1,5 +1,5 @@
 'use client'; 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
@@ -18,11 +18,30 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState('D');
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<any>(null);
   const [selectedStock, setSelectedStock] = useState<{code: string, data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
+  
+  // --- 新增：监控状态 ---
+  const [clusterStatus, setClusterStatus] = useState<any>(null);
+  const [showMonitor, setShowMonitor] = useState(false);
 
-  // --- 逻辑执行：选股 (单次请求) ---
+  // 加载集群状态
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/status');
+      const json = await res.json();
+      setClusterStatus(json);
+    } catch (e) { console.error("Monitor failed", e); }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    // 每 10 秒自动刷新一次状态
+    const timer = setInterval(fetchStatus, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // --- 逻辑执行：选股 ---
   const handleSelect = async () => {
     setLoading(true);
     setResults([]);
@@ -33,34 +52,26 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ formula, timeframe })
       });
-      
       const json = await res.json();
-      
       if (json.success) {
         setResults(json.data);
-        setStatus(json.meta);
       } else {
         alert(`Selection failed: ${json.error || 'Unknown error'}`);
       }
-
     } catch (err) {
-      console.error(err);
       alert('Gateway connection failed');
     }
     setLoading(false);
   };
 
-  // --- 逻辑执行：加载 K 线 (单次请求) ---
+  // --- 逻辑执行：加载 K 线 ---
   const viewStock = async (code: string) => {
     setChartLoading(true);
     try {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
-      
       if (!res.ok) throw new Error('Fetch failed');
-      
       const json = await res.json();
       if (json.data) {
-        // 兼容列式存储 (优化A) 或 行式存储
         setSelectedStock({ code, data: json.data });
       } else {
         alert('Stock data empty');
@@ -76,20 +87,59 @@ export default function Home() {
     <main className="min-h-screen bg-gray-950 text-slate-200 p-4 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-6 gap-4">
-          <div>
-            <h1 className="text-3xl font-black bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
-              BlinkQuant
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">Distributed Computing Cluster | Gateway Aggregation</p>
+        {/* Header & Monitor */}
+        <header className="flex flex-col gap-4 border-b border-slate-800 pb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-black bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+                BlinkQuant
+              </h1>
+              <p className="text-slate-500 text-sm mt-1">Distributed Computing Cluster | Gateway Aggregation</p>
+            </div>
+            
+            <button 
+              onClick={() => setShowMonitor(!showMonitor)}
+              className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs flex items-center gap-2 hover:bg-slate-800 transition-colors"
+            >
+               <span className={`w-2 h-2 rounded-full ${clusterStatus?.cluster_health?.startsWith('3') ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></span>
+               Cluster Status: {clusterStatus?.cluster_health || 'Checking...'}
+               <span className="text-slate-500 ml-1">▼</span>
+            </button>
           </div>
-          <div className="flex items-center gap-3">
-             <div className="px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${status?.nodes_responding === 3 ? 'bg-green-500' : 'bg-green-500/50'}`}></span>
-                Cluster: {status?.nodes_responding || 3}/3 Nodes
-             </div>
-          </div>
+
+          {/* 详细监控面板 (可折叠) */}
+          {showMonitor && clusterStatus && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-900/50 p-4 rounded-xl border border-slate-800/50 animate-in fade-in slide-in-from-top-2">
+              {clusterStatus.nodes.map((node: any, idx: number) => (
+                <div key={idx} className={`p-3 rounded-lg border ${node.online ? 'border-slate-700 bg-slate-800' : 'border-red-900 bg-red-900/20'}`}>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-bold text-sm text-slate-300">Node {node.node || idx}</span>
+                    <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${node.status === 'healthy' ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
+                      {node.status || 'OFFLINE'}
+                    </span>
+                  </div>
+                  {node.online ? (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Mem (App/Sys):</span>
+                        <span className="font-mono text-blue-300">{node.process_memory_gb}G / {node.system_memory_free_gb}G free</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Disk Free:</span>
+                        <span className="font-mono text-indigo-300">{node.disk_free_gb} GB</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Data Rows:</span>
+                        <span className="font-mono text-slate-400">{node.rows_daily?.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-red-400">Connection Timeout</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </header>
 
         {/* 控制面板 */}
