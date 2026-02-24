@@ -2,22 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 自定义滚动条样式，适配极客风格 */
+/* 浅色模式滚动条 */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #0f172a; 
+  background: #f1f5f9; /* 浅灰轨道 */
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155; 
+  background: #cbd5e1; /* 深灰滑块 */
   border-radius: 3px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569; 
+  background: #94a3b8; 
 }
 
 body {
-  background-color: #020617; /* 兜底深色背景 */
+  @apply bg-slate-50 text-slate-900; /* 强制浅色背景和深色文字 */
 }
