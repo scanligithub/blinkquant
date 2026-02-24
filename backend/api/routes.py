@@ -1,3 +1,6 @@
+================================================
+FILE: backend/api/routes.py
+================================================
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import polars as pl
@@ -86,10 +89,28 @@ def get_kline(code: str, timeframe: str = "D"):
 @router.get("/status")
 def get_node_status():
     process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    
+    # 获取系统级统计
+    vm = psutil.virtual_memory()
+    du = psutil.disk_usage('/')
+
     return {
         "node": os.getenv("NODE_INDEX"),
         "status": "healthy" if data_manager.df_daily is not None else "loading",
-        "memory_used_gb": round(process.memory_info().rss / (1024**3), 2),
+        
+        # 进程内存
+        "process_memory_gb": round(mem_info.rss / (1024**3), 2),
+        
+        # 系统内存状态
+        "system_memory_total_gb": round(vm.total / (1024**3), 2),
+        "system_memory_free_gb": round(vm.available / (1024**3), 2), # available 比 free 更准确反映可用内存
+        
+        # 磁盘状态
+        "disk_total_gb": round(du.total / (1024**3), 2),
+        "disk_free_gb": round(du.free / (1024**3), 2),
+        
+        # 数据量
         "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0
     }
 
