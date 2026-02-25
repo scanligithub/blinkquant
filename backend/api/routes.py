@@ -11,7 +11,6 @@ from core.engine import selection_engine
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 router = APIRouter(prefix="/api/v1")
 

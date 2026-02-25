@@ -7,7 +7,7 @@ import time
 import logging
 
 # 配置标准日志输出到控制台
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
