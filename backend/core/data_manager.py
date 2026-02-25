@@ -20,6 +20,7 @@ class DataManager:
         self.df_daily = None
         self.df_weekly = None
         self.df_monthly = None
+        self.code_to_name = {}
         
         # 板块数据表
         self.df_sector_daily = None
@@ -64,7 +65,7 @@ class DataManager:
             logger.error(f"Critical Load Error: {e}", exc_info=True)
 
     def _load_raw_parquet(self):
-        """从 Hugging Face 下载并执行流式惰性加载"""
+        logger.info(f"Node {self.node_index}: Starting _load_raw_parquet...")
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         
         # --- 1. 股票日线加载 ---
@@ -79,17 +80,21 @@ class DataManager:
             
         if lazy_frames:
             logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
-            # collect(streaming=True) 是防止 OOM 的关键
-            self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
-            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+            try:
+                self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
+                self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+                logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
 
-            # Extract code and name for self.code_to_name
-            if "name" in self.df_daily.columns:
-                unique_stocks = self.df_daily.select(["code", "name"]).unique()
-                self.code_to_name = {row["code"]: row["name"] for row in unique_stocks.iter_rows()}
-                logger.info(f"Node {self.node_index}: Populated code_to_name with {len(self.code_to_name)} entries.")
-            else:
-                logger.warning(f"Node {self.node_index}: 'name' column not found in df_daily, cannot populate code_to_name.")
+                if "name" in self.df_daily.columns:
+                    unique_stocks = self.df_daily.select(["code", "name"]).unique()
+                    self.code_to_name = {row["code"]: row["name"] for row in unique_stocks.iter_rows()}
+                    logger.info(f"Node {self.node_index}: Populated code_to_name with {len(self.code_to_name)} entries.")
+                else:
+                    logger.warning(f"Node {self.node_index}: 'name' column not found in df_daily, cannot populate code_to_name.")
+            except Exception as e:
+                logger.error(f"Node {self.node_index}: Error collecting df_daily or populating code_to_name: {e}", exc_info=True)
+        else:
+            logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
 
         # --- 2. 板块行情加载 ---
         sector_files = sorted([f for f in all_files if "sector_kline_" in f])
