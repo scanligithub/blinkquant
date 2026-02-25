@@ -8,6 +8,9 @@ import psycopg2
 from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -105,11 +108,14 @@ def search_stocks(q: str):
 
     q_lower = q.lower()
     q_pinyin_initials = _get_pinyin_initials(q)
+    logger.info(f"Search query: {q}, q_lower: {q_lower}, q_pinyin_initials: {q_pinyin_initials}")
+
     results = []
     
     for code, name in data_manager.code_to_name.items():
         name_lower = name.lower()
         name_pinyin_initials = _get_pinyin_initials(name)
+        logger.debug(f"Checking stock: code={code}, name={name}, name_lower={name_lower}, name_pinyin_initials={name_pinyin_initials}")
 
         if (q_lower in code.lower() or
             q_lower in name_lower or

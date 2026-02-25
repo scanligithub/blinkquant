@@ -89,6 +89,9 @@ class DataManager:
                     unique_stocks = self.df_daily.select(["code", "name"]).unique()
                     self.code_to_name = {row["code"]: row["name"] for row in unique_stocks.iter_rows()}
                     logger.info(f"Node {self.node_index}: Populated code_to_name with {len(self.code_to_name)} entries.")
+                    # Log a few sample entries
+                    sample_entries = dict(list(self.code_to_name.items())[:5])
+                    logger.info(f"Node {self.node_index}: code_to_name sample: {sample_entries}")
                 else:
                     logger.warning(f"Node {self.node_index}: 'name' column not found in df_daily, cannot populate code_to_name.")
             except Exception as e:
