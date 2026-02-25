@@ -88,7 +88,10 @@ export default function Home() {
     setChartLoading(true);
     try {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
-      if (!res.ok) throw new Error('Fetch failed');
+            if (!res.ok) {
+        const errorJson = await res.json();
+        throw new Error(errorJson.detail || 'Fetch failed');
+      }
       const json = await res.json();
             if (json.data) setSelectedStock({ code, name: json.name, data: json.data });
       else alert('Stock data empty');
@@ -166,6 +169,13 @@ export default function Home() {
                 placeholder="e.g. 000952, Ping An, PA"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchResults.length > 0) {
+                    viewStock(searchResults[0].code);
+                    setSearchQuery(''); // Clear search query after selection
+                    setSearchResults([]); // Clear search results
+                  }
+                }}
               />
               {searchLoading && (
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
