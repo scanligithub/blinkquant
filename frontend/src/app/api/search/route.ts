@@ -6,7 +6,11 @@ export async function GET(request: Request) {
   console.log('API Search Route: Request received');
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
-  console.log(`API Search Route: Query parameter 'q': ${q}`);
+  const protocol = request.headers.get('x-forwarded-proto') || 'http';
+  const host = request.headers.get('host');
+  const baseUrl = `${protocol}://${host}`;
+
+  console.log(`API Search Route: Query parameter 'q': ${q}, Base URL: ${baseUrl}`);
 
   if (!q) {
     return NextResponse.json([]);
@@ -16,7 +20,7 @@ export async function GET(request: Request) {
   for (let i = 0; i < NODE_COUNT; i++) {
     // Construct the URL for each backend node via Next.js reverse proxy
     // Example: /api/node0/api/v1/search?q=query
-    const nodeUrl = `/api/node${i}/api/v1/search?q=${encodeURIComponent(q)}`;
+    const nodeUrl = `${baseUrl}/api/node${i}/api/v1/search?q=${encodeURIComponent(q)}`;
     console.log(`API Search Route: Fetching from node ${i} with URL: ${nodeUrl}`);
     fetchPromises.push(
       fetch(nodeUrl)
