@@ -95,7 +95,7 @@ export default function Home() {
       const json = await res.json();
             if (json.data) setSelectedStock({ code, name: json.name, data: json.data });
       else alert('Stock data empty');
-    } catch (err) { alert('Failed to load kline'); }
+    } catch (err: any) { alert(`Failed to load kline: ${err.message}`); }
     setChartLoading(false);
   };
 
