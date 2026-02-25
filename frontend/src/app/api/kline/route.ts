@@ -14,26 +14,33 @@ export async function GET(req: NextRequest) {
   const timeframe = searchParams.get('timeframe') || 'D';
 
   if (!code) {
-    return NextResponse.json({ error: 'Stock code is required' }, { status: 400 });
+    return new NextResponse(JSON.stringify({ error: 'Stock code is required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
   try {
-    const result = await Promise.any(
+    const resultBuffer = await Promise.any(
       NODES.map(async (nodeUrl, i) => {
         const url = `${nodeUrl}/api/v1/kline?code=${code}&timeframe=${timeframe}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
-        if (!res.ok) throw new Error('Not on this node');
-
-        const json = await res.json();
-        if (!json.data || (Array.isArray(json.data) && json.data.length === 0)) {
-            throw new Error('Empty data');
+        if (!res.ok) {
+          const errorText = await res.text();
+          console.error(`Backend node ${nodeUrl} responded with status ${res.status}: ${errorText}`);
+          throw new Error(`Not on this node or backend error: ${errorText}`);
         }
-        return json;
+
+        const arrayBuffer = await res.arrayBuffer();
+        if (!arrayBuffer || arrayBuffer.byteLength < 100) { // Parquet files have a magic number PAR1 at start, min size
+            throw new Error('Empty or invalid Parquet data received');
+        }
+        return arrayBuffer;
       })
     );
-    return NextResponse.json(result, {
+
+    return new NextResponse(resultBuffer, {
+      status: 200,
       headers: {
+        'Content-Type': 'application/octet-stream',
         'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=60'
       }
     });
@@ -41,8 +48,8 @@ export async function GET(req: NextRequest) {
   } catch (error: any) {
     console.error("Error fetching kline data:", error);
     if (error instanceof AggregateError) {
-        return NextResponse.json({ error: 'Stock not found in cluster' }, { status: 404 });
+        return new NextResponse(JSON.stringify({ error: 'Stock not found in cluster or data unavailable' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
-    return NextResponse.json({ error: 'Failed to fetch kline data' }, { status: 500 });
+    return new NextResponse(JSON.stringify({ error: 'Failed to fetch kline data' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
