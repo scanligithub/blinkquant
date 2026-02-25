@@ -20,7 +20,7 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState('D');
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-    const [selectedStock, setSelectedStock] = useState<{code: string, data: any} | null>(null);
+    const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,8 +90,11 @@ export default function Home() {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
       if (!res.ok) throw new Error('Fetch failed');
       const json = await res.json();
-      if (json.data) setSelectedStock({ code, data: json.data });
-      else alert('Stock data empty');
+      if (json.data) {
+        setSelectedStock({ code, name: json.name, data: json.data });
+      } else {
+        alert('Stock data empty');
+      }
     } catch (err) { alert('Failed to load kline'); }
     setChartLoading(false);
   };
@@ -280,8 +283,10 @@ export default function Home() {
           <section className="lg:col-span-3">
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden min-h-[520px] shadow-sm relative flex flex-col">
               {selectedStock && (
-                 <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-2 rounded-lg border border-slate-200 shadow-sm">
+                 <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-baseline">
                     <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
+                    <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
+                    
                     <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                       {timeframe === 'D' ? '1-DAY' : timeframe === 'W' ? '1-WEEK' : '1-MONTH'}
                     </span>

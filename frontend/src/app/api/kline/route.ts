@@ -1,9 +1,11 @@
 import { NextResponse, NextRequest } from 'next/server';
 
+export const runtime = 'edge';
+
 const NODES = [
-  process.env.HF_NODE_0,
-  process.env.HF_NODE_1,
-  process.env.HF_NODE_2,
+  'https://scanli-blinkquant-node1.hf.space',
+  'https://scanli-blinkquant-node2.hf.space',
+  'https://scanli-blinkquant-node3.hf.space'
 ];
 
 export async function GET(req: NextRequest) {
@@ -30,11 +32,16 @@ export async function GET(req: NextRequest) {
         return json;
       })
     );
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=60'
+      }
+    });
+
   } catch (error: any) {
     console.error("Error fetching kline data:", error);
     if (error instanceof AggregateError) {
-        return NextResponse.json({ error: 'Stock not found in cluster or cluster data unavailable' }, { status: 500 });
+        return NextResponse.json({ error: 'Stock not found in cluster' }, { status: 404 });
     }
     return NextResponse.json({ error: 'Failed to fetch kline data' }, { status: 500 });
   }

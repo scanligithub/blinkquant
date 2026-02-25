@@ -76,12 +76,9 @@ def get_kline(code: str, timeframe: str = "D"):
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
 
-    stock_name = data_manager.code_to_name.get(code, "Unknown") # Get stock name
-
     # 优化 A: 列式传输 (大幅减少 JSON 体积)
     return {
         "code": code,
-        "name": stock_name,
         "type": "columnar",
         "data": stock_df.to_dict(as_series=False)
     }
