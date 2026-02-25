@@ -15,6 +15,16 @@ const TIMEFRAMES = [
   { label: 'Monthly', value: 'M' },
 ];
 
+function formatStockCode(code: string): string {
+  const numericCode = code.replace(/[^0-9]/g, ''); // Remove non-numeric characters
+  if (numericCode.startsWith('6')) {
+    return `sh.${numericCode}`;
+  } else if (numericCode.startsWith('0') || numericCode.startsWith('3')) {
+    return `sz.${numericCode}`;
+  }
+  return code; // Return original if no match (e.g., already prefixed or invalid)
+}
+
 export default function Home() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [timeframe, setTimeframe] = useState('D');
@@ -180,7 +190,7 @@ export default function Home() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && searchQuery.trim() !== '') {
-                    const codeToView = searchResults.length > 0 ? searchResults[0].code : searchQuery;
+                    const codeToView = searchResults.length > 0 ? searchResults[0].code : formatStockCode(searchQuery);
                     viewStock(codeToView);
                     setSearchQuery(''); // Clear search query after selection
                     setSearchResults([]); // Clear search results
