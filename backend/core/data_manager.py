@@ -7,6 +7,7 @@ from .data_types import AShareDataSchema
 from huggingface_hub import hf_hub_download, list_repo_files
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class DataManager:
     def __init__(self):
