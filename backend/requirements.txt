@@ -7,3 +7,4 @@ python-multipart
 zstandard
 psutil
 psycopg2-binary
+pypinyin

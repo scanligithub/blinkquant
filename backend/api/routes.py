@@ -5,6 +5,7 @@ import os
 import re
 import psutil
 import psycopg2
+from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
 
@@ -83,17 +84,36 @@ def get_kline(code: str, timeframe: str = "D"):
         "data": stock_df.to_dict(as_series=False)
     }
 
+def _get_pinyin_initials(text: str) -> str:
+    """获取中文文本的拼音首字母，并转换为小写"""
+    if not text:
+        return ""
+    
+    # 检查是否包含中文字符
+    if not any('\u4e00' <= char <= '\u9fff' for char in text):
+        return text.lower() # 如果没有中文，直接返回小写
+
+    # full模式返回所有拼音，然后取首字母并拼接
+    pinyin_list = pinyin(text, style=Style.FIRST_LETTER)
+    initials = ''.join([item[0] for item in pinyin_list])
+    return initials.lower()
+
 @router.get("/search")
 def search_stocks(q: str):
     if not q:
         return []
 
     q_lower = q.lower()
+    q_pinyin_initials = _get_pinyin_initials(q)
     results = []
     
-    # Iterate through the code_to_name dictionary
     for code, name in data_manager.code_to_name.items():
-        if q_lower in code.lower() or q_lower in name.lower():
+        name_lower = name.lower()
+        name_pinyin_initials = _get_pinyin_initials(name)
+
+        if (q_lower in code.lower() or
+            q_lower in name_lower or
+            q_pinyin_initials and q_pinyin_initials in name_pinyin_initials):
             results.append({"code": code, "name": name})
         if len(results) >= 10: # Limit to 10 results
             break
