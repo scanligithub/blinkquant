@@ -188,12 +188,43 @@ export default function Home() {
                 placeholder="e.g. 000952, Ping An, PA"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
+                onKeyDown={async (e) => {
                   if (e.key === 'Enter' && searchQuery.trim() !== '') {
-                    const codeToView = searchResults.length > 0 ? searchResults[0].code : formatStockCode(searchQuery);
-                    viewStock(codeToView);
-                    setSearchQuery(''); // Clear search query after selection
-                    setSearchResults([]); // Clear search results
+                    if (searchResults.length > 0) {
+                      // If there are search results, use the first one
+                      viewStock(searchResults[0].code);
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    } else {
+                      // No search results, determine if searchQuery is a code or a name
+                      const isNumericCode = /^[0-9]+$/.test(searchQuery.trim());
+                      if (isNumericCode) {
+                        // It's a numeric code, format and view directly
+                        viewStock(formatStockCode(searchQuery));
+                        setSearchQuery('');
+                        setSearchResults([]);
+                      } else {
+                        // It's likely a name, perform an immediate search to get the code
+                        setSearchLoading(true);
+                        try {
+                          const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+                          if (!res.ok) throw new Error('Immediate search failed');
+                          const json = await res.json();
+                          if (json.length > 0) {
+                            viewStock(json[0].code);
+                            setSearchQuery('');
+                            setSearchResults([]);
+                          } else {
+                            alert('Stock not found by name search.');
+                          }
+                        } catch (err) {
+                          console.error('Failed to search stocks by name:', err);
+                          alert(`Failed to search stocks by name: ${ (err as Error).message || err}`);
+                        } finally {
+                          setSearchLoading(false);
+                        }
+                      }
+                    }
                   }
                 }}
               />
