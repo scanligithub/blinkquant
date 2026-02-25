@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import Response # New import
 from pydantic import BaseModel
 import polars as pl
 import os
@@ -9,6 +10,7 @@ from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
 import logging
+import io # New import
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +82,13 @@ def get_kline(code: str, timeframe: str = "D"):
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
 
-    # 优化 A: 列式传输 (大幅减少 JSON 体积)
-    return {
-        "code": code,
-        "type": "columnar",
-        "data": stock_df.to_dict(as_series=False)
-    }
+    # 将 Polars DataFrame 写入内存中的 Parquet 文件，并使用 ZSTD 压缩
+    buffer = io.BytesIO()
+    stock_df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0) # 将文件指针移到开头
+
+    # 以二进制响应的形式返回 Parquet 数据
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
 
 def _get_pinyin_initials(text: str) -> str:
     """获取中文文本的拼音首字母，并转换为小写"""
