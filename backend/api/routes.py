@@ -124,6 +124,7 @@ def search_stocks(q: str):
         if len(results) >= 10: # Limit to 10 results
             break
             
+    logger.info(f"Search results for query '{q}': found {len(results)} items. Results: {results}")
     return results
 
 @router.get("/status")
