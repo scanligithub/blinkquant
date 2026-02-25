@@ -90,7 +90,7 @@ export default function Home() {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
             if (!res.ok) {
         const errorJson = await res.json();
-        throw new Error(errorJson.detail || 'Fetch failed');
+        throw new Error(errorJson.error || errorJson.detail || 'Fetch failed');
       }
       const json = await res.json();
             if (json.data) setSelectedStock({ code, name: json.name, data: json.data });
