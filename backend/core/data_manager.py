@@ -68,6 +68,16 @@ class DataManager:
         logger.info(f"Node {self.node_index}: Starting _load_raw_parquet...")
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         
+        # --- 0. 股票列表加载 (用于股票名称映射) ---
+        stock_list_file = [f for f in all_files if "stock_list.parquet" in f]
+        if stock_list_file:
+            path = hf_hub_download(repo_id=self.repo_id, filename=stock_list_file[-1], repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
+            stock_list_df = pl.read_parquet(path)
+            self.code_to_name = {row["code"]: row["name"] for row in stock_list_df.select(["code", "name"]).iter_rows()}
+            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name with {len(self.code_to_name)} entries.")
+        else:
+            logger.warning(f"Node {self.node_index}: stock_list.parquet not found, stock name search may not work.")
+
         # --- 1. 股票日线加载 ---
         stock_files = sorted([f for f in all_files if "stock_kline_" in f])
         lazy_frames = []
@@ -84,16 +94,8 @@ class DataManager:
                 self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
                 self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
                 logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
-                logger.info(f"Node {self.node_index}: df_daily columns: {self.df_daily.columns}")
-
-                if "name" in self.df_daily.columns:
-                    unique_stocks = self.df_daily.select(["code", "name"]).unique()
-                    self.code_to_name = {row["code"]: row["name"] for row in unique_stocks.iter_rows()}
-                    logger.info(f"Node {self.node_index}: Populated code_to_name with {len(self.code_to_name)} entries.")
-                else:
-                    logger.warning(f"Node {self.node_index}: 'name' column not found in df_daily, cannot populate code_to_name.")
             except Exception as e:
-                logger.error(f"Node {self.node_index}: Error collecting df_daily or populating code_to_name: {e}", exc_info=True)
+                logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
         else:
             logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
 
