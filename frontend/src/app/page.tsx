@@ -88,14 +88,11 @@ export default function Home() {
     setChartLoading(true);
     try {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
-            if (!res.ok) {
-        const errorJson = await res.json();
-        throw new Error(errorJson.error || errorJson.detail || 'Fetch failed');
-      }
+      if (!res.ok) throw new Error('Fetch failed');
       const json = await res.json();
-            if (json.data) setSelectedStock({ code, data: json.data });
+      if (json.data) setSelectedStock({ code, data: json.data });
       else alert('Stock data empty');
-    } catch (err: any) { alert(`Failed to load kline: ${err.message}`); }
+    } catch (err) { alert('Failed to load kline'); }
     setChartLoading(false);
   };
 

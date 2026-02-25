@@ -1,9 +1,9 @@
 import { NextResponse, NextRequest } from 'next/server';
 
 const NODES = [
-  'https://scanli-blinkquant-node1.hf.space/api/v1/kline',
-  'https://scanli-blinkquant-node2.hf.space/api/v1/kline',
-  'https://scanli-blinkquant-node3.hf.space/api/v1/kline'
+  process.env.HF_NODE_0,
+  process.env.HF_NODE_1,
+  process.env.HF_NODE_2,
 ];
 
 export async function GET(req: NextRequest) {
@@ -15,40 +15,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Stock code is required' }, { status: 400 });
   }
 
-  const fetchPromises = [];
-  for (let i = 0; i < NODES.length; i++) {
-    const nodeUrl = `${NODES[i]}?code=${code}&timeframe=${timeframe}`;
-    fetchPromises.push(
-      fetch(nodeUrl, { signal: AbortSignal.timeout(5000) }) // 5-second timeout
-        .then(async res => {
-          if (!res.ok) {
-            // If the response is not ok, throw an error to be caught by Promise.any
-            // This allows Promise.any to continue to the next promise
-            const errorText = await res.text();
-            throw new Error(`Node ${i} error: ${res.status} - ${errorText}`);
-          }
-          const json = await res.json();
-          // Check if data is empty or invalid
-          if (!json.data || (Array.isArray(json.data) && json.data.length === 0)) {
-            throw new Error(`Node ${i} returned empty data`);
-          }
-          return json;
-        })
-    );
-  }
-
   try {
-    // Use Promise.any to get the first successful response
-    const data = await Promise.any(fetchPromises);
-    return NextResponse.json(data, {
-      headers: {
-        'Cache-Control': 'public, max-age=300, stale-while-revalidate=600', // Cache for 5 minutes
-      },
-    });
-  } catch (err: any) {
-    console.error('Failed to fetch K-line data from any node:', err);
-    // If all promises reject, Promise.any throws an AggregateError.
-    // We'll return a generic "Stock not found" or "Cluster error" message.
-    return NextResponse.json({ error: 'Stock not found in cluster or cluster data unavailable' }, { status: 404 });
+    const result = await Promise.any(
+      NODES.map(async (nodeUrl, i) => {
+        const url = `${nodeUrl}/api/v1/kline?code=${code}&timeframe=${timeframe}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+
+        if (!res.ok) throw new Error('Not on this node');
+
+        const json = await res.json();
+        if (!json.data || (Array.isArray(json.data) && json.data.length === 0)) {
+            throw new Error('Empty data');
+        }
+        return json;
+      })
+    );
+    return NextResponse.json(result);
+  } catch (error: any) {
+    console.error("Error fetching kline data:", error);
+    if (error instanceof AggregateError) {
+        return NextResponse.json({ error: 'Stock not found in cluster or cluster data unavailable' }, { status: 500 });
+    }
+    return NextResponse.json({ error: 'Failed to fetch kline data' }, { status: 500 });
   }
 }
