@@ -73,8 +73,8 @@ class DataManager:
         if stock_list_file:
             path = hf_hub_download(repo_id=self.repo_id, filename=stock_list_file[-1], repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
             stock_list_df = pl.read_parquet(path)
-            self.code_to_name = {row["code"]: row["name"] for row in stock_list_df.select(["code", "name"]).iter_rows()}
-            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name with {len(self.code_to_name)} entries.")
+            self.code_to_name = {row["code"]: row["code_name"] for row in stock_list_df.select(["code", "code_name"]).iter_rows()}
+            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name from 'code_name' column with {len(self.code_to_name)} entries.")
         else:
             logger.warning(f"Node {self.node_index}: stock_list.parquet not found, stock name search may not work.")
 
