@@ -83,6 +83,14 @@ class DataManager:
             self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
 
+            # Extract code and name for self.code_to_name
+            if "name" in self.df_daily.columns:
+                unique_stocks = self.df_daily.select(["code", "name"]).unique()
+                self.code_to_name = {row["code"]: row["name"] for row in unique_stocks.iter_rows()}
+                logger.info(f"Node {self.node_index}: Populated code_to_name with {len(self.code_to_name)} entries.")
+            else:
+                logger.warning(f"Node {self.node_index}: 'name' column not found in df_daily, cannot populate code_to_name.")
+
         # --- 2. 板块行情加载 ---
         sector_files = sorted([f for f in all_files if "sector_kline_" in f])
         s_dfs = []
@@ -178,7 +186,7 @@ class DataManager:
             cur.execute("""
                 SELECT metric_key FROM metrics_stats 
                 WHERE metric_key NOT LIKE '%_W' AND metric_key NOT LIKE '%_M'
-                ORDER BY usage_count DESC LIMIT 250
+                ORDER BY usage_count DESC LIMIT 251
             """)
             top_keys = [row[0] for row in cur.fetchall()]
             cur.close(); conn.close()

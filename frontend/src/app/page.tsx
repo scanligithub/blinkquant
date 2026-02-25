@@ -4,7 +4,9 @@ import dynamic from 'next/dynamic';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
   ssr: false,
-  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...</div>
+  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
+
+
 });
 
 const TIMEFRAMES = [
@@ -18,8 +20,12 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState('D');
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedStock, setSelectedStock] = useState<{code: string, data: any} | null>(null);
+    const [selectedStock, setSelectedStock] = useState<{code: string, name: string, data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<{code: string; name: string}[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false); // New state for search loading
   
   // 监控数据
   const [clusterStatus, setClusterStatus] = useState<any>(null);
@@ -37,6 +43,29 @@ export default function Home() {
     const timer = setInterval(fetchStatus, 5000); // 5秒刷新一次
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (searchQuery.length > 1) { // Only search if query is at least 2 characters
+      setSearchLoading(true);
+      const handler = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+          if (!res.ok) throw new Error('Search failed');
+          const json = await res.json();
+          setSearchResults(json);
+        } catch (err) {
+          console.error('Failed to search stocks:', err);
+          setSearchResults([]);
+        } finally {
+          setSearchLoading(false);
+        }
+      }, 500); // Debounce for 500ms
+      return () => clearTimeout(handler);
+    } else {
+      setSearchResults([]);
+      setSearchLoading(false);
+    }
+  }, [searchQuery]);
 
   const handleSelect = async () => {
     setLoading(true);
@@ -61,7 +90,7 @@ export default function Home() {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
       if (!res.ok) throw new Error('Fetch failed');
       const json = await res.json();
-      if (json.data) setSelectedStock({ code, data: json.data });
+            if (json.data) setSelectedStock({ code, name: json.name, data: json.data });
       else alert('Stock data empty');
     } catch (err) { alert('Failed to load kline'); }
     setChartLoading(false);
@@ -128,6 +157,43 @@ export default function Home() {
 
         {/* Input Controls */}
         <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          {/* Search Input */}
+          <div className="flex flex-col gap-4 mb-6">
+            <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Search Stock</label>
+            <div className="relative">
+              <input 
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 w-full"
+                placeholder="e.g. 000952, Ping An, PA"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchLoading && (
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                  <div className="w-4 h-4 border-2 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
+                </div>
+              )}
+            </div>
+
+            {searchQuery.length > 1 && searchResults.length > 0 && (
+              <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-xl shadow-lg mt-1 max-h-60 overflow-y-auto custom-scrollbar">
+                {searchResults.map((stock) => (
+                  <button
+                    key={stock.code}
+                    onClick={() => {
+                      viewStock(stock.code);
+                      setSearchQuery(''); // Clear search query after selection
+                      setSearchResults([]); // Clear search results
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 flex justify-between items-center"
+                  >
+                    <span className="font-mono text-slate-700">{stock.code}</span>
+                    <span className="text-sm text-slate-500">{stock.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-col gap-4">
             <div className="flex justify-between items-end">
                <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Strategy Formula</label>
@@ -209,6 +275,7 @@ export default function Home() {
               {selectedStock && (
                  <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-2 rounded-lg border border-slate-200 shadow-sm">
                     <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
+                    <span className="ml-2 text-lg text-slate-500">{selectedStock.name}</span>
                     <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                       {timeframe === 'D' ? '1-DAY' : timeframe === 'W' ? '1-WEEK' : '1-MONTH'}
                     </span>

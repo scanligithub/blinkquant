@@ -76,12 +76,32 @@ def get_kline(code: str, timeframe: str = "D"):
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
 
+    stock_name = data_manager.code_to_name.get(code, "Unknown") # Get stock name
+
     # 优化 A: 列式传输 (大幅减少 JSON 体积)
     return {
         "code": code,
+        "name": stock_name,
         "type": "columnar",
         "data": stock_df.to_dict(as_series=False)
     }
+
+@router.get("/search")
+def search_stocks(q: str):
+    if not q:
+        return []
+
+    q_lower = q.lower()
+    results = []
+    
+    # Iterate through the code_to_name dictionary
+    for code, name in data_manager.code_to_name.items():
+        if q_lower in code.lower() or q_lower in name.lower():
+            results.append({"code": code, "name": name})
+        if len(results) >= 10: # Limit to 10 results
+            break
+            
+    return results
 
 @router.get("/status")
 def get_node_status():
