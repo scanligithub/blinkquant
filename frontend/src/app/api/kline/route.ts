@@ -1,6 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
 
-const NODE_COUNT = 3; // As per whitepaper, 3 backend nodes
+const NODES = [
+  'https://scanli-blinkquant-node1.hf.space/api/v1/kline',
+  'https://scanli-blinkquant-node2.hf.space/api/v1/kline',
+  'https://scanli-blinkquant-node3.hf.space/api/v1/kline'
+];
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -12,10 +16,8 @@ export async function GET(req: NextRequest) {
   }
 
   const fetchPromises = [];
-  for (let i = 0; i < NODE_COUNT; i++) {
-    // Construct the URL for each backend node via Next.js reverse proxy
-    // Example: /api/node0/api/v1/kline?code=...&timeframe=...
-    const nodeUrl = `/api/node${i}/api/v1/kline?code=${code}&timeframe=${timeframe}`;
+  for (let i = 0; i < NODES.length; i++) {
+    const nodeUrl = `${NODES[i]}?code=${code}&timeframe=${timeframe}`;
     fetchPromises.push(
       fetch(nodeUrl, { signal: AbortSignal.timeout(5000) }) // 5-second timeout
         .then(async res => {
