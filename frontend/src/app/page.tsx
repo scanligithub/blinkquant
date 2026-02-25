@@ -170,8 +170,9 @@ export default function Home() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && searchResults.length > 0) {
-                    viewStock(searchResults[0].code);
+                  if (e.key === 'Enter' && searchQuery.trim() !== '') {
+                    const codeToView = searchResults.length > 0 ? searchResults[0].code : searchQuery;
+                    viewStock(codeToView);
                     setSearchQuery(''); // Clear search query after selection
                     setSearchResults([]); // Clear search results
                   }
