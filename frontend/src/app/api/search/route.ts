@@ -2,15 +2,19 @@ import { NextResponse } from 'next/server';
 
 const NODE_COUNT = 3; // As per whitepaper, 3 backend nodes
 
+// Hardcoded Hugging Face Space URLs as environment variables might not be reliable in Edge runtime or rewrites don't apply to internal fetches
+const HF_NODE_URLS = [
+  process.env.HF_NODE_0_URL || 'https://scanli-blinkquant-node1.hf.space',
+  process.env.HF_NODE_1_URL || 'https://scanli-blinkquant-node2.hf.space',
+  process.env.HF_NODE_2_URL || 'https://scanli-blinkquant-node3.hf.space',
+];
+
 export async function GET(request: Request) {
   console.log('API Search Route: Request received');
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  const host = request.headers.get('host');
-  const baseUrl = `${protocol}://${host}`;
 
-  console.log(`API Search Route: Query parameter 'q': ${q}, Base URL: ${baseUrl}`);
+  console.log(`API Search Route: Query parameter 'q': ${q}`);
 
   if (!q) {
     return NextResponse.json([]);
@@ -20,7 +24,7 @@ export async function GET(request: Request) {
   for (let i = 0; i < NODE_COUNT; i++) {
     // Construct the URL for each backend node via Next.js reverse proxy
     // Example: /api/node0/api/v1/search?q=query
-    const nodeUrl = `${baseUrl}/api/node${i}/api/v1/search?q=${encodeURIComponent(q)}`;
+    const nodeUrl = `${HF_NODE_URLS[i]}/api/v1/search?q=${encodeURIComponent(q)}`;
     console.log(`API Search Route: Fetching from node ${i} with URL: ${nodeUrl}`);
     fetchPromises.push(
       fetch(nodeUrl)
