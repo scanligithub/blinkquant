@@ -110,16 +110,6 @@ def search_stocks(q: str):
     q_pinyin_initials = _get_pinyin_initials(q)
     logger.info(f"Search query: {q}, q_lower: {q_lower}, q_pinyin_initials: {q_pinyin_initials}")
 
-    # Targeted debug for specific stock
-    zhongman_shiyou_code = "sh.603619"
-    if zhongman_shiyou_code in data_manager.code_to_name:
-        name = data_manager.code_to_name[zhongman_shiyou_code]
-        name_lower = name.lower()
-        name_pinyin_initials = _get_pinyin_initials(name)
-        logger.info(f"Targeted Debug: Stock {zhongman_shiyou_code} (中曼石油) found in code_to_name: name='{name}', name_lower='{name_lower}', name_pinyin_initials='{name_pinyin_initials}'")
-    else:
-        logger.info(f"Targeted Debug: Stock {zhongman_shiyou_code} (中曼石油) NOT found in code_to_name.")
-
     results = []
     
     for code, name in data_manager.code_to_name.items():
@@ -134,7 +124,6 @@ def search_stocks(q: str):
         if len(results) >= 10: # Limit to 10 results
             break
             
-    logger.info(f"Search results for query '{q}': found {len(results)} items. Results: {results}")
     return results
 
 @router.get("/status")

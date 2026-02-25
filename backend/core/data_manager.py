@@ -94,6 +94,10 @@ class DataManager:
                 self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
                 self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
                 logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
+                # Log a sample of loaded stock codes
+                if not self.df_daily.is_empty():
+                    sample_codes = self.df_daily.select(pl.col("code")).unique().head(10).to_series().to_list()
+                    logger.info(f"Node {self.node_index}: Sample of loaded stock codes: {sample_codes}")
             except Exception as e:
                 logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
         else:
