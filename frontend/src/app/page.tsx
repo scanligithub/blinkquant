@@ -125,6 +125,14 @@ export default function Home() {
         throw new Error(errorMessage);
       }
 
+      const successContentType = res.headers.get('Content-Type');
+      if (!successContentType || !successContentType.includes('application/octet-stream')) {
+          const responseText = await res.text(); // Read as text to see what it is
+          console.error('Expected application/octet-stream, but received:', successContentType);
+          console.error('Response body for unexpected Content-Type:', responseText);
+          throw new Error(`Unexpected response format: Expected Parquet, but received ${successContentType}. Response: ${responseText.substring(0, 200)}...`);
+      }
+
       // Fetch the Parquet data as ArrayBuffer
       const arrayBuffer = await res.arrayBuffer();
       console.log('Received arrayBuffer with byteLength:', arrayBuffer.byteLength);

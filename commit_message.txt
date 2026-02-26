@@ -1,1 +1,1 @@
-feat: Add extensive logging to frontend kline fetch for debugging
+feat: Add detailed parquet parsing logs in frontend viewStock
