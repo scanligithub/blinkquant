@@ -1,1 +1,1 @@
-feat: Add webpack fallback for fs, path, crypto in next.config.js to fix Vercel build errors. Add logging to frontend for debugging viewStock trigger.
+fix: Refine parquetjs import to fix Vercel build errors
