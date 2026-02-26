@@ -138,14 +138,21 @@ export default function Home() {
         throw new Error('Received empty or invalid Parquet data');
       }
 
-      const formattedData = records.map(record => ({
-        time: record.date,
-        open: record.open,
-        high: record.high,
-        low: record.low,
-        close: record.close,
-        volume: record.volume,
-      }));
+      const formattedData = records.map(record => {
+        console.log('Raw date from Parquet:', record.date, typeof record.date); // Debug log
+        const dateInMillis = record.date * 24 * 60 * 60 * 1000; // Convert days to milliseconds
+        const dateObject = new Date(dateInMillis);
+        const formattedDateString = dateObject.toISOString().slice(0, 10); // Format to YYYY-MM-DD
+
+        return {
+          time: formattedDateString,
+          open: record.open,
+          high: record.high,
+          low: record.low,
+          close: record.close,
+          volume: record.volume,
+        };
+      });
 
       let stockName = code;
       const foundInSearchResults = searchResults.find(s => s.code === code);
