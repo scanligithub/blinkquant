@@ -7,7 +7,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
-import { ParquetReader } from 'parquet-wasm/bundler/web';
+import wasmInit, { readParquet } from "parquet-wasm";
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -131,12 +131,9 @@ export default function Home() {
         throw new Error('Received empty data buffer for kline');
       }
 
-      const reader = await ParquetReader.openBuffer(new Uint8Array(buffer));
-      const arrowTable = await reader.readNextRowGroup();
+      await wasmInit(); // Initialize wasm module
 
-      if (!arrowTable) {
-        throw new Error('Failed to read Parquet data: No row groups found.');
-      }
+      const arrowTable = await readParquet(new Uint8Array(buffer));
 
       const formattedData = [];
       const dateColumn = arrowTable.getChild('date');
