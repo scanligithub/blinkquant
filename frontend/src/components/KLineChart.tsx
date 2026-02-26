@@ -41,7 +41,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
 
     if (Array.isArray(data)) {
         formattedData = data.map(item => ({
-            time: item.date,
+            time: item.time,
             open: item.open,
             high: item.high,
             low: item.low,
