@@ -7,6 +7,11 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
+const getParquetReader = async () => {
+  const { readParquet } = await import('@apache-arrow/io/parquet');
+  return readParquet;
+};
+
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
   { label: 'Weekly', value: 'W' },
@@ -123,30 +128,55 @@ export default function Home() {
         throw new Error(errorMessage);
       }
 
-      const json = await res.json();
-      console.log('Received JSON data:', json);
+      const buffer = await res.arrayBuffer();
 
-      if (json.data && json.data.length > 0) {
-        const formattedData = json.data.map((record: any) => ({
-          time: record.date,
-          open: record.open,
-          high: record.high,
-          low: record.low,
-          close: record.close,
-          volume: record.volume,
-        }));
-        const stockName = json.data[0].name || json.data[0].code_name || 'N/A';
-        setSelectedStock({ code, name: stockName, data: formattedData });
-      } else {
-        console.warn('Stock data empty or invalid JSON data after parsing.');
+      if (buffer.byteLength === 0) {
+        throw new Error('Received empty data buffer for kline');
       }
+
+      const readParquetFunc = await getParquetReader();
+      const table = await readParquetFunc(new Uint8Array(buffer));
+
+      const formattedData = [];
+      const dateColumn = table.getColumn('date');
+      const openColumn = table.getColumn('open');
+      const highColumn = table.getColumn('high');
+      const lowColumn = table.getColumn('low');
+      const closeColumn = table.getColumn('close');
+      const volumeColumn = table.getColumn('volume');
+
+      if (!dateColumn || !openColumn || !highColumn || !lowColumn || !closeColumn || !volumeColumn) {
+        throw new Error('Missing expected columns in Parquet data');
+      }
+
+      for (let i = 0; i < table.numRows; i++) {
+        formattedData.push({
+          time: dateColumn.get(i),
+          open: openColumn.get(i),
+          high: highColumn.get(i),
+          low: lowColumn.get(i),
+          close: closeColumn.get(i),
+          volume: volumeColumn.get(i),
+        });
+      }
+
+      let stockName = code;
+      const foundInSearchResults = searchResults.find(s => s.code === code);
+      if (foundInSearchResults) {
+        stockName = foundInSearchResults.name;
+      } else if (selectedStock && selectedStock.code === code && selectedStock.name) {
+        stockName = selectedStock.name;
+      }
+      
+      setSelectedStock({ code, name: stockName, data: formattedData });
     } catch (err: any) {
       console.error('Failed to load kline:', err);
       console.error('Full error object:', err);
+      alert(`Failed to load kline: ${err.message || err}`);
     } finally {
       setChartLoading(false);
     }
-  }, [timeframe]);
+  }, [timeframe, searchResults, selectedStock]);
 
   return (
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
