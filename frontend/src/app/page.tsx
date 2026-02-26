@@ -138,11 +138,17 @@ export default function Home() {
         throw new Error('Received empty or invalid Parquet data');
       }
 
-      const formattedData = records.map(record => {
+      const formattedData = records.map((record, index) => {
+        if (index < 5) {
+            console.log(`Raw record from Parquet [${index}]:`, record);
+        }
         console.log('Raw date from Parquet:', record.date, typeof record.date); // Debug log
         let timeValue;
 
-        if (record.date instanceof Date) {
+        if (record.date === null || record.date === undefined) {
+            console.error('Date record is null or undefined:', record.date);
+            throw new Error('Date record is null or undefined in K-line data');
+        } else if (record.date instanceof Date) {
           timeValue = Math.floor(record.date.getTime() / 1000); // Convert Date object to Unix timestamp (seconds)
           console.log('Formatted timeValue (Unix seconds):', timeValue); // Add log for formatted value
         } else {
@@ -150,7 +156,7 @@ export default function Home() {
           throw new Error('Invalid date format received from K-line data');
         }
 
-        return {
+        const formattedRecord = {
           time: timeValue,
           open: record.open,
           high: record.high,
@@ -158,7 +164,14 @@ export default function Home() {
           close: record.close,
           volume: record.volume,
         };
+
+        if (index < 5) {
+            console.log(`Formatted data point for chart [${index}]:`, formattedRecord);
+        }
+        return formattedRecord;
       });
+
+      console.log('Total number of formatted data points:', formattedData.length);
 
       let stockName = code;
       const foundInSearchResults = searchResults.find(s => s.code === code);
