@@ -29,13 +29,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-      // 为蜡烛图设置价格尺度，占据顶部 50% 的空间
+      // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.05, bottom: 0.5 },
+        scaleMargins: { top: 0, bottom: 0.3 },
       });
-      // 为量能柱创建独立的价格尺度，占据底部 40% 的空间
+      // 为量能柱创建独立的价格尺度，占据底部 30% 的空间
       chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.6, bottom: 0.05 },
+        scaleMargins: { top: 0.7, bottom: 0 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -61,36 +61,52 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     let volumeData = [];
 
     if (Array.isArray(data)) {
-        formattedData = data.map(item => ({
-            time: item.time,
-            open: item.open,
-            high: item.high,
-            low: item.low,
-            close: item.close,
-        }));
+        // 计算价格范围用于归一化
+        const allPrices = data.flatMap(item => [item.open, item.high, item.low, item.close]);
+        const minPrice = Math.min(...allPrices);
+        const maxPrice = Math.max(...allPrices);
+        const priceRange = maxPrice - minPrice;
+        
         // 计算最大成交量用于归一化
         const maxVolume = Math.max(...data.map(item => item.volume));
-        // 同时生成 volume 数据，归一化到 0-100 范围
+        
+        formattedData = data.map(item => ({
+            time: item.time,
+            // 归一化价格：乘以70%加上固定的0.3
+            open: ((item.open - minPrice) / priceRange) * 0.7 + 0.3,
+            high: ((item.high - minPrice) / priceRange) * 0.7 + 0.3,
+            low: ((item.low - minPrice) / priceRange) * 0.7 + 0.3,
+            close: ((item.close - minPrice) / priceRange) * 0.7 + 0.3,
+        }));
+        // 同时生成 volume 数据，归一化到 0-0.3 范围
         volumeData = data.map(item => ({
           time: item.time,
-          value: (item.volume / maxVolume) * 100,
+          value: (item.volume / maxVolume) * 0.3,
           color: item.close >= item.open ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
         }));
     } else if (data && typeof data === 'object' && Array.isArray(data.date)) {
         const len = data.date.length;
+        // 计算价格范围用于归一化
+        const allPrices = [...data.open, ...data.high, ...data.low, ...data.close];
+        const minPrice = Math.min(...allPrices);
+        const maxPrice = Math.max(...allPrices);
+        const priceRange = maxPrice - minPrice;
+        
         // 计算最大成交量用于归一化
         const maxVolume = Math.max(...data.volume);
+        
         for (let i = 0; i < len; i++) {
             formattedData.push({
                 time: data.date[i],
-                open: data.open[i],
-                high: data.high[i],
-                low: data.low[i],
-                close: data.close[i],
+                // 归一化价格：乘以70%加上固定的0.3
+                open: ((data.open[i] - minPrice) / priceRange) * 0.7 + 0.3,
+                high: ((data.high[i] - minPrice) / priceRange) * 0.7 + 0.3,
+                low: ((data.low[i] - minPrice) / priceRange) * 0.7 + 0.3,
+                close: ((data.close[i] - minPrice) / priceRange) * 0.7 + 0.3,
             });
             volumeData.push({
               time: data.date[i],
-              value: (data.volume[i] / maxVolume) * 100,
+              value: (data.volume[i] / maxVolume) * 0.3,
               color: data.close[i] >= data.open[i] ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
             });
         }
