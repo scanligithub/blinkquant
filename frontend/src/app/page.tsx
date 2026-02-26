@@ -140,12 +140,21 @@ export default function Home() {
 
       const formattedData = records.map(record => {
         console.log('Raw date from Parquet:', record.date, typeof record.date); // Debug log
-        const dateInMillis = record.date * 24 * 60 * 60 * 1000; // Convert days to milliseconds
-        const dateObject = new Date(dateInMillis);
-        const formattedDateString = dateObject.toISOString().slice(0, 10); // Format to YYYY-MM-DD
+        let timeValue;
+
+        if (typeof record.date === 'string') {
+          timeValue = record.date; // Assume it's already in YYYY-MM-DD format
+        } else if (typeof record.date === 'number') {
+          // Assume it's a Unix timestamp (seconds since epoch)
+          const dateObject = new Date(record.date * 1000); // Convert to milliseconds
+          timeValue = dateObject.toISOString().slice(0, 10); // Format to YYYY-MM-DD
+        } else {
+          console.error('Unexpected date format from Parquet:', record.date);
+          throw new Error('Invalid date format received from K-line data');
+        }
 
         return {
-          time: formattedDateString,
+          time: timeValue,
           open: record.open,
           high: record.high,
           low: record.low,
