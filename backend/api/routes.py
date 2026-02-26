@@ -86,6 +86,7 @@ def get_kline(code: str, timeframe: str = "D"):
     buffer = io.BytesIO()
     stock_df.write_parquet(buffer, compression="zstd")
     buffer.seek(0) # 将文件指针移到开头
+    logger.info(f"Parquet data for {code} ({timeframe}) size: {len(buffer.getvalue())} bytes")
 
     # 以二进制响应的形式返回 Parquet 数据
     return Response(content=buffer.getvalue(), media_type="application/octet-stream")
