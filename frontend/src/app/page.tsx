@@ -143,7 +143,8 @@ export default function Home() {
         let timeValue;
 
         if (record.date instanceof Date) {
-          timeValue = record.date.toISOString().slice(0, 10); // Format Date object to YYYY-MM-DD
+          timeValue = Math.floor(record.date.getTime() / 1000); // Convert Date object to Unix timestamp (seconds)
+          console.log('Formatted timeValue (Unix seconds):', timeValue); // Add log for formatted value
         } else {
           console.error('Unexpected date format from Parquet, expected Date object:', record.date);
           throw new Error('Invalid date format received from K-line data');
