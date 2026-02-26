@@ -8,6 +8,9 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
 });
 
 import { parquetReadObjects } from 'hyparquet';
+import { init as initCompressors } from 'hyparquet-compressors';
+
+initCompressors();
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
