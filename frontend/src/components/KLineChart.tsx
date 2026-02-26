@@ -36,6 +36,8 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     // 为主价格尺度设置上部空间，留出底部给量能柱
     // 为主价格尺度（右侧）设置上部空间，留出底部给量能柱
     // 为主价格尺度（右侧）设置底部 30% 的空间，留给量能柱
+    // 为主价格尺度（默认右侧）设置底部 30% 的空间，留给量能柱
+    // 为主价格尺度（默认右侧）设置底部 30% 的空间，留给量能柱
     chart.priceScale('right').applyOptions({
       scaleMargins: { top: 0, bottom: 0.3 },
     });
