@@ -1,1 +1,1 @@
-feat: Revert Parquet parsing to frontend client and improve error handling
+feat: Add extensive logging to frontend kline fetch for debugging

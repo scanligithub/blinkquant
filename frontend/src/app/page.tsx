@@ -127,10 +127,15 @@ export default function Home() {
 
       // Fetch the Parquet data as ArrayBuffer
       const arrayBuffer = await res.arrayBuffer();
+      console.log('Received arrayBuffer with byteLength:', arrayBuffer.byteLength);
 
       // Dynamically import parquetjs to avoid SSR issues if it has Node.js dependencies
       const parquet = await import('parquetjs');
+      console.log('parquetjs imported successfully.');
+
       const reader = await parquet.ParquetReader.openBuffer(arrayBuffer);
+      console.log('ParquetReader opened buffer.');
+
       const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader(); // Adjust based on parquetjs version/API
 
       const records: any[] = [];
@@ -142,8 +147,9 @@ export default function Home() {
         records.push(record);
       }
       await reader.close();
-
+      console.log('ParquetReader closed. Total records read:', records.length);
       if (records.length > 0) {
+        console.log('Sample of first record:', records[0]); // Log the first record
         // Map parquet records to lightweight-charts format
         const formattedData = records.map(record => ({
           time: record.date, // Assuming 'date' is in a format lightweight-charts understands (e.g., 'YYYY-MM-DD' string or timestamp)
@@ -153,12 +159,14 @@ export default function Home() {
           close: record.close,
           volume: record.volume,
         }));
+        console.log('Sample of first formatted data point:', formattedData[0]); // Log first formatted data point
         
         // Extract stock name if available in the first record (assuming it's consistent)
         const stockName = records[0].name || records[0].code_name || 'N/A'; // Prioritize 'name' then 'code_name'
 
         setSelectedStock({ code, name: stockName, data: formattedData });
       } else {
+        console.warn('Stock data empty or invalid Parquet data after parsing.'); // Change alert to console.warn
         alert('Stock data empty or invalid Parquet data.');
       }
     } catch (err: any) { 
