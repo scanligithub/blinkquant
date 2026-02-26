@@ -93,9 +93,60 @@ export default function Home() {
     setLoading(false);
   };
 
-  const viewStock = useCallback(async (code: string) => {\n    setChartLoading(true);\n    try {\n      console.log(\'Entering viewStock for code:\', code);\n      const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);\n      \n      console.log(\'Fetch response status:\', res.status);\n      console.log(\'Fetch response ok:\', res.ok);\n      console.log(\'Fetch response Content-Type:\', res.headers.get(\'Content-Type\'));\n\n      if (!res.ok) {\n        let errorMessage = \'Fetch failed\';\n        const contentType = res.headers.get(\'Content-Type\');\n        if (contentType && contentType.includes(\'application/json\')) {\n          try {\n            const errorJson = await res.json();\n            errorMessage = errorJson.error || errorJson.detail || errorMessage;\n            console.error(\'Error from server (JSON):\', errorJson);\n          } catch (jsonError) {\n            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;\n            console.error(\'Failed to parse JSON error:\', jsonError);\n          }\n        } else {\n          const errorText = await res.text();\n          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;\n          console.error(\'Error from server (text):\', errorText);\n        }\n        throw new Error(errorMessage);\n      }\n\n      const json = await res.json();\n      console.log(\'Received JSON data:\', json);\n\n      if (json.data && json.data.length > 0) {\n        const formattedData = json.data.map((record: any) => ({\n          time: record.date,\n          open: record.open,\n          high: record.high,\n          low: record.low,\
-          close: record.close,\n          volume: record.volume,\
-        }));\n        const stockName = json.data[0].name || json.data[0].code_name || \'N/A\';\n        setSelectedStock({ code, name: stockName, data: formattedData });\n      } else {\n        console.warn(\'Stock data empty or invalid JSON data after parsing.\');\n      }\n    } catch (err: any) {\n      console.error(\'Failed to load kline:\', err);\n      console.error(\'Full error object:\', err);\n    } finally {\n      setChartLoading(false);\n    }\n  }, [timeframe]);
+  const viewStock = useCallback(async (code: string) => {
+    setChartLoading(true);
+    try {
+      console.log('Entering viewStock for code:', code);
+      const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
+      
+      console.log('Fetch response status:', res.status);
+      console.log('Fetch response ok:', res.ok);
+      console.log('Fetch response Content-Type:', res.headers.get('Content-Type'));
+
+      if (!res.ok) {
+        let errorMessage = 'Fetch failed';
+        const contentType = res.headers.get('Content-Type');
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            const errorJson = await res.json();
+            errorMessage = errorJson.error || errorJson.detail || errorMessage;
+            console.error('Error from server (JSON):', errorJson);
+          } catch (jsonError) {
+            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;
+            console.error('Failed to parse JSON error:', jsonError);
+          }
+        } else {
+          const errorText = await res.text();
+          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;
+          console.error('Error from server (text):', errorText);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const json = await res.json();
+      console.log('Received JSON data:', json);
+
+      if (json.data && json.data.length > 0) {
+        const formattedData = json.data.map((record: any) => ({
+          time: record.date,
+          open: record.open,
+          high: record.high,
+          low: record.low,
+          close: record.close,
+          volume: record.volume,
+        }));
+        const stockName = json.data[0].name || json.data[0].code_name || 'N/A';
+        setSelectedStock({ code, name: stockName, data: formattedData });
+      } else {
+        console.warn('Stock data empty or invalid JSON data after parsing.');
+      }
+    } catch (err: any) {
+      console.error('Failed to load kline:', err);
+      console.error('Full error object:', err);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [timeframe]);
 
   return (
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
@@ -252,7 +303,7 @@ export default function Home() {
                      onClick={() => setTimeframe(tf.value)}
                      className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
                        timeframe === tf.value 
-                         ? 'bg-white text-blue-600 shadow-sm border border-slate-200' 
+                         ? 'bg-white text-blue-600 shadow-sm border border-blue-100' 
                          : 'text-slate-500 hover:text-slate-700'
                      }`}
                    >
