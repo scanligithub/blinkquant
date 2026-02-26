@@ -29,13 +29,15 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       },
     });
     // 为量能柱添加独立的价格尺度，留出底部空间
+    // 为量能柱设置占底部 30% 的空间（上部 70% 留给蜡烛图）
     chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: { top: 0.7, bottom: 0 },
     });
     // 为主价格尺度设置上部空间，留出底部给量能柱
     // 为主价格尺度（右侧）设置上部空间，留出底部给量能柱
+    // 为主价格尺度（右侧）设置底部 30% 的空间，留给量能柱
     chart.priceScale('right').applyOptions({
-      scaleMargins: { top: 0, bottom: 0.2 },
+      scaleMargins: { top: 0, bottom: 0.3 },
     });
 
     const candlestickSeries = chart.addCandlestickSeries({
