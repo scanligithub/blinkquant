@@ -78,7 +78,11 @@ def get_kline(code: str, timeframe: str = "D"):
     
     # 过滤并排序
     stock_df = df.filter(pl.col("code") == code).sort("date")
-    
+
+    logger.info(f"stock_df shape: {stock_df.shape}")
+    logger.info(f"stock_df schema: {stock_df.schema}")
+    logger.info(f"stock_df head:\n{stock_df.head(5)}")
+
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
 
