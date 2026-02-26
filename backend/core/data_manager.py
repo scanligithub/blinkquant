@@ -103,7 +103,34 @@ class DataManager:
         else:
             logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
 
-        # --- 2. 板块行情加载 ---
+        # --- 2. 资金流数据加载与合并 ---
+        money_flow_files = sorted([f for f in all_files if "stock_money_flow_" in f])
+        money_flow_lazy_frames = []
+        for f in money_flow_files:
+            path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
+            lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
+            money_flow_lazy_frames.append(lf)
+        
+        if money_flow_lazy_frames:
+            logger.info(f"Node {self.node_index}: Streaming {len(money_flow_lazy_frames)} money flow partitions...")
+            try:
+                df_money_flow = pl.concat(money_flow_lazy_frames).collect(streaming=True)
+                df_money_flow = df_money_flow.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+                
+                # 合并资金流数据到 df_daily
+                if self.df_daily is not None and not self.df_daily.is_empty():
+                    self.df_daily = self.df_daily.join(df_money_flow, on=["date", "code"], how="left")
+                    logger.info(f"Node {self.node_index}: Merged money flow data. New df_daily shape: {self.df_daily.shape}")
+                else:
+                    self.df_daily = df_money_flow
+                    logger.info(f"Node {self.node_index}: No kline data, df_daily initialized with money flow data. Shape: {self.df_daily.shape}")
+
+            except Exception as e:
+                logger.error(f"Node {self.node_index}: Error collecting or merging money flow data: {e}", exc_info=True)
+        else:
+            logger.warning(f"Node {self.node_index}: No lazy_frames for money flow data found.")
+
+        # --- 3. 板块行情加载 ---
         sector_files = sorted([f for f in all_files if "sector_kline_" in f])
         s_dfs = []
         for f in sector_files:
