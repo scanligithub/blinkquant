@@ -23,24 +23,21 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       height: 400,
       rightPriceScale: {
         borderColor: '#e2e8f0', // 边框颜色
+   // (removed invalid scaleMargins from rightPriceScale)
       },
       timeScale: {
         borderColor: '#e2e8f0',
       },
     });
-    // 为量能柱添加独立的价格尺度，留出底部空间
-    // 为量能柱设置占底部 30% 的空间（上部 70% 留给蜡烛图）
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.7, bottom: 0 },
-    });
-    // 为主价格尺度设置上部空间，留出底部给量能柱
-    // 为主价格尺度（右侧）设置上部空间，留出底部给量能柱
-    // 为主价格尺度（右侧）设置底部 30% 的空间，留给量能柱
-    // 为主价格尺度（默认右侧）设置底部 30% 的空间，留给量能柱
-    // 为主价格尺度（默认右侧）设置底部 30% 的空间，留给量能柱
-    chart.priceScale('right').applyOptions({
-      scaleMargins: { top: 0, bottom: 0.3 },
-    });
+      // 为量能柱添加独立的价格尺度，留出底部空间
+      // 为量能柱设置占底部 30% 的空间（上部 70% 留给蜡烛图）
+      chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.7, bottom: 0 },
+      });
+      // 为主价格尺度（右侧）设置底部间距，留给量能柱
+      chart.priceScale('right').applyOptions({
+        scaleMargins: { top: 0, bottom: 0.3 },
+      });
 
     const candlestickSeries = chart.addCandlestickSeries({
       upColor: '#ef4444',
@@ -52,6 +49,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     // 新增量能柱（Histogram）系列
     const volumeSeries = chart.addHistogramSeries({
       priceScaleId: 'volume',
+      // overlay property removed as not supported for histogram series
       // 使用默认的柱宽和颜色，可根据需求自行调整
     });
     // 已删除重复的 volumeSeries 声明
