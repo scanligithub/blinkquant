@@ -1,6 +1,7 @@
 'use client'; 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import * as parquet from 'parquetjs'; // Added for Parquet data parsing
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
   ssr: false,
@@ -100,23 +101,57 @@ export default function Home() {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
       if (!res.ok) {
         let errorMessage = 'Fetch failed';
-        try {
-          const errorText = await res.text(); // Read as text to get raw error message
-          // Attempt to parse as JSON in case it's a JSON error from the Edge API route
-          const errorJson = JSON.parse(errorText); 
-          errorMessage = errorJson.error || errorJson.detail || errorMessage;
-        } catch (jsonError) {
-          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorMessage}`; // Fallback if not JSON
+        const contentType = res.headers.get('Content-Type');
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            const errorJson = await res.json(); // Attempt to parse as JSON if Content-Type is JSON
+            errorMessage = errorJson.error || errorJson.detail || errorMessage;
+          } catch (jsonError) {
+            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;
+          }
+        } else {
+          // If not JSON, just get the text and display it, or use a generic message
+          const errorText = await res.text();
+          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;
         }
         throw new Error(errorMessage);
       }
 
-      const json = await res.json(); // Now expecting JSON from the Edge API Route
+      // Fetch the Parquet data as ArrayBuffer
+      const arrayBuffer = await res.arrayBuffer();
 
-      if (json.data && json.data.length > 0) {
-        setSelectedStock({ code, name: json.name, data: json.data });
+      // Dynamically import parquetjs to avoid SSR issues if it has Node.js dependencies
+      const parquet = await import('parquetjs');
+      const reader = await parquet.ParquetReader.openBuffer(arrayBuffer);
+      const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader(); // Adjust based on parquetjs version/API
+
+      const records: any[] = [];
+      while (true) {
+        const record = await cursor.read();
+        if (record === null) {
+          break;
+        }
+        records.push(record);
+      }
+      await reader.close();
+
+      if (records.length > 0) {
+        // Map parquet records to lightweight-charts format
+        const formattedData = records.map(record => ({
+          time: record.date, // Assuming 'date' is in a format lightweight-charts understands (e.g., 'YYYY-MM-DD' string or timestamp)
+          open: record.open,
+          high: record.high,
+          low: record.low,
+          close: record.close,
+          volume: record.volume,
+        }));
+        
+        // Extract stock name if available in the first record (assuming it's consistent)
+        const stockName = records[0].name || records[0].code_name || 'N/A'; // Prioritize 'name' then 'code_name'
+
+        setSelectedStock({ code, name: stockName, data: formattedData });
       } else {
-        alert('Stock data empty or invalid.');
+        alert('Stock data empty or invalid Parquet data.');
       }
     } catch (err: any) { 
       console.error('Failed to load kline:', err);

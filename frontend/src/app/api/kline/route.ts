@@ -1,5 +1,4 @@
 import { NextResponse, NextRequest } from 'next/server';
-import * as parquet from 'parquetjs'; // Added for Parquet data parsing
 
 export const runtime = 'edge';
 
@@ -38,42 +37,10 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    const parquet = await import('parquetjs');
-    const reader = await parquet.ParquetReader.openBuffer(resultBuffer);
-    const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader();
-
-    const records: any[] = [];
-    while (true) {
-      const record = await cursor.read();
-      if (record === null) {
-        break;
-      }
-      records.push(record);
-    }
-    await reader.close();
-
-    if (records.length === 0) {
-      throw new Error('Empty or invalid Parquet data after parsing');
-    }
-
-    const formattedData = records.map(record => ({
-      time: record.date,
-      open: record.open,
-      high: record.high,
-      low: record.low,
-      close: record.close,
-      volume: record.volume,
-    }));
-    
-    const stockName = records[0].name || records[0].code_name || 'N/A';
-
-    return NextResponse.json({
-      code: code,
-      name: stockName,
-      data: formattedData
-    }, {
+    return new NextResponse(resultBuffer, {
       status: 200,
       headers: {
+        'Content-Type': 'application/octet-stream',
         'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=60'
       }
     });

@@ -1,0 +1,1 @@
+feat: Move Parquet parsing to Edge API Route and revert frontend client
