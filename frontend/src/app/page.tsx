@@ -7,7 +7,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
-import { parquetRead } from 'hyparquet';
+import { parquetReadObjects } from 'hyparquet';
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -131,23 +131,20 @@ export default function Home() {
         throw new Error('Received empty data buffer for kline');
       }
 
-      const { date, open, high, low, close, volume } = await parquetRead({ file: buffer });
+      const records = await parquetReadObjects({ file: buffer });
 
-      if (!date || !open || !high || !low || !close || !volume) {
-        throw new Error('Missing expected columns in Parquet data');
+      if (!records || records.length === 0) {
+        throw new Error('Received empty or invalid Parquet data');
       }
 
-      const formattedData = [];
-      for (let i = 0; i < date.length; i++) {
-        formattedData.push({
-          time: date[i],
-          open: open[i],
-          high: high[i],
-          low: low[i],
-          close: close[i],
-          volume: volume[i],
-        });
-      }
+      const formattedData = records.map(record => ({
+        time: record.date,
+        open: record.open,
+        high: record.high,
+        low: record.low,
+        close: record.close,
+        volume: record.volume,
+      }));
 
       let stockName = code;
       const foundInSearchResults = searchResults.find(s => s.code === code);
