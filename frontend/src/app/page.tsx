@@ -8,9 +8,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
 });
 
 import { parquetReadObjects } from 'hyparquet';
-import { init as initCompressors } from 'hyparquet-compressors';
-
-initCompressors();
+import { compressors } from 'hyparquet-compressors';
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -134,7 +132,7 @@ export default function Home() {
         throw new Error('Received empty data buffer for kline');
       }
 
-      const records = await parquetReadObjects({ file: buffer });
+      const records = await parquetReadObjects({ file: buffer, compressors });
 
       if (!records || records.length === 0) {
         throw new Error('Received empty or invalid Parquet data');
