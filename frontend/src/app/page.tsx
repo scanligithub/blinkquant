@@ -98,6 +98,7 @@ export default function Home() {
   const viewStock = async (code: string) => {
     setChartLoading(true);
     try {
+      console.log('Entering viewStock for code:', code);
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
       
       console.log('Fetch response status:', res.status);
@@ -175,12 +176,12 @@ export default function Home() {
         setSelectedStock({ code, name: stockName, data: formattedData });
       } else {
         console.warn('Stock data empty or invalid Parquet data after parsing.'); // Change alert to console.warn
-        alert('Stock data empty or invalid Parquet data.');
+        // alert('Stock data empty or invalid Parquet data.'); // Temporarily disabled for debugging
       }
     } catch (err: any) { 
       console.error('Failed to load kline:', err);
       console.error('Full error object:', err); // Log the full error object
-      alert(`Failed to load kline: ${err.message || err}`); 
+      // alert(`Failed to load kline: ${err.message || err}`); // Temporarily disabled for debugging
     }
     setChartLoading(false);
   };
