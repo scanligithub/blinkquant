@@ -29,30 +29,31 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-      // 为量能柱添加独立的价格尺度，留出顶部空间
-      // 为量能柱设置占顶部 30% 的空间（下部 70% 留给蜡烛图）
-      chart.priceScale('volume').applyOptions({
-        // Allocate top 30% of chart height for volume bars
-        scaleMargins: { top: 0, bottom: 0.7 },
-      });
-      // 为主价格尺度（右侧）设置顶部间距，留给量能柱
+      // 为蜡烛图设置价格尺度，占据顶部 50% 的空间
       chart.priceScale('right').applyOptions({
-        // Allocate 70% of chart height for candlesticks (top margin 30%)
-        scaleMargins: { top: 0.3, bottom: 0 },
+        scaleMargins: { top: 0.05, bottom: 0.5 },
+      });
+      // 为量能柱创建独立的价格尺度，占据底部 40% 的空间
+      chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.6, bottom: 0.05 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
+      priceScaleId: 'right',
       upColor: '#ef4444',
       downColor: '#22c55e',
       borderVisible: false,
       wickUpColor: '#ef4444',
       wickDownColor: '#22c55e',
     });
-    // 新增量能柱（Histogram）系列
+    // 新增量能柱（Histogram）系列，使用独立的 volume 价格尺度
     const volumeSeries = chart.addHistogramSeries({
       priceScaleId: 'volume',
-      // overlay property removed as not supported for histogram series
-      // 使用默认的柱宽和颜色，可根据需求自行调整
+      priceFormat: {
+        type: 'volume',
+      },
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
     // 已删除重复的 volumeSeries 声明
 
@@ -67,14 +68,18 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             low: item.low,
             close: item.close,
         }));
-        // 同时生成 volume 数据
+        // 计算最大成交量用于归一化
+        const maxVolume = Math.max(...data.map(item => item.volume));
+        // 同时生成 volume 数据，归一化到 0-100 范围
         volumeData = data.map(item => ({
           time: item.time,
-          value: item.volume,
+          value: (item.volume / maxVolume) * 100,
           color: item.close >= item.open ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
         }));
     } else if (data && typeof data === 'object' && Array.isArray(data.date)) {
         const len = data.date.length;
+        // 计算最大成交量用于归一化
+        const maxVolume = Math.max(...data.volume);
         for (let i = 0; i < len; i++) {
             formattedData.push({
                 time: data.date[i],
@@ -85,7 +90,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             });
             volumeData.push({
               time: data.date[i],
-              value: data.volume[i],
+              value: (data.volume[i] / maxVolume) * 100,
               color: data.close[i] >= data.open[i] ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
             });
         }
