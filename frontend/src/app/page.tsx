@@ -2,12 +2,9 @@
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 
-
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
   ssr: false,
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
-
-
 });
 
 const TIMEFRAMES = [
@@ -35,6 +32,7 @@ export default function Home() {
   const [chartLoading, setChartLoading] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
+
   const [searchResults, setSearchResults] = useState<{code: string; name: string}[]>([]);
   const [searchLoading, setSearchLoading] = useState(false); // New state for search loading
   
@@ -95,96 +93,9 @@ export default function Home() {
     setLoading(false);
   };
 
-  const viewStock = async (code: string) => {
-    setChartLoading(true);
-    try {
-      console.log('Entering viewStock for code:', code);
-      const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
-      
-      console.log('Fetch response status:', res.status);
-      console.log('Fetch response ok:', res.ok);
-      console.log('Fetch response Content-Type:', res.headers.get('Content-Type'));
-
-      if (!res.ok) {
-        let errorMessage = 'Fetch failed';
-        const contentType = res.headers.get('Content-Type');
-        if (contentType && contentType.includes('application/json')) {
-          try {
-            const errorJson = await res.json(); // Attempt to parse as JSON if Content-Type is JSON
-            errorMessage = errorJson.error || errorJson.detail || errorMessage;
-            console.error('Error from server (JSON):', errorJson);
-          } catch (jsonError) {
-            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;
-            console.error('Failed to parse JSON error:', jsonError);
-          }
-        } else {
-          // If not JSON, just get the text and display it, or use a generic message
-          const errorText = await res.text();
-          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;
-          console.error('Error from server (text):', errorText);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const successContentType = res.headers.get('Content-Type');
-      if (!successContentType || !successContentType.includes('application/octet-stream')) {
-          const responseText = await res.text(); // Read as text to see what it is
-          console.error('Expected application/octet-stream, but received:', successContentType);
-          console.error('Response body for unexpected Content-Type:', responseText);
-          throw new Error(`Unexpected response format: Expected Parquet, but received ${successContentType}. Response: ${responseText.substring(0, 200)}...`);
-      }
-
-      // Fetch the Parquet data as ArrayBuffer
-      const arrayBuffer = await res.arrayBuffer();
-      console.log('Received arrayBuffer with byteLength:', arrayBuffer.byteLength);
-
-      // Dynamically import parquetjs to avoid SSR issues if it has Node.js dependencies
-      const { ParquetReader: DynamicParquetReader } = await import('parquetjs');
-      console.log('parquetjs imported successfully via dynamic import.');
-
-      const reader = await DynamicParquetReader.openBuffer(arrayBuffer);
-      console.log('ParquetReader opened buffer.');
-
-      const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader(); // Adjust based on parquetjs version/API
-
-      const records: any[] = [];
-      while (true) {
-        const record = await cursor.read();
-        if (record === null) {
-          break;
-        }
-        records.push(record);
-      }
-      await reader.close();
-      console.log('ParquetReader closed. Total records read:', records.length);
-      if (records.length > 0) {
-        console.log('Sample of first record:', records[0]); // Log the first record
-        // Map parquet records to lightweight-charts format
-        const formattedData = records.map(record => ({
-          time: record.date, // Assuming 'date' is in a format lightweight-charts understands (e.g., 'YYYY-MM-DD' string or timestamp)
-          open: record.open,
-          high: record.high,
-          low: record.low,
-          close: record.close,
-          volume: record.volume,
-        }));
-        console.log('Sample of first formatted data point:', formattedData[0]); // Log first formatted data point
-        
-        // Extract stock name if available in the first record (assuming it's consistent)
-        const stockName = records[0].name || records[0].code_name || 'N/A'; // Prioritize 'name' then 'code_name'
-
-        setSelectedStock({ code, name: stockName, data: formattedData });
-      } else {
-        console.warn('Stock data empty or invalid Parquet data after parsing.'); // Change alert to console.warn
-        // alert('Stock data empty or invalid Parquet data.'); // Temporarily disabled for debugging
-      }
-    } catch (err: any) { 
-      console.error('Failed to load kline:', err);
-      console.error('Full error object:', err); // Log the full error object
-      // alert(`Failed to load kline: ${err.message || err}`); // Temporarily disabled for debugging
-    }
-    setChartLoading(false);
-  };
+  const viewStock = useCallback(async (code: string) => {\n    setChartLoading(true);\n    try {\n      console.log(\'Entering viewStock for code:\', code);\n      const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);\n      \n      console.log(\'Fetch response status:\', res.status);\n      console.log(\'Fetch response ok:\', res.ok);\n      console.log(\'Fetch response Content-Type:\', res.headers.get(\'Content-Type\'));\n\n      if (!res.ok) {\n        let errorMessage = \'Fetch failed\';\n        const contentType = res.headers.get(\'Content-Type\');\n        if (contentType && contentType.includes(\'application/json\')) {\n          try {\n            const errorJson = await res.json();\n            errorMessage = errorJson.error || errorJson.detail || errorMessage;\n            console.error(\'Error from server (JSON):\', errorJson);\n          } catch (jsonError) {\n            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;\n            console.error(\'Failed to parse JSON error:\', jsonError);\n          }\n        } else {\n          const errorText = await res.text();\n          errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;\n          console.error(\'Error from server (text):\', errorText);\n        }\n        throw new Error(errorMessage);\n      }\n\n      const json = await res.json();\n      console.log(\'Received JSON data:\', json);\n\n      if (json.data && json.data.length > 0) {\n        const formattedData = json.data.map((record: any) => ({\n          time: record.date,\n          open: record.open,\n          high: record.high,\n          low: record.low,\
+          close: record.close,\n          volume: record.volume,\
+        }));\n        const stockName = json.data[0].name || json.data[0].code_name || \'N/A\';\n        setSelectedStock({ code, name: stockName, data: formattedData });\n      } else {\n        console.warn(\'Stock data empty or invalid JSON data after parsing.\');\n      }\n    } catch (err: any) {\n      console.error(\'Failed to load kline:\', err);\n      console.error(\'Full error object:\', err);\n    } finally {\n      setChartLoading(false);\n    }\n  }, [timeframe]);
 
   return (
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
