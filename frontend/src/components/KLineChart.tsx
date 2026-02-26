@@ -29,13 +29,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-      // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
+      // 为蜡烛图设置价格尺度，占据顶部 80% 的空间
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0, bottom: 0.3 },
-      });
-      // 为量能柱创建独立的价格尺度，占据底部 30% 的空间
-      chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.7, bottom: 0 },
+        scaleMargins: { top: 0, bottom: 0.2 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -46,14 +42,18 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       wickUpColor: '#ef4444',
       wickDownColor: '#22c55e',
     });
-    // 新增量能柱（Histogram）系列，使用独立的 volume 价格尺度
+    // 新增量能柱（Histogram）系列，使用独立的 price scale
     const volumeSeries = chart.addHistogramSeries({
-      priceScaleId: 'volume',
+      priceScaleId: '',
       priceFormat: {
         type: 'volume',
       },
       lastValueVisible: false,
       priceLineVisible: false,
+    });
+    // 设置量能图的 scaleMargins，将其压在底部 20% 区域
+    chart.priceScale('').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
     // 已删除重复的 volumeSeries 声明
 
