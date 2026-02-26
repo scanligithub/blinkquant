@@ -29,13 +29,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-      // 为蜡烛图设置价格尺度
+      // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.1, bottom: 0.3 },
+        scaleMargins: { top: 0, bottom: 0.3 },
       });
-      // 为量能柱创建独立的价格尺度，设置比例
+      // 为量能柱创建独立的价格尺度，占据底部 30% 的空间
       chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
+        scaleMargins: { top: 0.7, bottom: 0 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
