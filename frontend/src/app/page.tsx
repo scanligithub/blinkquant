@@ -99,6 +99,11 @@ export default function Home() {
     setChartLoading(true);
     try {
       const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
+      
+      console.log('Fetch response status:', res.status);
+      console.log('Fetch response ok:', res.ok);
+      console.log('Fetch response Content-Type:', res.headers.get('Content-Type'));
+
       if (!res.ok) {
         let errorMessage = 'Fetch failed';
         const contentType = res.headers.get('Content-Type');
@@ -106,13 +111,16 @@ export default function Home() {
           try {
             const errorJson = await res.json(); // Attempt to parse as JSON if Content-Type is JSON
             errorMessage = errorJson.error || errorJson.detail || errorMessage;
+            console.error('Error from server (JSON):', errorJson);
           } catch (jsonError) {
             errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;
+            console.error('Failed to parse JSON error:', jsonError);
           }
         } else {
           // If not JSON, just get the text and display it, or use a generic message
           const errorText = await res.text();
           errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;
+          console.error('Error from server (text):', errorText);
         }
         throw new Error(errorMessage);
       }
@@ -155,6 +163,7 @@ export default function Home() {
       }
     } catch (err: any) { 
       console.error('Failed to load kline:', err);
+      console.error('Full error object:', err); // Log the full error object
       alert(`Failed to load kline: ${err.message || err}`); 
     }
     setChartLoading(false);
