@@ -32,6 +32,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     });
+    // 为主价格尺度设置上部空间，留出底部给量能柱
+    // 为主价格尺度（右侧）设置上部空间，留出底部给量能柱
+    chart.priceScale('right').applyOptions({
+      scaleMargins: { top: 0, bottom: 0.2 },
+    });
 
     const candlestickSeries = chart.addCandlestickSeries({
       upColor: '#ef4444',
@@ -42,16 +47,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     });
     // 新增量能柱（Histogram）系列
     const volumeSeries = chart.addHistogramSeries({
-      color: '#26a69a',
       priceScaleId: 'volume',
       // 使用默认的柱宽和颜色，可根据需求自行调整
     });
-    // 新增量能柱（Histogram）系列
-    // 删除重复的 volumeSeries 声明
+    // 已删除重复的 volumeSeries 声明
 
     let formattedData = [];
     let volumeData = [];
-    // 删除重复的 volumeData 声明
 
     if (Array.isArray(data)) {
         formattedData = data.map(item => ({
@@ -62,7 +64,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             close: item.close,
         }));
         // 同时生成 volume 数据
-        volumeData = data.map(item => ({ time: item.time, value: item.volume }));
+        volumeData = data.map(item => ({
+          time: item.time,
+          value: item.volume,
+          color: item.close >= item.open ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
+        }));
     } else if (data && typeof data === 'object' && Array.isArray(data.date)) {
         const len = data.date.length;
         for (let i = 0; i < len; i++) {
@@ -73,7 +79,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
                 low: data.low[i],
                 close: data.close[i],
             });
-            volumeData.push({ time: data.date[i], value: data.volume[i] });
+            volumeData.push({
+              time: data.date[i],
+              value: data.volume[i],
+              color: data.close[i] >= data.open[i] ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
+            });
         }
     }
 
