@@ -7,10 +7,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
-const getParquetReader = async () => {
-  const { readParquet } = await import('@apache-arrow/io/parquet');
-  return readParquet;
-};
+import { ParquetReader } from 'parquet-wasm/bundler/web';
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -134,22 +131,26 @@ export default function Home() {
         throw new Error('Received empty data buffer for kline');
       }
 
-      const readParquetFunc = await getParquetReader();
-      const table = await readParquetFunc(new Uint8Array(buffer));
+      const reader = await ParquetReader.openBuffer(new Uint8Array(buffer));
+      const arrowTable = await reader.readNextRowGroup();
+
+      if (!arrowTable) {
+        throw new Error('Failed to read Parquet data: No row groups found.');
+      }
 
       const formattedData = [];
-      const dateColumn = table.getColumn('date');
-      const openColumn = table.getColumn('open');
-      const highColumn = table.getColumn('high');
-      const lowColumn = table.getColumn('low');
-      const closeColumn = table.getColumn('close');
-      const volumeColumn = table.getColumn('volume');
+      const dateColumn = arrowTable.getChild('date');
+      const openColumn = arrowTable.getChild('open');
+      const highColumn = arrowTable.getChild('high');
+      const lowColumn = arrowTable.getChild('low');
+      const closeColumn = arrowTable.getChild('close');
+      const volumeColumn = arrowTable.getChild('volume');
 
       if (!dateColumn || !openColumn || !highColumn || !lowColumn || !closeColumn || !volumeColumn) {
         throw new Error('Missing expected columns in Parquet data');
       }
 
-      for (let i = 0; i < table.numRows; i++) {
+      for (let i = 0; i < arrowTable.length; i++) {
         formattedData.push({
           time: dateColumn.get(i),
           open: openColumn.get(i),
