@@ -29,14 +29,16 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-      // 为量能柱添加独立的价格尺度，留出底部空间
-      // 为量能柱设置占底部 30% 的空间（上部 70% 留给蜡烛图）
+      // 为量能柱添加独立的价格尺度，留出顶部空间
+      // 为量能柱设置占顶部 30% 的空间（下部 70% 留给蜡烛图）
       chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.7, bottom: 0 },
+        // Allocate top 30% of chart height for volume bars
+        scaleMargins: { top: 0, bottom: 0.7 },
       });
-      // 为主价格尺度（右侧）设置底部间距，留给量能柱
+      // 为主价格尺度（右侧）设置顶部间距，留给量能柱
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0, bottom: 0.3 },
+        // Allocate 70% of chart height for candlesticks (top margin 30%)
+        scaleMargins: { top: 0.3, bottom: 0 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
