@@ -142,14 +142,10 @@ export default function Home() {
         console.log('Raw date from Parquet:', record.date, typeof record.date); // Debug log
         let timeValue;
 
-        if (typeof record.date === 'string') {
-          timeValue = record.date; // Assume it's already in YYYY-MM-DD format
-        } else if (typeof record.date === 'number') {
-          // Assume it's a Unix timestamp (seconds since epoch)
-          const dateObject = new Date(record.date * 1000); // Convert to milliseconds
-          timeValue = dateObject.toISOString().slice(0, 10); // Format to YYYY-MM-DD
+        if (record.date instanceof Date) {
+          timeValue = record.date.toISOString().slice(0, 10); // Format Date object to YYYY-MM-DD
         } else {
-          console.error('Unexpected date format from Parquet:', record.date);
+          console.error('Unexpected date format from Parquet, expected Date object:', record.date);
           throw new Error('Invalid date format received from K-line data');
         }
 
