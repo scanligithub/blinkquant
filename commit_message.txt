@@ -1,1 +1,1 @@
-fix: Add Content-Type check for successful kline response in frontend
+fix: Temporarily disable alerts and add initial log in frontend viewStock for debugging

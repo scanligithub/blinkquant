@@ -257,9 +257,12 @@ export default function Home() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={async (e) => {
+                  console.log('onKeyDown triggered. Key:', e.key, 'SearchQuery:', searchQuery);
                   if (e.key === 'Enter' && searchQuery.trim() !== '') {
+                    console.log('Enter key pressed with search query:', searchQuery);
                     if (searchResults.length > 0) {
                       // If there are search results, use the first one
+                      console.log('Viewing stock from search results:', searchResults[0].code);
                       viewStock(searchResults[0].code);
                       setSearchQuery('');
                       setSearchResults([]);
@@ -268,26 +271,30 @@ export default function Home() {
                       const isNumericCode = /^[0-9]+$/.test(searchQuery.trim());
                       if (isNumericCode) {
                         // It's a numeric code, format and view directly
+                        console.log('Viewing stock as numeric code:', searchQuery);
                         viewStock(formatStockCode(searchQuery));
                         setSearchQuery('');
                         setSearchResults([]);
                       } else {
                         // It's likely a name, perform an immediate search to get the code
+                        console.log('Performing immediate name search for:', searchQuery);
                         setSearchLoading(true);
                         try {
                           const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
                           if (!res.ok) throw new Error('Immediate search failed');
                           const json = await res.json();
                           if (json.length > 0) {
+                            console.log('Immediate name search found:', json[0].code);
                             viewStock(json[0].code);
                             setSearchQuery('');
                             setSearchResults([]);
                           } else {
-                            alert('Stock not found by name search.');
+                            console.warn('Stock not found by name search for:', searchQuery);
+                            // alert('Stock not found by name search.'); // Temporarily disabled
                           }
                         } catch (err) {
                           console.error('Failed to search stocks by name:', err);
-                          alert(`Failed to search stocks by name: ${ (err as Error).message || err}`);
+                          // alert(`Failed to search stocks by name: ${ (err as Error).message || err}`); // Temporarily disabled
                         } finally {
                           setSearchLoading(false);
                         }
@@ -309,6 +316,7 @@ export default function Home() {
                   <button
                     key={stock.code}
                     onClick={() => {
+                      console.log('Search result item clicked. Code:', stock.code);
                       viewStock(stock.code);
                       setSearchQuery(''); // Clear search query after selection
                       setSearchResults([]); // Clear search results
@@ -380,7 +388,10 @@ export default function Home() {
                     {results.map(code => (
                       <button 
                         key={code} 
-                        onClick={() => viewStock(code)}
+                        onClick={() => {
+                          console.log('Strategy result item clicked. Code:', code);
+                          viewStock(code);
+                        }}
                         className={`w-full text-left px-4 py-3 rounded-lg transition-all text-sm font-mono flex justify-between items-center group
                           ${selectedStock?.code === code 
                             ? 'bg-blue-50 text-blue-700 border border-blue-100 font-bold' 
