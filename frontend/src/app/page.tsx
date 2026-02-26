@@ -1,5 +1,5 @@
 'use client'; 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
