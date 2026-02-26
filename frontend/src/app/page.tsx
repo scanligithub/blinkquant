@@ -7,8 +7,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
-import wasmInit, { readParquet, Table } from "parquet-wasm";
-import { tableFromIPC } from "apache-arrow";
+import { readParquet } from 'hyparquet';
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -132,31 +131,21 @@ export default function Home() {
         throw new Error('Received empty data buffer for kline');
       }
 
-      await wasmInit(); // Initialize wasm module
+      const { date, open, high, low, close, volume } = await readParquet(new Uint8Array(buffer));
 
-      const arrowWasmTable = await readParquet(new Uint8Array(buffer));
-      const arrowTable = tableFromIPC(arrowWasmTable.intoIPCStream());
-
-      const formattedData = [];
-      const dateColumn = arrowTable.getChild('date');
-      const openColumn = arrowTable.getChild('open');
-      const highColumn = arrowTable.getChild('high');
-      const lowColumn = arrowTable.getChild('low');
-      const closeColumn = arrowTable.getChild('close');
-      const volumeColumn = arrowTable.getChild('volume');
-
-      if (!dateColumn || !openColumn || !highColumn || !lowColumn || !closeColumn || !volumeColumn) {
+      if (!date || !open || !high || !low || !close || !volume) {
         throw new Error('Missing expected columns in Parquet data');
       }
 
-      for (let i = 0; i < arrowTable.length; i++) {
+      const formattedData = [];
+      for (let i = 0; i < date.length; i++) {
         formattedData.push({
-          time: dateColumn.get(i),
-          open: openColumn.get(i),
-          high: highColumn.get(i),
-          low: lowColumn.get(i),
-          close: closeColumn.get(i),
-          volume: volumeColumn.get(i),
+          time: date[i],
+          open: open[i],
+          high: high[i],
+          low: low[i],
+          close: close[i],
+          volume: volume[i],
         });
       }
 
