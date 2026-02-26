@@ -1,1 +1,1 @@
-fix: Temporarily disable alerts and add initial log in frontend viewStock for debugging
+feat: Add webpack fallback for fs, path, crypto in next.config.js to fix Vercel build errors. Add logging to frontend for debugging viewStock trigger.

@@ -1,7 +1,7 @@
 'use client'; 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import * as parquet from 'parquetjs'; // Added for Parquet data parsing
+import { ParquetReader } from 'parquetjs'; // Added for Parquet data parsing
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
   ssr: false,
@@ -142,7 +142,7 @@ export default function Home() {
       const parquet = await import('parquetjs');
       console.log('parquetjs imported successfully.');
 
-      const reader = await parquet.ParquetReader.openBuffer(arrayBuffer);
+      const reader = await ParquetReader.openBuffer(arrayBuffer);
       console.log('ParquetReader opened buffer.');
 
       const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader(); // Adjust based on parquetjs version/API
