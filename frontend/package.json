@@ -12,7 +12,7 @@
     "@vercel/postgres": "^0.7.2",
     "clsx": "^2.0.0",
     "hyparquet": "^1.17.1",
-    "hyparquet-compressors": "^1.17.1",
+    "hyparquet-compressors": "^1.1.1",
     "lightweight-charts": "^4.1.0",
     "next": "14.1.0",
     "react": "^18",
