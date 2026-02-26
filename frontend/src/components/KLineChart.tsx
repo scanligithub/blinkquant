@@ -34,8 +34,10 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         scaleMargins: { top: 0, bottom: 0.3 },
       });
       // 为量能柱创建独立的价格尺度，占据底部 30% 的空间
+      // 设置价格范围为0-0.3，确保量能柱只显示在底部
       chart.priceScale('volume').applyOptions({
         scaleMargins: { top: 0.7, bottom: 0 },
+        mode: 0, // Normalized mode
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
