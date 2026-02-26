@@ -95,9 +95,7 @@ class DataManager:
                 self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
                 logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
                 # Log a sample of loaded stock codes
-                if not self.df_daily.is_empty():
-                    sample_codes = self.df_daily.select(pl.col("code")).unique().head(10).to_series().to_list()
-                    logger.info(f"Node {self.node_index}: Sample of loaded stock codes: {sample_codes}")
+
             except Exception as e:
                 logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
         else:
@@ -112,7 +110,6 @@ class DataManager:
             money_flow_lazy_frames.append(lf)
         
         if money_flow_lazy_frames:
-            logger.info(f"Node {self.node_index}: Streaming {len(money_flow_lazy_frames)} money flow partitions...")
             try:
                 df_money_flow = pl.concat(money_flow_lazy_frames).collect(streaming=True)
                 df_money_flow = df_money_flow.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
@@ -120,15 +117,13 @@ class DataManager:
                 # 合并资金流数据到 df_daily
                 if self.df_daily is not None and not self.df_daily.is_empty():
                     self.df_daily = self.df_daily.join(df_money_flow, on=["date", "code"], how="left")
-                    logger.info(f"Node {self.node_index}: Merged money flow data. New df_daily shape: {self.df_daily.shape}")
                 else:
                     self.df_daily = df_money_flow
-                    logger.info(f"Node {self.node_index}: No kline data, df_daily initialized with money flow data. Shape: {self.df_daily.shape}")
 
             except Exception as e:
                 logger.error(f"Node {self.node_index}: Error collecting or merging money flow data: {e}", exc_info=True)
         else:
-            logger.warning(f"Node {self.node_index}: No lazy_frames for money flow data found.")
+            pass
 
         # --- 3. 板块行情加载 ---
         sector_files = sorted([f for f in all_files if "sector_kline_" in f])

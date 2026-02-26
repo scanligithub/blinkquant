@@ -82,9 +82,7 @@ def get_kline(code: str, timeframe: str = "D"):
     # 仅选择 K 线图所需的核心列
     stock_df = stock_df.select(["date", "code", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ", "isST", "adjustFactor", "net_amount", "main_net", "super_net", "large_net", "medium_net", "small_net"])
 
-    logger.info(f"Filtered stock_df shape: {stock_df.shape}")
-    logger.info(f"Filtered stock_df schema: {stock_df.schema}")
-    logger.info(f"Filtered stock_df head:\n{stock_df.head(5)}")
+
 
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
@@ -93,7 +91,7 @@ def get_kline(code: str, timeframe: str = "D"):
     buffer = io.BytesIO()
     stock_df.write_parquet(buffer, compression="zstd")
     buffer.seek(0) # 将文件指针移到开头
-    logger.info(f"Parquet data for {code} ({timeframe}) size: {len(buffer.getvalue())} bytes")
+    
 
     # 以二进制响应的形式返回 Parquet 数据
     return Response(content=buffer.getvalue(), media_type="application/octet-stream")

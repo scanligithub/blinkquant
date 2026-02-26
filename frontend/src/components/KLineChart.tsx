@@ -11,13 +11,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
 
     // --- 浅色主题配置 ---
     const chart = createChart(chartContainerRef.current, {
-      layout: { 
+      layout: {
         background: { type: ColorType.Solid, color: '#ffffff' }, // 白色背景
         textColor: '#334155' // 深灰文字
       },
-      grid: { 
+      grid: {
         vertLines: { color: '#f1f5f9' }, // 极浅网格
-        horzLines: { color: '#f1f5f9' } 
+        horzLines: { color: '#f1f5f9' }
       },
       width: chartContainerRef.current.clientWidth,
       height: 400,
@@ -28,16 +28,30 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         borderColor: '#e2e8f0',
       },
     });
-
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#ef4444', 
-      downColor: '#22c55e', 
-      borderVisible: false,
-      wickUpColor: '#ef4444', 
-      wickDownColor: '#22c55e',
+    // 为量能柱添加独立的价格尺度，留出底部空间
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
 
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#ef4444',
+      downColor: '#22c55e',
+      borderVisible: false,
+      wickUpColor: '#ef4444',
+      wickDownColor: '#22c55e',
+    });
+    // 新增量能柱（Histogram）系列
+    const volumeSeries = chart.addHistogramSeries({
+      color: '#26a69a',
+      priceScaleId: 'volume',
+      // 使用默认的柱宽和颜色，可根据需求自行调整
+    });
+    // 新增量能柱（Histogram）系列
+    // 删除重复的 volumeSeries 声明
+
     let formattedData = [];
+    let volumeData = [];
+    // 删除重复的 volumeData 声明
 
     if (Array.isArray(data)) {
         formattedData = data.map(item => ({
@@ -47,6 +61,8 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             low: item.low,
             close: item.close,
         }));
+        // 同时生成 volume 数据
+        volumeData = data.map(item => ({ time: item.time, value: item.volume }));
     } else if (data && typeof data === 'object' && Array.isArray(data.date)) {
         const len = data.date.length;
         for (let i = 0; i < len; i++) {
@@ -57,10 +73,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
                 low: data.low[i],
                 close: data.close[i],
             });
+            volumeData.push({ time: data.date[i], value: data.volume[i] });
         }
     }
 
     candlestickSeries.setData(formattedData);
+    // 设置量能柱数据
+    volumeSeries.setData(volumeData);
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
