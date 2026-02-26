@@ -1,7 +1,6 @@
 'use client'; 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import * as parquet from 'parquetjs'; // Added for Parquet data parsing
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), { 
   ssr: false,
@@ -112,41 +111,12 @@ export default function Home() {
         throw new Error(errorMessage);
       }
 
-      // Fetch the Parquet data as ArrayBuffer
-      const arrayBuffer = await res.arrayBuffer();
+      const json = await res.json(); // Now expecting JSON from the Edge API Route
 
-      // Dynamically import parquetjs to avoid SSR issues if it has Node.js dependencies
-      const parquet = await import('parquetjs');
-      const reader = await parquet.ParquetReader.openBuffer(arrayBuffer);
-      const cursor = reader.get == undefined ? reader.getRecordReader() : reader.getRecordReader(); // Adjust based on parquetjs version/API
-
-      const records: any[] = [];
-      while (true) {
-        const record = await cursor.read();
-        if (record === null) {
-          break;
-        }
-        records.push(record);
-      }
-      await reader.close();
-
-      if (records.length > 0) {
-        // Map parquet records to lightweight-charts format
-        const formattedData = records.map(record => ({
-          time: record.date, // Assuming 'date' is in a format lightweight-charts understands (e.g., 'YYYY-MM-DD' string or timestamp)
-          open: record.open,
-          high: record.high,
-          low: record.low,
-          close: record.close,
-          volume: record.volume,
-        }));
-        
-        // Extract stock name if available in the first record (assuming it's consistent)
-        const stockName = records[0].name || records[0].code_name || 'N/A'; // Prioritize 'name' then 'code_name'
-
-        setSelectedStock({ code, name: stockName, data: formattedData });
+      if (json.data && json.data.length > 0) {
+        setSelectedStock({ code, name: json.name, data: json.data });
       } else {
-        alert('Stock data empty or invalid Parquet data.');
+        alert('Stock data empty or invalid.');
       }
     } catch (err: any) { 
       console.error('Failed to load kline:', err);
