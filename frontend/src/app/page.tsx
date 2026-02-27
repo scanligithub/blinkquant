@@ -359,8 +359,8 @@ export default function Home() {
                     }}
                     className="w-full text-left px-4 py-2 hover:bg-slate-50 flex justify-between items-center"
                   >
-                    <span className="font-mono text-slate-700">{stock.code}</span>
-                    <span className="text-sm text-slate-500">{stock.name}</span>
+                    <span className="font-medium text-slate-900">{stock.name}</span>
+                    <span className="text-sm font-mono text-slate-500">{stock.code}</span>
                   </button>
                 ))}
               </div>
