@@ -93,18 +93,34 @@ export default function Home() {
       const qLower = searchQuery.toLowerCase();
       const qPinyin = getPinyinInitials(searchQuery);
 
+      console.log('=== 搜索调试 ===');
+      console.log('搜索查询:', searchQuery);
+      console.log('qLower:', qLower);
+      console.log('qPinyin:', qPinyin);
+      console.log('stockList 总数:', stockList.length);
+      console.log('stockList 前5条:', stockList.slice(0, 5));
+
       const results = stockList.filter(({code, name}) => {
         // 过滤掉空名称的股票
         if (!name || !name.trim()) return false;
         
         const nameLower = name.toLowerCase();
         const namePinyin = getPinyinInitials(name);
-        return (
-          code.toLowerCase().includes(qLower) ||
-          nameLower.includes(qLower) ||
-          (qPinyin && namePinyin.includes(qPinyin))
-        );
+        
+        const matchCode = code.toLowerCase().includes(qLower);
+        const matchName = nameLower.includes(qLower);
+        const matchPinyin = qPinyin && namePinyin.includes(qPinyin);
+        
+        if (matchCode || matchName || matchPinyin) {
+          console.log(`匹配: ${code} - ${name}`, { matchCode, matchName, matchPinyin, namePinyin });
+        }
+        
+        return matchCode || matchName || matchPinyin;
       }).slice(0, 10); // 只返回前 10 条
+
+      console.log('搜索结果数量:', results.length);
+      console.log('搜索结果:', results);
+      console.log('=== 搜索调试结束 ===');
 
       setSearchResults(results);
       setSearchLoading(false);
