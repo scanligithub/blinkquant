@@ -138,8 +138,17 @@ def search_stocks(q: str):
 @router.get("/stock-list")
 def get_stock_list():
     """返回所有股票代码与名称的映射，仅用于前端缓存"""
-    return [{"code": code, "name": name}
-            for code, name in data_manager.code_to_name.items()]
+    # 调试：打印前10条数据
+    sample = list(data_manager.code_to_name.items())[:10]
+    logger.info(f"Stock list sample: {sample}")
+    
+    # 过滤掉空名称的股票
+    filtered = [{"code": code, "name": name}
+                for code, name in data_manager.code_to_name.items()
+                if name and name.strip()]
+    
+    logger.info(f"Total stocks: {len(data_manager.code_to_name)}, Filtered: {len(filtered)}")
+    return filtered
 
 @router.get("/status")
 def get_node_status():
