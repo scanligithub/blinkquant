@@ -94,6 +94,9 @@ export default function Home() {
       const qPinyin = getPinyinInitials(searchQuery);
 
       const results = stockList.filter(({code, name}) => {
+        // 过滤掉空名称的股票
+        if (!name || !name.trim()) return false;
+        
         const nameLower = name.toLowerCase();
         const namePinyin = getPinyinInitials(name);
         return (
