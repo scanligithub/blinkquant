@@ -65,13 +65,22 @@ export default function Home() {
     const loadStockList = async () => {
       const cached = localStorage.getItem('stockList');
       if (cached) {
-        setStockList(JSON.parse(cached));
+        const parsed = JSON.parse(cached);
+        console.log('=== stockList 加载 ===');
+        console.log('从缓存加载 stockList:', parsed.length, '条');
+        console.log('缓存前5条:', parsed.slice(0, 5));
+        console.log('=== stockList 加载结束 ===');
+        setStockList(parsed);
         return;
       }
       try {
         const res = await fetch('/api/stock-list');
         if (!res.ok) throw new Error('Failed to load stock list');
         const data = await res.json();
+        console.log('=== stockList 加载 ===');
+        console.log('从 API 加载 stockList:', data.length, '条');
+        console.log('API 前5条:', data.slice(0, 5));
+        console.log('=== stockList 加载结束 ===');
         setStockList(data);
         localStorage.setItem('stockList', JSON.stringify(data));
       } catch (err) {
