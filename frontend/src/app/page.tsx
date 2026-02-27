@@ -107,11 +107,13 @@ export default function Home() {
       console.log('qLower:', qLower);
       console.log('qPinyin:', qPinyin);
       console.log('stockList 总数:', stockList.length);
-      console.log('stockList 前5条:', stockList.slice(0, 5));
 
       const results = stockList.filter(({code, name}) => {
         // 过滤掉空名称的股票
         if (!name || !name.trim()) return false;
+        
+        // 过滤掉指数（代码以 .000 开头的通常是指数）
+        if (code.includes('.000')) return false;
         
         const nameLower = name.toLowerCase();
         const namePinyin = getPinyinInitials(name);
