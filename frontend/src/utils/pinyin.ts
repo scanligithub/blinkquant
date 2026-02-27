@@ -12,8 +12,9 @@ export function getPinyinInitials(text: string): string {
   const hasChinese = /[\u4e00-\u9fff]/.test(text);
   if (!hasChinese) return text.toLowerCase();
 
-  // pinyin‑pro 使用 pattern: 'first' 获取首字母
-  const initials = pinyin(text, { pattern: 'first', toneType: 'none' })
+  // pinyin‑pro 使用 pattern: 'first' 获取每个字的首字母
+  const initials = pinyin(text, { pattern: 'first', toneType: 'none', type: 'array' })
+    .join('')
     .toLowerCase();
   return initials;
 }
