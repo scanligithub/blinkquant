@@ -135,6 +135,12 @@ def search_stocks(q: str):
             
     return results
 
+@router.get("/stock-list")
+def get_stock_list():
+    """返回所有股票代码与名称的映射，仅用于前端缓存"""
+    return [{"code": code, "name": name}
+            for code, name in data_manager.code_to_name.items()]
+
 @router.get("/status")
 def get_node_status():
     process = psutil.Process(os.getpid())

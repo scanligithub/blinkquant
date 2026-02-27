@@ -1,14 +1,15 @@
-'use client'; 
+'use client';
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
-const KLineChart = dynamic(() => import('../components/KLineChart'), { 
+const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
 });
 
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
+import { getPinyinInitials } from '../utils/pinyin';
 
 const TIMEFRAMES = [
   { label: 'Daily', value: 'D' },
@@ -37,7 +38,10 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [searchResults, setSearchResults] = useState<{code: string; name: string}[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false); // New state for search loading
+  const [searchLoading, setSearchLoading] = useState(false);
+  
+  // 本地缓存股票列表
+  const [stockList, setStockList] = useState<Array<{code: string; name: string}>>([]);
   
   // 监控数据
   const [clusterStatus, setClusterStatus] = useState<any>(null);
@@ -56,28 +60,54 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
 
+  // 加载股票列表并缓存到 localStorage
   useEffect(() => {
-    if (searchQuery.length > 1) { // Only search if query is at least 2 characters
-      setSearchLoading(true);
-      const handler = setTimeout(async () => {
-        try {
-          const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
-          if (!res.ok) throw new Error('Search failed');
-          const json = await res.json();
-          setSearchResults(json);
-        } catch (err) {
-          console.error('Failed to search stocks:', err);
-          setSearchResults([]);
-        } finally {
-          setSearchLoading(false);
-        }
-      }, 500); // Debounce for 500ms
-      return () => clearTimeout(handler);
-    } else {
+    const loadStockList = async () => {
+      const cached = localStorage.getItem('stockList');
+      if (cached) {
+        setStockList(JSON.parse(cached));
+        return;
+      }
+      try {
+        const res = await fetch('/api/stock-list');
+        if (!res.ok) throw new Error('Failed to load stock list');
+        const data = await res.json();
+        setStockList(data);
+        localStorage.setItem('stockList', JSON.stringify(data));
+      } catch (err) {
+        console.error('Failed to load stock list:', err);
+      }
+    };
+    loadStockList();
+  }, []);
+
+  // 前端本地搜索（支持拼音首字母）
+  useEffect(() => {
+    if (searchQuery.length < 2 || stockList.length === 0) {
       setSearchResults([]);
       setSearchLoading(false);
+      return;
     }
-  }, [searchQuery]);
+    setSearchLoading(true);
+    const handler = setTimeout(() => {
+      const qLower = searchQuery.toLowerCase();
+      const qPinyin = getPinyinInitials(searchQuery);
+
+      const results = stockList.filter(({code, name}) => {
+        const nameLower = name.toLowerCase();
+        const namePinyin = getPinyinInitials(name);
+        return (
+          code.toLowerCase().includes(qLower) ||
+          nameLower.includes(qLower) ||
+          (qPinyin && namePinyin.includes(qPinyin))
+        );
+      }).slice(0, 10); // 只返回前 10 条
+
+      setSearchResults(results);
+      setSearchLoading(false);
+    }, 500); // 防抖 500ms
+    return () => clearTimeout(handler);
+  }, [searchQuery, stockList]);
 
   const handleSelect = async () => {
     setLoading(true);
@@ -281,27 +311,28 @@ export default function Home() {
                         setSearchQuery('');
                         setSearchResults([]);
                       } else {
-                        // It's likely a name, perform an immediate search to get the code
+                        // It's likely a name, perform immediate local search
                         console.log('Performing immediate name search for:', searchQuery);
-                        setSearchLoading(true);
-                        try {
-                          const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
-                          if (!res.ok) throw new Error('Immediate search failed');
-                          const json = await res.json();
-                          if (json.length > 0) {
-                            console.log('Immediate name search found:', json[0].code);
-                            viewStock(json[0].code);
-                            setSearchQuery('');
-                            setSearchResults([]);
-                          } else {
-                            console.warn('Stock not found by name search for:', searchQuery);
-                            // alert('Stock not found by name search.'); // Temporarily disabled
-                          }
-                        } catch (err) {
-                          console.error('Failed to search stocks by name:', err);
-                          // alert(`Failed to search stocks by name: ${ (err as Error).message || err}`); // Temporarily disabled
-                        } finally {
-                          setSearchLoading(false);
+                        const qLower = searchQuery.toLowerCase();
+                        const qPinyin = getPinyinInitials(searchQuery);
+                        
+                        const found = stockList.find(({code, name}) => {
+                          const nameLower = name.toLowerCase();
+                          const namePinyin = getPinyinInitials(name);
+                          return (
+                            code.toLowerCase().includes(qLower) ||
+                            nameLower.includes(qLower) ||
+                            (qPinyin && namePinyin.includes(qPinyin))
+                          );
+                        });
+                        
+                        if (found) {
+                          console.log('Immediate name search found:', found.code);
+                          viewStock(found.code);
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        } else {
+                          console.warn('Stock not found by name search for:', searchQuery);
                         }
                       }
                     }
