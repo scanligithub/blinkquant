@@ -90,9 +90,10 @@ export default function Home() {
     loadStockList();
   }, []);
 
-  // 前端本地搜索（支持拼音首字母）
+  // 前端本地搜索（支持拼音首字母与打分排序）
   useEffect(() => {
-    if (searchQuery.length < 2 || stockList.length === 0) {
+    // 输入至少1个字符开始搜索
+    if (searchQuery.length < 1 || stockList.length === 0) {
       setSearchResults([]);
       setSearchLoading(false);
       return;
@@ -102,40 +103,47 @@ export default function Home() {
       const qLower = searchQuery.toLowerCase();
       const qPinyin = getPinyinInitials(searchQuery);
 
-      console.log('=== 搜索调试 ===');
-      console.log('搜索查询:', searchQuery);
-      console.log('qLower:', qLower);
-      console.log('qPinyin:', qPinyin);
-      console.log('stockList 总数:', stockList.length);
-
-      const results = stockList.filter(({code, name}) => {
-        // 过滤掉空名称的股票
-        if (!name || !name.trim()) return false;
-        
-        // 过滤掉指数（代码以 .000 开头的通常是指数）
-        if (code.includes('.000')) return false;
-        
-        const nameLower = name.toLowerCase();
-        const namePinyin = getPinyinInitials(name);
-        
-        const matchCode = code.toLowerCase().includes(qLower);
-        const matchName = nameLower.includes(qLower);
-        const matchPinyin = qPinyin && namePinyin.includes(qPinyin);
-        
-        if (matchCode || matchName || matchPinyin) {
-          console.log(`匹配: ${code} - ${name}`, { matchCode, matchName, matchPinyin, namePinyin });
+      // 1. 遍历计算得分
+      const scoredResults = stockList.map(stock => {
+        const { code, name } = stock;
+        // 过滤掉空名和指数
+        if (!name || !name.trim() || code.includes('.000')) {
+            return { ...stock, score: 0 };
         }
-        
-        return matchCode || matchName || matchPinyin;
-      }).slice(0, 10); // 只返回前 10 条
 
-      console.log('搜索结果数量:', results.length);
-      console.log('搜索结果:', results);
-      console.log('=== 搜索调试结束 ===');
+        const nameLower = name.toLowerCase();
+        const codeLower = code.toLowerCase();
+        const namePinyin = getPinyinInitials(name);
+
+        let score = 0;
+
+        // 【规则 A】完全精确匹配 (最高优先级)
+        if (codeLower === qLower || nameLower === qLower) score += 1000;
+
+        // 【规则 B】前缀匹配 (高优先级：如输入 'zg' 匹配 '中国平安 zgpa')
+        if (codeLower.startsWith(qLower)) score += 100;
+        if (namePinyin.startsWith(qPinyin)) score += 80;
+        if (nameLower.startsWith(qLower)) score += 80;
+
+        // 【规则 C】包含匹配 (低优先级：如输入 'zg' 匹配 '上证国企 szgq')
+        if (codeLower.includes(qLower)) score += 10;
+        if (namePinyin.includes(qPinyin)) score += 5;
+        if (nameLower.includes(qLower)) score += 5;
+
+        return { ...stock, score };
+      });
+
+      // 2. 过滤得分为0的，按分数降序排序，取前10
+      const results = scoredResults
+        .filter(item => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ code, name }) => ({ code, name })) // 剥离 score 属性，保持原结构
+        .slice(0, 10);
 
       setSearchResults(results);
       setSearchLoading(false);
-    }, 500); // 防抖 500ms
+    }, 300); // 防抖时间缩短到 300ms，让搜索感觉更跟手
+    
     return () => clearTimeout(handler);
   }, [searchQuery, stockList]);
 
@@ -342,22 +350,30 @@ export default function Home() {
                         setSearchResults([]);
                       } else {
                         // It's likely a name, perform immediate local search
-                        console.log('Performing immediate name search for:', searchQuery);
                         const qLower = searchQuery.toLowerCase();
                         const qPinyin = getPinyinInitials(searchQuery);
                         
-                        const found = stockList.find(({code, name}) => {
-                          const nameLower = name.toLowerCase();
-                          const namePinyin = getPinyinInitials(name);
+                        // 优先寻找"前缀匹配"的最优解
+                        let found = stockList.find(({code, name}) => {
                           return (
-                            code.toLowerCase().includes(qLower) ||
-                            nameLower.includes(qLower) ||
-                            (qPinyin && namePinyin.includes(qPinyin))
+                            code.toLowerCase().startsWith(qLower) ||
+                            name.toLowerCase().startsWith(qLower) ||
+                            (qPinyin && getPinyinInitials(name).startsWith(qPinyin))
                           );
                         });
+
+                        // 如果没有前缀匹配，降级寻找"包含匹配"
+                        if (!found) {
+                            found = stockList.find(({code, name}) => {
+                                return (
+                                  code.toLowerCase().includes(qLower) ||
+                                  name.toLowerCase().includes(qLower) ||
+                                  (qPinyin && getPinyinInitials(name).includes(qPinyin))
+                                );
+                            });
+                        }
                         
                         if (found) {
-                          console.log('Immediate name search found:', found.code);
                           viewStock(found.code);
                           setSearchQuery('');
                           setSearchResults([]);
