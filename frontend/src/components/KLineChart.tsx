@@ -304,9 +304,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     <div className="relative bg-white rounded-xl p-4 border border-slate-200 shadow-none">
       <div ref={chartContainerRef} />
       
-      {/* 价格MA指标 - 显示在K线图区域左上角 */}
+      {/* 价格MA指标 - 显示在K线图区域右上角，避免挡住股票代码和名称 */}
       {maIndicators && (
-        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+        <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
           <div className="grid grid-cols-3 gap-x-3 gap-y-1">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">MA5:</span>
@@ -336,9 +336,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         </div>
       )}
       
-      {/* 量能MA指标 - 显示在量能图区域左上角 */}
+      {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的80%位置） */}
       {vmaIndicators && (
-        <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+        <div className="absolute top-[80%] left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
           <div className="grid grid-cols-5 gap-x-3 gap-y-1">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">VMA5:</span>
@@ -366,7 +366,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* Tooltip - 只显示基本OHLCV数据 */}
       {tooltip && (
-        <div className="absolute top-4 right-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
           <div className="font-bold text-slate-900 mb-2">{tooltip.time}</div>
           <div className="space-y-1">
             <div className="flex justify-between gap-4">
