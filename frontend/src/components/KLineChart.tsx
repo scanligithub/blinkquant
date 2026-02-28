@@ -56,6 +56,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     ma20: number;
     ma30: number;
     ma60: number;
+    vma5: number;
+    vma10: number;
+    vma20: number;
+    vma30: number;
+    vma60: number;
   } | null>(null);
 
   useEffect(() => {
@@ -233,6 +238,19 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const ma20 = ma20Data && typeof ma20Data === 'object' && 'value' in ma20Data ? ma20Data.value as number : 0;
         const ma30 = ma30Data && typeof ma30Data === 'object' && 'value' in ma30Data ? ma30Data.value as number : 0;
         const ma60 = ma60Data && typeof ma60Data === 'object' && 'value' in ma60Data ? ma60Data.value as number : 0;
+
+        // 获取量能MA指标值
+        const vma5Data = param.seriesData.get(volumeMASeries[0]);
+        const vma10Data = param.seriesData.get(volumeMASeries[1]);
+        const vma20Data = param.seriesData.get(volumeMASeries[2]);
+        const vma30Data = param.seriesData.get(volumeMASeries[3]);
+        const vma60Data = param.seriesData.get(volumeMASeries[4]);
+
+        const vma5 = vma5Data && typeof vma5Data === 'object' && 'value' in vma5Data ? vma5Data.value as number : 0;
+        const vma10 = vma10Data && typeof vma10Data === 'object' && 'value' in vma10Data ? vma10Data.value as number : 0;
+        const vma20 = vma20Data && typeof vma20Data === 'object' && 'value' in vma20Data ? vma20Data.value as number : 0;
+        const vma30 = vma30Data && typeof vma30Data === 'object' && 'value' in vma30Data ? vma30Data.value as number : 0;
+        const vma60 = vma60Data && typeof vma60Data === 'object' && 'value' in vma60Data ? vma60Data.value as number : 0;
         
         setTooltip({
           time: timeStr,
@@ -247,6 +265,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
           ma20: ma20,
           ma30: ma30,
           ma60: ma60,
+          vma5: vma5,
+          vma10: vma10,
+          vma20: vma20,
+          vma30: vma30,
+          vma60: vma60,
         });
       }
     });
@@ -309,6 +332,26 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
                 <div className="flex justify-between">
                   <span className="text-slate-500">MA60:</span>
                   <span className="font-mono text-orange-600">{tooltip.ma60.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VMA5:</span>
+                  <span className="font-mono text-red-400">{(tooltip.vma5 / 10000).toFixed(2)}万</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VMA10:</span>
+                  <span className="font-mono text-teal-400">{(tooltip.vma10 / 10000).toFixed(2)}万</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VMA20:</span>
+                  <span className="font-mono text-sky-400">{(tooltip.vma20 / 10000).toFixed(2)}万</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VMA30:</span>
+                  <span className="font-mono text-emerald-400">{(tooltip.vma30 / 10000).toFixed(2)}万</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VMA60:</span>
+                  <span className="font-mono text-amber-400">{(tooltip.vma60 / 10000).toFixed(2)}万</span>
                 </div>
               </div>
             </div>
