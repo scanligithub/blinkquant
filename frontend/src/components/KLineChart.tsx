@@ -43,6 +43,8 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
 export default function KLineChart({ data, code }: { data: any, code: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  
+  // Tooltip状态 - 只显示基本OHLCV数据
   const [tooltip, setTooltip] = useState<{
     time: string;
     open: number;
@@ -51,11 +53,20 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     close: number;
     volume: number;
     changePercent: number;
+  } | null>(null);
+  
+  // 价格MA指标状态 - 显示在K线图区域左上角
+  const [maIndicators, setMaIndicators] = useState<{
     ma5: number;
     ma10: number;
     ma20: number;
     ma30: number;
     ma60: number;
+    ma120: number;
+  } | null>(null);
+  
+  // 量能MA指标状态 - 显示在量能图区域左上角
+  const [vmaIndicators, setVmaIndicators] = useState<{
     vma5: number;
     vma10: number;
     vma20: number;
@@ -232,12 +243,14 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const ma20Data = param.seriesData.get(maSeries[2]);
         const ma30Data = param.seriesData.get(maSeries[3]);
         const ma60Data = param.seriesData.get(maSeries[4]);
+        const ma120Data = param.seriesData.get(maSeries[5]);
 
         const ma5 = ma5Data && typeof ma5Data === 'object' && 'value' in ma5Data ? ma5Data.value as number : 0;
         const ma10 = ma10Data && typeof ma10Data === 'object' && 'value' in ma10Data ? ma10Data.value as number : 0;
         const ma20 = ma20Data && typeof ma20Data === 'object' && 'value' in ma20Data ? ma20Data.value as number : 0;
         const ma30 = ma30Data && typeof ma30Data === 'object' && 'value' in ma30Data ? ma30Data.value as number : 0;
         const ma60 = ma60Data && typeof ma60Data === 'object' && 'value' in ma60Data ? ma60Data.value as number : 0;
+        const ma120 = ma120Data && typeof ma120Data === 'object' && 'value' in ma120Data ? ma120Data.value as number : 0;
 
         // 获取量能MA指标值
         const vma5Data = param.seriesData.get(volumeMASeries[0]);
@@ -252,6 +265,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const vma30 = vma30Data && typeof vma30Data === 'object' && 'value' in vma30Data ? vma30Data.value as number : 0;
         const vma60 = vma60Data && typeof vma60Data === 'object' && 'value' in vma60Data ? vma60Data.value as number : 0;
         
+        // 设置tooltip - 只显示基本OHLCV数据
         setTooltip({
           time: timeStr,
           open: open,
@@ -260,16 +274,25 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
           close: close,
           volume: volumeData && typeof volumeData === 'object' && 'value' in volumeData ? volumeData.value as number : 0,
           changePercent: changePercent,
-          ma5: ma5,
-          ma10: ma10,
-          ma20: ma20,
-          ma30: ma30,
-          ma60: ma60,
-          vma5: vma5,
-          vma10: vma10,
-          vma20: vma20,
-          vma30: vma30,
-          vma60: vma60,
+        });
+        
+        // 设置价格MA指标 - 显示在K线图区域左上角
+        setMaIndicators({
+          ma5,
+          ma10,
+          ma20,
+          ma30,
+          ma60,
+          ma120,
+        });
+        
+        // 设置量能MA指标 - 显示在量能图区域左上角
+        setVmaIndicators({
+          vma5,
+          vma10,
+          vma20,
+          vma30,
+          vma60,
         });
       }
     });
@@ -280,8 +303,70 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
   return (
     <div className="relative bg-white rounded-xl p-4 border border-slate-200 shadow-none">
       <div ref={chartContainerRef} />
+      
+      {/* 价格MA指标 - 显示在K线图区域左上角 */}
+      {maIndicators && (
+        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+          <div className="grid grid-cols-3 gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA5:</span>
+              <span className="font-mono text-[#FF6B6B]">{maIndicators.ma5.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA10:</span>
+              <span className="font-mono text-[#4ECDC4]">{maIndicators.ma10.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA20:</span>
+              <span className="font-mono text-[#45B7D1]">{maIndicators.ma20.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA30:</span>
+              <span className="font-mono text-[#96CEB4]">{maIndicators.ma30.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA60:</span>
+              <span className="font-mono text-[#FFEAA7]">{maIndicators.ma60.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">MA120:</span>
+              <span className="font-mono text-[#DDA0DD]">{maIndicators.ma120.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 量能MA指标 - 显示在量能图区域左上角 */}
+      {vmaIndicators && (
+        <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+          <div className="grid grid-cols-5 gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">VMA5:</span>
+              <span className="font-mono text-[#FF6B6B]">{(vmaIndicators.vma5 / 10000).toFixed(2)}万</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">VMA10:</span>
+              <span className="font-mono text-[#4ECDC4]">{(vmaIndicators.vma10 / 10000).toFixed(2)}万</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">VMA20:</span>
+              <span className="font-mono text-[#45B7D1]">{(vmaIndicators.vma20 / 10000).toFixed(2)}万</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">VMA30:</span>
+              <span className="font-mono text-[#96CEB4]">{(vmaIndicators.vma30 / 10000).toFixed(2)}万</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500">VMA60:</span>
+              <span className="font-mono text-[#FFEAA7]">{(vmaIndicators.vma60 / 10000).toFixed(2)}万</span>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Tooltip - 只显示基本OHLCV数据 */}
       {tooltip && (
-        <div className="absolute top-4 left-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
+        <div className="absolute top-4 right-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
           <div className="font-bold text-slate-900 mb-2">{tooltip.time}</div>
           <div className="space-y-1">
             <div className="flex justify-between gap-4">
@@ -309,51 +394,6 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             <div className="flex justify-between gap-4">
               <span className="text-slate-500">成交量:</span>
               <span className="font-mono text-slate-900">{(tooltip.volume / 10000).toFixed(2)}万</span>
-            </div>
-            <div className="border-t border-slate-200 pt-2 mt-2">
-              <div className="text-slate-500 text-xs mb-1">技术指标</div>
-              <div className="grid grid-cols-3 gap-x-4 gap-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">MA5:</span>
-                  <span className="font-mono text-yellow-600">{tooltip.ma5.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">MA10:</span>
-                  <span className="font-mono text-purple-600">{tooltip.ma10.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">MA20:</span>
-                  <span className="font-mono text-blue-600">{tooltip.ma20.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">MA30:</span>
-                  <span className="font-mono text-cyan-600">{tooltip.ma30.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">MA60:</span>
-                  <span className="font-mono text-orange-600">{tooltip.ma60.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VMA5:</span>
-                  <span className="font-mono text-red-400">{(tooltip.vma5 / 10000).toFixed(2)}万</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VMA10:</span>
-                  <span className="font-mono text-teal-400">{(tooltip.vma10 / 10000).toFixed(2)}万</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VMA20:</span>
-                  <span className="font-mono text-sky-400">{(tooltip.vma20 / 10000).toFixed(2)}万</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VMA30:</span>
-                  <span className="font-mono text-emerald-400">{(tooltip.vma30 / 10000).toFixed(2)}万</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">VMA60:</span>
-                  <span className="font-mono text-amber-400">{(tooltip.vma60 / 10000).toFixed(2)}万</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
