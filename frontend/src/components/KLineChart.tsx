@@ -1,6 +1,25 @@
 'use client';
-import { createChart, ColorType, IChartApi, PriceScaleMode } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, PriceScaleMode, LineData, Time } from 'lightweight-charts';
 import { useEffect, useRef } from 'react';
+
+// 计算移动平均线
+function calculateMA(data: any[], period: number): LineData[] {
+  const result: LineData[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      continue; // 数据不足，跳过
+    }
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      sum += data[i - j].close;
+    }
+    result.push({
+      time: data[i].time,
+      value: sum / period,
+    });
+  }
+  return result;
+}
 
 export default function KLineChart({ data, code }: { data: any, code: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -48,6 +67,22 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       wickUpColor: '#ef4444',
       wickDownColor: '#22c55e',
     });
+
+    // 添加MA均线系列
+    const maPeriods = [5, 10, 20, 30, 60, 120];
+    const maColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
+    const maSeries: any[] = [];
+
+    maPeriods.forEach((period, index) => {
+      const maLine = chart.addLineSeries({
+        priceScaleId: 'right',
+        color: maColors[index],
+        lineWidth: 1,
+        title: `MA${period}`,
+      });
+      maSeries.push(maLine);
+    });
+
     // 新增量能柱（Histogram）系列，使用独立的 price scale
     const volumeSeries = chart.addHistogramSeries({
       priceScaleId: '',
@@ -99,6 +134,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     }
 
     candlestickSeries.setData(formattedData);
+    
+    // 计算并设置MA均线数据
+    maPeriods.forEach((period, index) => {
+      const maData = calculateMA(formattedData, period);
+      maSeries[index].setData(maData);
+    });
+
     // 设置量能柱数据
     volumeSeries.setData(volumeData);
     chart.timeScale().fitContent();
