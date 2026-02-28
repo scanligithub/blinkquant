@@ -2,7 +2,7 @@
 import { createChart, ColorType, IChartApi, PriceScaleMode, LineData, Time } from 'lightweight-charts';
 import { useEffect, useRef } from 'react';
 
-// 计算移动平均线
+// 计算价格移动平均线
 function calculateMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -12,6 +12,25 @@ function calculateMA(data: any[], period: number): LineData[] {
     let sum = 0;
     for (let j = 0; j < period; j++) {
       sum += data[i - j].close;
+    }
+    result.push({
+      time: data[i].time,
+      value: sum / period,
+    });
+  }
+  return result;
+}
+
+// 计算量能移动平均线
+function calculateVolumeMA(data: any[], period: number): LineData[] {
+  const result: LineData[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      continue; // 数据不足，跳过
+    }
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      sum += data[i - j].value;
     }
     result.push({
       time: data[i].time,
@@ -96,7 +115,23 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     chart.priceScale('').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     });
-    // 已删除重复的 volumeSeries 声明
+
+    // 添加量能MA均线系列
+    const volumeMAPeriods = [5, 10, 20, 30, 60];
+    const volumeMAColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
+    const volumeMASeries: any[] = [];
+
+    volumeMAPeriods.forEach((period, index) => {
+      const volumeMALine = chart.addLineSeries({
+        priceScaleId: '',
+        color: volumeMAColors[index],
+        lineWidth: 1,
+        title: `VMA${period}`,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      volumeMASeries.push(volumeMALine);
+    });
 
     let formattedData = [];
     let volumeData = [];
@@ -143,6 +178,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
 
     // 设置量能柱数据
     volumeSeries.setData(volumeData);
+    
+    // 计算并设置量能MA均线数据
+    volumeMAPeriods.forEach((period, index) => {
+      const volumeMAData = calculateVolumeMA(volumeData, period);
+      volumeMASeries[index].setData(volumeMAData);
+    });
+
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
