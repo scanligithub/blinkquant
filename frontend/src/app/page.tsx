@@ -35,6 +35,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
     const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
+  const [dailyDataCache, setDailyDataCache] = useState<any[]>([]); // 缓存原始日线数据
 
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -269,6 +270,9 @@ export default function Home() {
         };
       });
 
+      // 保存原始日线数据到缓存
+      setDailyDataCache(dailyData);
+
       // 根据chartTimeframe进行重采样
       const resampledData = resampleData(dailyData, chartTimeframe);
 
@@ -442,21 +446,6 @@ export default function Home() {
           <div className="flex flex-col gap-4">
             <div className="flex justify-between items-end">
                <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Strategy Formula</label>
-               <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
-                 {TIMEFRAMES.map((tf) => (
-                   <button
-                     key={tf.value}
-                     onClick={() => setTimeframe(tf.value)}
-                     className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-                       timeframe === tf.value 
-                         ? 'bg-white text-blue-600 shadow-sm border border-blue-100' 
-                         : 'text-slate-500 hover:text-slate-700'
-                     }`}
-                   >
-                     {tf.label}
-                   </button>
-                 ))}
-               </div>
             </div>
             <div className="flex gap-4">
               <input 
@@ -545,9 +534,10 @@ export default function Home() {
                         key={tf.value}
                         onClick={() => {
                           setChartTimeframe(tf.value);
-                          // 重新加载数据并应用新的周期
-                          if (selectedStock) {
-                            viewStock(selectedStock.code);
+                          // 使用缓存的日线数据进行重采样
+                          if (dailyDataCache.length > 0 && selectedStock) {
+                            const resampledData = resampleData(dailyDataCache, tf.value);
+                            setSelectedStock({ ...selectedStock, data: resampledData });
                           }
                         }}
                         className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
