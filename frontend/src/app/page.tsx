@@ -29,7 +29,8 @@ function formatStockCode(code: string): string {
 
 export default function Home() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
-  const [timeframe, setTimeframe] = useState('D');
+  const [timeframe, setTimeframe] = useState('D'); // 用于策略公式选股
+  const [chartTimeframe, setChartTimeframe] = useState('D'); // 用于K线图周期选择
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
     const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
@@ -164,15 +165,58 @@ export default function Home() {
     setLoading(false);
   };
 
+  // 重采样函数：将日线数据转换为周线或月线
+  const resampleData = useCallback((dailyData: any[], targetTimeframe: string) => {
+    if (targetTimeframe === 'D') return dailyData;
+    
+    const grouped = new Map<string, any[]>();
+    
+    dailyData.forEach(item => {
+      const date = new Date(item.time * 1000);
+      let key: string;
+      
+      if (targetTimeframe === 'W') {
+        // 周线：使用该周的第一天作为key
+        const dayOfWeek = date.getDay();
+        const weekStart = new Date(date);
+        weekStart.setDate(date.getDate() - dayOfWeek);
+        key = weekStart.toISOString().split('T')[0];
+      } else {
+        // 月线：使用该月的第一天作为key
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+      }
+      
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key)!.push(item);
+    });
+    
+    // 对每个分组进行聚合
+    const resampled: any[] = [];
+    grouped.forEach((items) => {
+      const sortedItems = items.sort((a, b) => a.time - b.time);
+      const first = sortedItems[0];
+      const last = sortedItems[sortedItems.length - 1];
+      
+      resampled.push({
+        time: first.time, // 使用该周期的第一个交易日
+        open: first.open,
+        high: Math.max(...sortedItems.map(i => i.high)),
+        low: Math.min(...sortedItems.map(i => i.low)),
+        close: last.close,
+        volume: sortedItems.reduce((sum, i) => sum + i.volume, 0),
+      });
+    });
+    
+    return resampled.sort((a, b) => a.time - b.time);
+  }, []);
+
   const viewStock = useCallback(async (code: string) => {
     setChartLoading(true);
     try {
-      console.log('Entering viewStock for code:', code);
-      const res = await fetch(`/api/kline?code=${code}&timeframe=${timeframe}`);
-      
-      console.log('Fetch response status:', res.status);
-      console.log('Fetch response ok:', res.ok);
-      console.log('Fetch response Content-Type:', res.headers.get('Content-Type'));
+      // 只请求日线数据
+      const res = await fetch(`/api/kline?code=${code}&timeframe=D`);
 
       if (!res.ok) {
         let errorMessage = 'Fetch failed';
@@ -181,15 +225,12 @@ export default function Home() {
           try {
             const errorJson = await res.json();
             errorMessage = errorJson.error || errorJson.detail || errorMessage;
-            console.error('Error from server (JSON):', errorJson);
           } catch (jsonError) {
-            errorMessage = `Fetch failed: ${res.status} ${res.statusText}: Failed to parse JSON error`;
-            console.error('Failed to parse JSON error:', jsonError);
+            errorMessage = `Fetch failed: ${res.status} ${res.statusText}`;
           }
         } else {
           const errorText = await res.text();
           errorMessage = `Fetch failed: ${res.status} ${res.statusText}: ${errorText || errorMessage}`;
-          console.error('Error from server (text):', errorText);
         }
         throw new Error(errorMessage);
       }
@@ -206,18 +247,19 @@ export default function Home() {
         throw new Error('Received empty or invalid Parquet data');
       }
 
-      const formattedData = records.map((record, index) => {
+      // 格式化日线数据
+      const dailyData = records.map((record) => {
         let timeValue;
 
         if (record.date === null || record.date === undefined) {
             throw new Error('Date record is null or undefined in K-line data');
         } else if (record.date instanceof Date) {
-          timeValue = Math.floor(record.date.getTime() / 1000); // Convert Date object to Unix timestamp (seconds)
+          timeValue = Math.floor(record.date.getTime() / 1000);
         } else {
           throw new Error('Invalid date format received from K-line data');
         }
 
-        const formattedRecord = {
+        return {
           time: timeValue,
           open: record.open,
           high: record.high,
@@ -225,23 +267,23 @@ export default function Home() {
           close: record.close,
           volume: record.volume,
         };
-
-        return formattedRecord;
       });
+
+      // 根据chartTimeframe进行重采样
+      const resampledData = resampleData(dailyData, chartTimeframe);
 
       // 从 stockList 中查找股票名称
       const stock = stockList.find(s => s.code === code);
       const stockName = stock?.name || code;
       
-      setSelectedStock({ code, name: stockName, data: formattedData });
+      setSelectedStock({ code, name: stockName, data: resampledData });
     } catch (err: any) {
       console.error('Failed to load kline:', err);
-      console.error('Full error object:', err);
       alert(`Failed to load kline: ${err.message || err}`);
     } finally {
       setChartLoading(false);
     }
-  }, [timeframe, searchResults, selectedStock]);
+  }, [chartTimeframe, stockList, resampleData]);
 
   return (
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
@@ -489,9 +531,36 @@ export default function Home() {
                     <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
                     
                     <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
-                      {timeframe === 'D' ? '1-DAY' : timeframe === 'W' ? '1-WEEK' : '1-MONTH'}
+                      {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
                     </span>
                  </div>
+              )}
+              
+              {/* K线图周期选择器 */}
+              {selectedStock && (
+                <div className="absolute top-4 right-4 z-10">
+                  <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.value}
+                        onClick={() => {
+                          setChartTimeframe(tf.value);
+                          // 重新加载数据并应用新的周期
+                          if (selectedStock) {
+                            viewStock(selectedStock.code);
+                          }
+                        }}
+                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                          chartTimeframe === tf.value
+                            ? 'bg-white text-blue-600 shadow-sm border border-blue-100'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               {chartLoading && (
                 <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-sm flex items-center justify-center">
