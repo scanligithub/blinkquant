@@ -246,11 +246,18 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const vma30Data = param.seriesData.get(volumeMASeries[3]);
         const vma60Data = param.seriesData.get(volumeMASeries[4]);
 
+        console.log('VMA Data Debug:', {
+          vma5Data, vma10Data, vma20Data, vma30Data, vma60Data,
+          volumeMASeriesLength: volumeMASeries.length
+        });
+
         const vma5 = vma5Data && typeof vma5Data === 'object' && 'value' in vma5Data ? vma5Data.value as number : 0;
         const vma10 = vma10Data && typeof vma10Data === 'object' && 'value' in vma10Data ? vma10Data.value as number : 0;
         const vma20 = vma20Data && typeof vma20Data === 'object' && 'value' in vma20Data ? vma20Data.value as number : 0;
         const vma30 = vma30Data && typeof vma30Data === 'object' && 'value' in vma30Data ? vma30Data.value as number : 0;
         const vma60 = vma60Data && typeof vma60Data === 'object' && 'value' in vma60Data ? vma60Data.value as number : 0;
+
+        console.log('VMA Values:', { vma5, vma10, vma20, vma30, vma60 });
         
         setTooltip({
           time: timeStr,
