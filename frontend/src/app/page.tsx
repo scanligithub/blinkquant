@@ -513,18 +513,19 @@ export default function Home() {
           </aside>
 
           <section className="lg:col-span-3">
+            {/* 股票代码和名称 - 显示在K线图容器外部的左上角 */}
+            {selectedStock && (
+              <div className="mb-3 flex items-baseline">
+                <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
+                <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
+                
+                <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                  {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
+                </span>
+              </div>
+            )}
+            
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden min-h-[520px] shadow-sm relative flex flex-col">
-              {selectedStock && (
-                 <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-baseline">
-                    <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
-                    <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
-                    
-                    <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
-                      {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
-                    </span>
-                 </div>
-              )}
-              
               {/* K线图周期选择器 */}
               {selectedStock && (
                 <div className="absolute top-4 right-4 z-10">

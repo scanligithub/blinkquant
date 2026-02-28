@@ -103,9 +103,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         dateFormat: 'yyyy-MM-dd',
       },
     });
-      // 为蜡烛图设置价格尺度，占据顶部 80% 的空间
+      // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0, bottom: 0.2 },
+        scaleMargins: { top: 0, bottom: 0.3 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -141,9 +141,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    // 设置量能图的 scaleMargins，将其压在底部 20% 区域
+    // 设置量能图的 scaleMargins，将其压在底部 30% 区域
     chart.priceScale('').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: { top: 0.7, bottom: 0 },
     });
 
     // 添加量能MA均线系列
@@ -336,9 +336,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         </div>
       )}
       
-      {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的80%位置） */}
+      {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的70%位置） */}
       {vmaIndicators && (
-        <div className="absolute top-[80%] left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+        <div className="absolute top-[70%] left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
           <div className="grid grid-cols-5 gap-x-3 gap-y-1">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">VMA5:</span>
