@@ -241,13 +241,9 @@ export default function Home() {
 
       console.log('Total number of formatted data points:', formattedData.length);
 
-      let stockName = code;
-      const foundInSearchResults = searchResults.find(s => s.code === code);
-      if (foundInSearchResults) {
-        stockName = foundInSearchResults.name;
-      } else if (selectedStock && selectedStock.code === code && selectedStock.name) {
-        stockName = selectedStock.name;
-      }
+      // 从 stockList 中查找股票名称
+      const stock = stockList.find(s => s.code === code);
+      const stockName = stock?.name || code;
       
       setSelectedStock({ code, name: stockName, data: formattedData });
     } catch (err: any) {
