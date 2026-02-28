@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
-  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">Loading Chart Engine...          </div>
+  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">加载图表引擎...</div>
 });
 
 import { parquetReadObjects } from 'hyparquet';
@@ -299,11 +299,11 @@ export default function Home() {
             <h1 className="text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
               BlinkQuant
             </h1>
-            <p className="text-slate-500 text-sm mt-1">Distributed Computing Cluster</p>
+            <p className="text-slate-500 text-sm mt-1">分布式计算集群</p>
           </div>
           
           <div className="text-xs font-mono text-slate-400 bg-white px-3 py-1 rounded border border-slate-200 shadow-sm">
-            Status: {clusterStatus?.cluster_health || 'Connecting...'}
+            状态: {clusterStatus?.cluster_health || '连接中...'}
           </div>
         </header>
 
@@ -352,11 +352,11 @@ export default function Home() {
         <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           {/* Search Input */}
           <div className="flex flex-col gap-4 mb-6">
-            <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Search Stock</label>
+            <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">搜索股票</label>
             <div className="relative z-20">
               <input
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 w-full"
-                placeholder="e.g. 000952, Ping An, PA"
+                placeholder="例如：000952, 平安, PA"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={async (e) => {
@@ -445,12 +445,12 @@ export default function Home() {
 
           <div className="flex flex-col gap-4">
             <div className="flex justify-between items-end">
-               <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Strategy Formula</label>
+               <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">策略公式</label>
             </div>
             <div className="flex gap-4">
               <input 
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400"
-                placeholder="e.g. CLOSE > MA(CLOSE, 20)"
+                placeholder="例如：CLOSE > MA(CLOSE, 20)"
                 value={formula}
                 onChange={(e) => setFormula(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSelect()}
@@ -463,9 +463,9 @@ export default function Home() {
                 {loading ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    <span>Searching...</span>
+                    <span>搜索中...</span>
                   </>
-                ) : 'Run Selection'}
+                ) : '运行选股'}
               </button>
             </div>
           </div>
@@ -476,7 +476,7 @@ export default function Home() {
           <aside className="lg:col-span-1">
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px] shadow-sm">
               <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                <h2 className="font-bold text-slate-700">Results</h2>
+                <h2 className="font-bold text-slate-700">结果</h2>
                 <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono font-bold">{results.length}</span>
               </div>
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
@@ -505,7 +505,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm italic p-4 text-center">
-                    {loading ? 'Aggregating cluster data...' : 'No results found.'}
+                    {loading ? '聚合集群数据中...' : '暂无结果。'}
                   </div>
                 )}
               </div>
@@ -563,7 +563,7 @@ export default function Home() {
                   <KLineChart code={selectedStock.code} data={selectedStock.data} />
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 bg-slate-50">
-                    <p className="text-lg font-medium">Select a stock to visualize</p>
+                    <p className="text-lg font-medium">选择股票以查看图表</p>
                   </div>
                 )}
               </div>
