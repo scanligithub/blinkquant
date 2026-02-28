@@ -178,6 +178,22 @@ def get_node_status():
         "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0
     }
 
+@router.get("/debug-factor")
+def debug_factor(code: str):
+    """临时诊断接口：查看原始复权因子是否异常"""
+    if data_manager.df_daily is None:
+        return {"error": "Data loading"}
+        
+    df = data_manager.df_daily.filter(pl.col("code") == code).sort("date")
+    
+    # 截取近 100 天的数据看看因子的变化
+    tail_data = df.tail(100).select(["date", "close", "adjustFactor"]).to_dicts()
+    
+    return {
+        "code": code,
+        "latest_data": tail_data
+    }
+
 @router.get("/health")
 def health_check():
     return {"status": "healthy" if data_manager.df_daily is not None else "loading"}

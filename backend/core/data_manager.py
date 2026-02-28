@@ -145,22 +145,40 @@ class DataManager:
             ])
 
     def _apply_forward_adjustment(self):
-        """执行前复权处理：OHLC * (当日复权因子 / 最新复权因子)"""
+        """执行前复权处理：带强力数据清洗的健壮版本"""
         if self.df_daily is None: return
         
         if "adjustFactor" not in self.df_daily.columns:
             logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
             return
 
-        logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
+        logger.info(f"Node {self.node_index}: Cleaning data and applying forward adjustment...")
         
-        # 【关键修复】：强制按代码和时间升序排序，确保 .last() 绝对是最新的一天！
+        # 1. 绝对强制排序 (时间序列修复的前提)
         self.df_daily = self.df_daily.sort(["code", "date"])
         
-        # 计算每只股票最新的复权因子
-        # 使用 over("code") 窗口函数定位每只股票时间轴上的最后一个因子
-        qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").last().over("code")
+        # 2. 强力清洗 adjustFactor：
+        # - 将 <= 0 的异常值视为无效 (None)
+        # - 使用 forward_fill() 拿前一天的有效因子填补今天的空缺 (解决中间断层和最新数据没因子的问题)
+        # - 填补后如果还有空缺 (比如上市第一天就没因子)，默认给 1.0
+        clean_factor = (
+            pl.when(pl.col("adjustFactor") <= 0).then(None)
+            .otherwise(pl.col("adjustFactor"))
+            .forward_fill().over("code")
+            .fill_null(1.0)
+        )
         
+        # 将清洗干净的因子覆盖写回
+        self.df_daily = self.df_daily.with_columns(clean_factor.alias("adjustFactor"))
+        
+        # 3. 提取最新的有效锚点因子
+        # 使用 drop_nulls() 确保即使最后几天是硬伤 null，也能取到最后一个有效数字
+        anchor_factor = pl.col("adjustFactor").drop_nulls().last().over("code")
+        
+        # 4. 计算前复权比例: 当日因子 / 最新因子
+        qfq_expr = pl.col("adjustFactor") / anchor_factor
+        
+        # 5. 执行价格替换
         self.df_daily = self.df_daily.with_columns([
             (pl.col("open") * qfq_expr).alias("open"),
             (pl.col("high") * qfq_expr).alias("high"),
@@ -168,7 +186,6 @@ class DataManager:
             (pl.col("close") * qfq_expr).alias("close"),
         ])
         
-        # 计算完复权后，adjustFactor 任务完成，可以选择保留或后续转换
         gc.collect()
 
     def _optimize_memory(self, df: pl.DataFrame, name: str):
