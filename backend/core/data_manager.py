@@ -145,22 +145,52 @@ class DataManager:
             ])
 
     def _apply_forward_adjustment(self):
-        """执行前复权处理：带强力数据清洗的健壮版本"""
+        """执行前复权处理：带强力数据清洗与异常诊断功能"""
         if self.df_daily is None: return
         
         if "adjustFactor" not in self.df_daily.columns:
             logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
             return
 
-        logger.info(f"Node {self.node_index}: Cleaning data and applying forward adjustment...")
+        logger.info(f"Node {self.node_index}: Sorting data and running adjustFactor diagnostics...")
         
         # 1. 绝对强制排序 (时间序列修复的前提)
         self.df_daily = self.df_daily.sort(["code", "date"])
-        
-        # 2. 强力清洗 adjustFactor：
-        # - 将 <= 0 的异常值视为无效 (None)
-        # - 使用 forward_fill() 拿前一天的有效因子填补今天的空缺 (解决中间断层和最新数据没因子的问题)
-        # - 填补后如果还有空缺 (比如上市第一天就没因子)，默认给 1.0
+
+        # ==================== [新增] 自动诊断异常因子 ====================
+        try:
+            # 聚合计算每只股票的：历史最大因子、最新一天因子、空值数量
+            diag_df = self.df_daily.group_by("code").agg([
+                pl.col("adjustFactor").max().alias("max_f"),
+                pl.col("adjustFactor").last().alias("last_f"),
+                pl.col("adjustFactor").null_count().alias("null_c")
+            ])
+            
+            # 筛选出有问题的股票：最新因子比历史最大因子小(跌回去了)，或者存在空值
+            # 乘以 0.99 是为了容忍极微小的浮点数误差
+            bad_df = diag_df.filter(
+                (pl.col("last_f") < pl.col("max_f") * 0.99) | (pl.col("null_c") > 0)
+            )
+            
+            bad_count = len(bad_df)
+            if bad_count > 0:
+                logger.error(f"🚨 [DATA CORRUPTION WARNING] Node {self.node_index} 发现 {bad_count} 只股票的复权因子异常！")
+                logger.error("🚨 表现为：最新数据没因子(归1)，或中间有断层(Null)。系统将尝试强行修复，但建议检查数据源！")
+                
+                # 打印前 20 个最严重的异常股票样本供你排查
+                sample_bad = bad_df.head(20).to_dicts()
+                for bad in sample_bad:
+                    logger.error(f"   -> 异常标的: {bad['code']} | 历史最大因子: {bad['max_f']} | 最新因子: {bad['last_f']} | 缺失天数: {bad['null_c']}")
+            else:
+                logger.info(f"✅ Node {self.node_index}: adjustFactor 数据质量检查通过，未发现断层。")
+        except Exception as e:
+            logger.error(f"Diagnostics failed: {e}")
+        # ================================================================
+
+        # 2. 强力清洗 adjustFactor (防弹衣逻辑)：
+        # - 将 <= 0 或异常变小的回落值视为无效 (None)
+        # - 使用 forward_fill() 拿前一天的有效因子填补今天的空缺
+        # - 最后填补 1.0 兜底
         clean_factor = (
             pl.when(pl.col("adjustFactor") <= 0).then(None)
             .otherwise(pl.col("adjustFactor"))
@@ -172,13 +202,13 @@ class DataManager:
         self.df_daily = self.df_daily.with_columns(clean_factor.alias("adjustFactor"))
         
         # 3. 提取最新的有效锚点因子
-        # 使用 drop_nulls() 确保即使最后几天是硬伤 null，也能取到最后一个有效数字
-        anchor_factor = pl.col("adjustFactor").drop_nulls().last().over("code")
+        anchor_factor = pl.col("adjustFactor").last().over("code")
         
         # 4. 计算前复权比例: 当日因子 / 最新因子
         qfq_expr = pl.col("adjustFactor") / anchor_factor
         
         # 5. 执行价格替换
+        logger.info(f"Node {self.node_index}: Executing vector multiplication for OHLC...")
         self.df_daily = self.df_daily.with_columns([
             (pl.col("open") * qfq_expr).alias("open"),
             (pl.col("high") * qfq_expr).alias("high"),
