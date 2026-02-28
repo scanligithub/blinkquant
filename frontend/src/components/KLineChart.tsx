@@ -43,7 +43,20 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
 export default function KLineChart({ data, code }: { data: any, code: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const [tooltip, setTooltip] = useState<{ time: string; open: number; high: number; low: number; close: number; volume: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{
+    time: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    changePercent: number;
+    ma5: number;
+    ma10: number;
+    ma20: number;
+    ma30: number;
+    ma60: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -204,13 +217,36 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const date = new Date(timeValue * 1000);
         const timeStr = date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
         
+        const open = candlestickData.open as number;
+        const close = candlestickData.close as number;
+        const changePercent = ((close - open) / open) * 100;
+
+        // 获取MA指标值
+        const ma5Data = param.seriesData.get(maSeries[0]);
+        const ma10Data = param.seriesData.get(maSeries[1]);
+        const ma20Data = param.seriesData.get(maSeries[2]);
+        const ma30Data = param.seriesData.get(maSeries[3]);
+        const ma60Data = param.seriesData.get(maSeries[4]);
+
+        const ma5 = ma5Data && typeof ma5Data === 'object' && 'value' in ma5Data ? ma5Data.value as number : 0;
+        const ma10 = ma10Data && typeof ma10Data === 'object' && 'value' in ma10Data ? ma10Data.value as number : 0;
+        const ma20 = ma20Data && typeof ma20Data === 'object' && 'value' in ma20Data ? ma20Data.value as number : 0;
+        const ma30 = ma30Data && typeof ma30Data === 'object' && 'value' in ma30Data ? ma30Data.value as number : 0;
+        const ma60 = ma60Data && typeof ma60Data === 'object' && 'value' in ma60Data ? ma60Data.value as number : 0;
+        
         setTooltip({
           time: timeStr,
-          open: candlestickData.open as number,
+          open: open,
           high: candlestickData.high as number,
           low: candlestickData.low as number,
-          close: candlestickData.close as number,
+          close: close,
           volume: volumeData && typeof volumeData === 'object' && 'value' in volumeData ? volumeData.value as number : 0,
+          changePercent: changePercent,
+          ma5: ma5,
+          ma10: ma10,
+          ma20: ma20,
+          ma30: ma30,
+          ma60: ma60,
         });
       }
     });
@@ -242,8 +278,39 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
               <span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span>
             </div>
             <div className="flex justify-between gap-4">
+              <span className="text-slate-500">涨跌幅:</span>
+              <span className={`font-mono ${tooltip.changePercent >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                {tooltip.changePercent >= 0 ? '+' : ''}{tooltip.changePercent.toFixed(2)}%
+              </span>
+            </div>
+            <div className="flex justify-between gap-4">
               <span className="text-slate-500">成交量:</span>
               <span className="font-mono text-slate-900">{(tooltip.volume / 10000).toFixed(2)}万</span>
+            </div>
+            <div className="border-t border-slate-200 pt-2 mt-2">
+              <div className="text-slate-500 text-xs mb-1">技术指标</div>
+              <div className="grid grid-cols-3 gap-x-4 gap-y-1">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">MA5:</span>
+                  <span className="font-mono text-yellow-600">{tooltip.ma5.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">MA10:</span>
+                  <span className="font-mono text-purple-600">{tooltip.ma10.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">MA20:</span>
+                  <span className="font-mono text-blue-600">{tooltip.ma20.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">MA30:</span>
+                  <span className="font-mono text-cyan-600">{tooltip.ma30.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">MA60:</span>
+                  <span className="font-mono text-orange-600">{tooltip.ma60.toFixed(2)}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
