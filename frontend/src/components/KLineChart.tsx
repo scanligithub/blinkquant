@@ -27,6 +27,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       },
       timeScale: {
         borderColor: '#e2e8f0',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      localization: {
+        dateFormat: 'yyyy-MM-dd',
       },
     });
       // 为蜡烛图设置价格尺度，占据顶部 80% 的空间
