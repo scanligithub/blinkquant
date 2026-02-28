@@ -53,6 +53,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     close: number;
     volume: number;
     changePercent: number;
+    position: 'left' | 'right'; // tooltip显示位置
   } | null>(null);
   
   // 价格MA指标状态 - 显示在K线图区域左上角
@@ -265,6 +266,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         const vma30 = vma30Data && typeof vma30Data === 'object' && 'value' in vma30Data ? vma30Data.value as number : 0;
         const vma60 = vma60Data && typeof vma60Data === 'object' && 'value' in vma60Data ? vma60Data.value as number : 0;
         
+        // 根据光标位置决定tooltip显示位置
+        const chartWidth = chartContainerRef.current?.clientWidth || 0;
+        const cursorX = param.point.x;
+        const tooltipPosition = cursorX < chartWidth / 2 ? 'right' : 'left';
+        
         // 设置tooltip - 只显示基本OHLCV数据
         setTooltip({
           time: timeStr,
@@ -274,6 +280,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
           close: close,
           volume: volumeData && typeof volumeData === 'object' && 'value' in volumeData ? volumeData.value as number : 0,
           changePercent: changePercent,
+          position: tooltipPosition,
         });
         
         // 设置价格MA指标 - 显示在K线图区域左上角
@@ -364,9 +371,11 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         </div>
       )}
       
-      {/* Tooltip - 只显示基本OHLCV数据 */}
+      {/* Tooltip - 只显示基本OHLCV数据，位置动态调整 */}
       {tooltip && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
+        <div className={`absolute top-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm ${
+          tooltip.position === 'left' ? 'left-4' : 'right-4'
+        }`}>
           <div className="font-bold text-slate-900 mb-2">{tooltip.time}</div>
           <div className="space-y-1">
             <div className="flex justify-between gap-4">
