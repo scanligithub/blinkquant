@@ -306,7 +306,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* 价格MA指标 - 显示在K线图区域左上角，排成一排 */}
       {maIndicators && (
-        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+        <div className="absolute top-4 left-4 z-10 bg-transparent px-3 py-2 rounded-lg border-none shadow-none text-xs">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">MA5:</span>
@@ -338,7 +338,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的70%位置） */}
       {vmaIndicators && (
-        <div className="absolute top-[70%] left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+        <div className="absolute top-[70%] left-4 z-10 bg-transparent px-3 py-2 rounded-lg border-none shadow-none text-xs">
           <div className="grid grid-cols-5 gap-x-3 gap-y-1">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">VMA5:</span>
