@@ -304,10 +304,10 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     <div className="relative bg-white rounded-xl p-4 border border-slate-200 shadow-none">
       <div ref={chartContainerRef} />
       
-      {/* 价格MA指标 - 显示在K线图区域右上角，避免挡住股票代码和名称 */}
+      {/* 价格MA指标 - 显示在K线图区域左上角，排成一排 */}
       {maIndicators && (
-        <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
-          <div className="grid grid-cols-3 gap-x-3 gap-y-1">
+        <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow text-xs">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <span className="text-slate-500">MA5:</span>
               <span className="font-mono text-[#FF6B6B]">{maIndicators.ma5.toFixed(2)}</span>
