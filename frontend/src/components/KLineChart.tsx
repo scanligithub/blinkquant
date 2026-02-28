@@ -31,6 +31,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         secondsVisible: false,
       },
       localization: {
+        locale: 'zh-CN',
         dateFormat: 'yyyy-MM-dd',
       },
     });
