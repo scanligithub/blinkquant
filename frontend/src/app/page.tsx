@@ -467,21 +467,26 @@ export default function Home() {
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                 {results.length > 0 ? (
                   <div className="grid grid-cols-1 gap-1">
-                    {results.map(code => (
-                      <button 
-                        key={code} 
-                        onClick={() => {
-                          console.log('Strategy result item clicked. Code:', code);
-                          viewStock(code);
-                        }}
-                        className={`w-full text-left px-4 py-3 rounded-lg transition-all text-sm font-mono flex justify-between items-center group
-                          ${selectedStock?.code === code 
-                            ? 'bg-blue-50 text-blue-700 border border-blue-100 font-bold' 
-                            : 'hover:bg-slate-50 text-slate-600 border border-transparent'}`}
-                      >
-                        {code}
-                      </button>
-                    ))}
+                    {results.map(code => {
+                      const stock = stockList.find(s => s.code === code);
+                      const displayName = stock?.name || code;
+                      return (
+                        <button
+                          key={code}
+                          onClick={() => {
+                            console.log('Strategy result item clicked. Code:', code);
+                            viewStock(code);
+                          }}
+                          className={`w-full text-left px-4 py-3 rounded-lg transition-all text-sm flex justify-between items-center group
+                            ${selectedStock?.code === code
+                              ? 'bg-blue-50 text-blue-700 border border-blue-100 font-bold'
+                              : 'hover:bg-slate-50 text-slate-600 border border-transparent'}`}
+                        >
+                          <span className="font-medium">{displayName}</span>
+                          <span className="text-xs font-mono text-slate-400">{code}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm italic p-4 text-center">
