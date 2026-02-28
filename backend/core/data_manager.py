@@ -154,6 +154,9 @@ class DataManager:
 
         logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
         
+        # 【关键修复】：强制按代码和时间升序排序，确保 .last() 绝对是最新的一天！
+        self.df_daily = self.df_daily.sort(["code", "date"])
+        
         # 计算每只股票最新的复权因子
         # 使用 over("code") 窗口函数定位每只股票时间轴上的最后一个因子
         qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").last().over("code")
