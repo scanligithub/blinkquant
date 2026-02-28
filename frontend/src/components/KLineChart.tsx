@@ -1,6 +1,6 @@
 'use client';
 import { createChart, ColorType, IChartApi, PriceScaleMode, LineData, Time } from 'lightweight-charts';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // 计算价格移动平均线
 function calculateMA(data: any[], period: number): LineData[] {
@@ -43,6 +43,7 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
 export default function KLineChart({ data, code }: { data: any, code: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const [tooltip, setTooltip] = useState<{ time: string; open: number; high: number; low: number; close: number; volume: number } | null>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -188,12 +189,65 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
+    // 订阅光标移动事件
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time || !param.seriesData.size) {
+        setTooltip(null);
+        return;
+      }
+
+      const candlestickData = param.seriesData.get(candlestickSeries);
+      const volumeData = param.seriesData.get(volumeSeries);
+
+      if (candlestickData && typeof candlestickData === 'object' && 'open' in candlestickData) {
+        const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
+        const date = new Date(timeValue * 1000);
+        const timeStr = date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        
+        setTooltip({
+          time: timeStr,
+          open: candlestickData.open as number,
+          high: candlestickData.high as number,
+          low: candlestickData.low as number,
+          close: candlestickData.close as number,
+          volume: volumeData && typeof volumeData === 'object' && 'value' in volumeData ? volumeData.value as number : 0,
+        });
+      }
+    });
+
     return () => chart.remove();
   }, [data]);
 
   return (
     <div className="relative bg-white rounded-xl p-4 border border-slate-200 shadow-none">
       <div ref={chartContainerRef} />
+      {tooltip && (
+        <div className="absolute top-4 left-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm">
+          <div className="font-bold text-slate-900 mb-2">{tooltip.time}</div>
+          <div className="space-y-1">
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">开盘:</span>
+              <span className="font-mono text-slate-900">{tooltip.open.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">最高:</span>
+              <span className="font-mono text-red-600">{tooltip.high.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">最低:</span>
+              <span className="font-mono text-green-600">{tooltip.low.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">收盘:</span>
+              <span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-500">成交量:</span>
+              <span className="font-mono text-slate-900">{(tooltip.volume / 10000).toFixed(2)}万</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
