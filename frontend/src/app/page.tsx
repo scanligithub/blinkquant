@@ -319,8 +319,8 @@ export default function Home() {
           {/* Search Input */}
           <div className="flex flex-col gap-4 mb-6">
             <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">Search Stock</label>
-            <div className="relative">
-              <input 
+            <div className="relative z-20">
+              <input
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 w-full"
                 placeholder="e.g. 000952, Ping An, PA"
                 value={searchQuery}
@@ -386,10 +386,9 @@ export default function Home() {
                   <div className="w-4 h-4 border-2 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
                 </div>
               )}
-            </div>
 
-            {searchQuery.length > 1 && searchResults.length > 0 && (
-              <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-xl shadow-lg mt-1 max-h-60 overflow-y-auto custom-scrollbar">
+              {searchQuery.length > 1 && searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 z-30 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
                 {searchResults.map((stock) => (
                   <button
                     key={stock.code}
@@ -405,8 +404,9 @@ export default function Home() {
                     <span className="text-sm font-mono text-slate-500">{stock.code}</span>
                   </button>
                 ))}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-4">
