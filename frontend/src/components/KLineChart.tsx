@@ -88,8 +88,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         vertLines: { color: '#f1f5f9' }, // 极浅网格
         horzLines: { color: '#f1f5f9' }
       },
+      // 【修复】：使用容器真实高宽，去掉死值 400
       width: chartContainerRef.current.clientWidth,
-      height: 400,
+      height: chartContainerRef.current.clientHeight,
       rightPriceScale: {
         borderColor: '#e2e8f0', // 边框颜色
    // (removed invalid scaleMargins from rightPriceScale)
@@ -219,6 +220,18 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
+    // 【新增】：监听容器缩放事件，全屏时自动撑满屏幕
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight,
+        });
+      }
+    };
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(chartContainerRef.current);
+
     // 订阅光标移动事件
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) {
@@ -304,12 +317,17 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       }
     });
 
-    return () => chart.remove();
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+    };
   }, [data]);
 
   return (
-    <div className="relative bg-white rounded-xl p-4 border border-slate-200 shadow-none">
-      <div ref={chartContainerRef} />
+    // 【修复】：外层 div 必须占满父容器 (w-full h-full)，并去掉 padding (p-4)
+    <div className="w-full h-full relative bg-white">
+      {/* 这里的 inset-0 和 absolute 让绘图区死死钉在边框上 */}
+      <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       
       {/* 价格MA指标 - 显示在K线图区域左上角，排成一排 */}
       {maIndicators && (

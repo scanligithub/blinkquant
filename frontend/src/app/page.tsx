@@ -521,32 +521,37 @@ export default function Home() {
           </aside>
 
           <section className="lg:col-span-3">
-            {/* 股票代码和名称 - 显示在K线图容器外部的左上角 */}
-            {selectedStock && (
-              <div className="mb-3 flex items-baseline">
-                <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
-                <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
-                
-                <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
-                  {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
-                </span>
-              </div>
-            )}
-            
-            <div ref={chartWrapperRef} className={`bg-white rounded-2xl border border-slate-200 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 w-full h-full bg-white' : 'h-[600px]'} shadow-sm relative flex flex-col` }>
-              {/* K线图周期选择器 */}
+            {/* 将所有内容统一放入 chartWrapperRef 中，原生全屏会自动放大这个 div */}
+            <div
+              ref={chartWrapperRef}
+              className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px] shadow-sm w-full"
+            >
+              {/* === 统一的顶部控制栏 (Header) === */}
               {selectedStock && (
-                <div className="absolute top-4 right-4 z-10">
-                  <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
+                <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-white z-10 shrink-0">
+                  {/* 左侧：股票代码、名称、周期标签 */}
+                  <div className="flex items-baseline">
+                    <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
+                    <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
+                    <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                      {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
+                    </span>
+                  </div>
+
+                  {/* 右侧：全屏与周期切换按钮 */}
+                  <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
                     <button
                       onClick={() => {
+                        // 【核心修复】：请求 chartWrapperRef 全屏，而不是整个 document
                         if (!document.fullscreenElement) {
-                          document.documentElement.requestFullscreen();
+                          chartWrapperRef.current?.requestFullscreen().catch(err => {
+                            console.error(`Error attempting to enable fullscreen: ${err.message}`);
+                          });
                         } else {
                           document.exitFullscreen();
                         }
                       }}
-                      className="px-2 py-1 text-xs bg-slate-200 rounded-md mr-2"
+                      className="px-3 py-1 text-xs font-bold text-slate-600 bg-white shadow-sm border border-slate-200 rounded-md mr-2 hover:bg-slate-100 transition-colors"
                     >
                       {isFullScreen ? '退出全屏' : '全屏'}
                     </button>
@@ -555,7 +560,6 @@ export default function Home() {
                         key={tf.value}
                         onClick={() => {
                           setChartTimeframe(tf.value);
-                          // 使用缓存的日线数据进行重采样
                           if (dailyDataCache.length > 0 && selectedStock) {
                             const resampledData = resampleData(dailyDataCache, tf.value);
                             setSelectedStock({ ...selectedStock, data: resampledData });
@@ -563,8 +567,8 @@ export default function Home() {
                         }}
                         className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
                           chartTimeframe === tf.value
-                            ? 'bg-white text-blue-600 shadow-sm border border-blue-100'
-                            : 'text-slate-500 hover:text-slate-700'
+                            ? 'bg-blue-600 text-white shadow-sm border border-blue-600'
+                            : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                         }`}
                       >
                         {tf.label}
@@ -573,12 +577,14 @@ export default function Home() {
                   </div>
                 </div>
               )}
-              {chartLoading && (
-                <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-sm flex items-center justify-center">
-                   <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
-                </div>
-              )}
-              <div className="flex-1 w-full h-full p-1">
+              
+              {/* === 主图表区域 === */}
+              <div className="flex-1 w-full h-full relative bg-white p-1">
+                {chartLoading && (
+                  <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-sm flex items-center justify-center">
+                     <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
+                  </div>
+                )}
                 {selectedStock ? (
                   <KLineChart code={selectedStock.code} data={selectedStock.data} />
                 ) : (
