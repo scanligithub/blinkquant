@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
@@ -31,7 +31,14 @@ export default function Home() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [timeframe, setTimeframe] = useState('D'); // 用于策略公式选股
   const [chartTimeframe, setChartTimeframe] = useState('D'); // 用于K线图周期选择
-  const [isFullScreen, setIsFullScreen] = useState(false); // 全屏状态
+   const [isFullScreen, setIsFullScreen] = useState(false); // 全屏状态
+   const chartWrapperRef = useRef<HTMLDivElement>(null); // 用于全屏 API
+   // 监听全屏变化，同步 isFullScreen 状态
+   useEffect(() => {
+     const handler = () => setIsFullScreen(!!document.fullscreenElement);
+     document.addEventListener('fullscreenchange', handler);
+     return () => document.removeEventListener('fullscreenchange', handler);
+   }, []);
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
     const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
@@ -526,13 +533,19 @@ export default function Home() {
               </div>
             )}
             
-            <div className={`bg-white rounded-2xl border border-slate-200 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 w-full h-full' : 'h-[600px]'} shadow-sm relative flex flex-col` }>
+            <div ref={chartWrapperRef} className={`bg-white rounded-2xl border border-slate-200 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 w-full h-full bg-white' : 'h-[600px]'} shadow-sm relative flex flex-col` }>
               {/* K线图周期选择器 */}
               {selectedStock && (
                 <div className="absolute top-4 right-4 z-10">
                   <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
                     <button
-                      onClick={() => setIsFullScreen(!isFullScreen)}
+                      onClick={() => {
+                        if (!document.fullscreenElement) {
+                          document.documentElement.requestFullscreen();
+                        } else {
+                          document.exitFullscreen();
+                        }
+                      }}
                       className="px-2 py-1 text-xs bg-slate-200 rounded-md mr-2"
                     >
                       {isFullScreen ? '退出全屏' : '全屏'}
