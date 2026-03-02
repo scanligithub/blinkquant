@@ -217,15 +217,29 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       volumeMASeries[index].setData(volumeMAData);
     });
 
-    // 添加最高价和最低价标记点
-    if (formattedData.length > 0) {
-      // 找到最高价和最低价
+    // 添加最高价和最低价标记点（仅显示当前视图内的极值）
+    const updateMarkers = () => {
+      if (formattedData.length === 0) return;
+
+      // 获取当前可见的时间范围
+      const visibleRange = chart.timeScale().getVisibleRange();
+      if (!visibleRange) return;
+
+      // 找出可见范围内的K线数据
+      const visibleData = formattedData.filter(item => {
+        const time = typeof item.time === 'number' ? item.time : (item.time as any).timestamp;
+        return time >= visibleRange.from && time <= visibleRange.to;
+      });
+
+      if (visibleData.length === 0) return;
+
+      // 找到可见范围内的最高价和最低价
       let maxPrice = -Infinity;
       let minPrice = Infinity;
       let maxTime: Time | null = null;
       let minTime: Time | null = null;
 
-      formattedData.forEach(item => {
+      visibleData.forEach(item => {
         if (item.high > maxPrice) {
           maxPrice = item.high;
           maxTime = item.time;
@@ -241,7 +255,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       if (maxTime !== null) {
         markers.push({
           time: maxTime,
-          position: 'aboveBar' as const,
+          position: 'inBar' as const, // 改为在K线内部，避免超出视图上边框
           color: '#ef4444',
           shape: 'arrowDown' as const,
           text: `最高 ${maxPrice.toFixed(2)}`,
@@ -250,7 +264,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       if (minTime !== null) {
         markers.push({
           time: minTime,
-          position: 'belowBar' as const,
+          position: 'inBar' as const, // 改为在K线内部
           color: '#22c55e',
           shape: 'arrowUp' as const,
           text: `最低 ${minPrice.toFixed(2)}`,
@@ -258,7 +272,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       }
 
       candlestickSeries.setMarkers(markers);
-    }
+    };
+
+    // 初始化标记点
+    updateMarkers();
+
+    // 监听可见范围变化，更新标记点
+    chart.timeScale().subscribeVisibleLogicalRangeChange(updateMarkers);
 
     chart.timeScale().fitContent();
     chartRef.current = chart;
