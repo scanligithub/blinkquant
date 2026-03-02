@@ -45,9 +45,18 @@ function calculateEMA(data: number[], period: number): number[] {
   const result: number[] = [];
   const multiplier = 2 / (period + 1);
   
+  // 前面 period-1 个数据点没有 EMA 值，用 null 填充
+  for (let i = 0; i < period - 1 && i < data.length; i++) {
+    result.push(0);
+  }
+  
+  if (data.length < period) {
+    return result;
+  }
+  
   // 第一个 EMA 使用 SMA
   let sum = 0;
-  for (let i = 0; i < period && i < data.length; i++) {
+  for (let i = 0; i < period; i++) {
     sum += data[i];
   }
   result.push(sum / period);
@@ -69,34 +78,40 @@ function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number 
   const fastEMA = calculateEMA(closes, fastPeriod);
   const slowEMA = calculateEMA(closes, slowPeriod);
   
-  // 计算 MACD 线 (DIF)
+  // 计算 MACD 线 (DIF) - 从 slowPeriod 开始
   const macdLine: LineData[] = [];
   for (let i = slowPeriod - 1; i < data.length; i++) {
-    macdLine.push({
-      time: data[i].time,
-      value: fastEMA[i] - slowEMA[i],
-    });
+    const dif = fastEMA[i] - slowEMA[i];
+    if (!isNaN(dif) && isFinite(dif)) {
+      macdLine.push({
+        time: data[i].time,
+        value: dif,
+      });
+    }
   }
   
-  // 计算 DEA 线 (信号线)
+  // 计算 DEA 线 (信号线) - 从 macdLine 的 signalPeriod 开始
   const macdValues = macdLine.map(item => item.value);
   const signalEMA = calculateEMA(macdValues, signalPeriod);
   const signalLine: LineData[] = [];
-  for (let i = 0; i < signalEMA.length; i++) {
-    signalLine.push({
-      time: macdLine[i].time,
-      value: signalEMA[i],
-    });
+  for (let i = signalPeriod - 1; i < macdLine.length; i++) {
+    const dea = signalEMA[i];
+    if (!isNaN(dea) && isFinite(dea)) {
+      signalLine.push({
+        time: macdLine[i].time,
+        value: dea,
+      });
+    }
   }
   
   // 计算 MACD 柱状图 (MACD - DEA)
   const histogram: any[] = [];
-  for (let i = 0; i < macdLine.length; i++) {
-    const macdValue = macdLine[i].value;
+  for (let i = 0; i < signalLine.length; i++) {
+    const macdValue = macdLine[i + signalPeriod - 1]?.value || 0;
     const signalValue = signalLine[i]?.value || 0;
     const diff = macdValue - signalValue;
     histogram.push({
-      time: macdLine[i].time,
+      time: signalLine[i].time,
       value: Math.abs(diff),
       color: diff >= 0 ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
     });
