@@ -40,6 +40,71 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
   return result;
 }
 
+// 计算 EMA (指数移动平均)
+function calculateEMA(data: number[], period: number): number[] {
+  const result: number[] = [];
+  const multiplier = 2 / (period + 1);
+  
+  // 第一个 EMA 使用 SMA
+  let sum = 0;
+  for (let i = 0; i < period && i < data.length; i++) {
+    sum += data[i];
+  }
+  result.push(sum / period);
+  
+  // 后续 EMA 使用公式
+  for (let i = period; i < data.length; i++) {
+    const ema = (data[i] - result[i - 1]) * multiplier + result[i - 1];
+    result.push(ema);
+  }
+  
+  return result;
+}
+
+// 计算 MACD
+function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9) {
+  const closes = data.map(item => item.close);
+  
+  // 计算 EMA
+  const fastEMA = calculateEMA(closes, fastPeriod);
+  const slowEMA = calculateEMA(closes, slowPeriod);
+  
+  // 计算 MACD 线 (DIF)
+  const macdLine: LineData[] = [];
+  for (let i = slowPeriod - 1; i < data.length; i++) {
+    macdLine.push({
+      time: data[i].time,
+      value: fastEMA[i] - slowEMA[i],
+    });
+  }
+  
+  // 计算 DEA 线 (信号线)
+  const macdValues = macdLine.map(item => item.value);
+  const signalEMA = calculateEMA(macdValues, signalPeriod);
+  const signalLine: LineData[] = [];
+  for (let i = 0; i < signalEMA.length; i++) {
+    signalLine.push({
+      time: macdLine[i].time,
+      value: signalEMA[i],
+    });
+  }
+  
+  // 计算 MACD 柱状图 (MACD - DEA)
+  const histogram: any[] = [];
+  for (let i = 0; i < macdLine.length; i++) {
+    const macdValue = macdLine[i].value;
+    const signalValue = signalLine[i]?.value || 0;
+    const diff = macdValue - signalValue;
+    histogram.push({
+      time: macdLine[i].time,
+      value: Math.abs(diff),
+      color: diff >= 0 ? '#ef4444' : '#22c55e', // 上涨红色，下跌绿色
+    });
+  }
+  
+  return { macdLine, signalLine, histogram };
+}
+
 export default function KLineChart({ data, code }: { data: any, code: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -75,6 +140,13 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     vma60: number;
   } | null>(null);
 
+  // MACD指标状态 - 显示在MACD副图区域左上角
+  const [macdIndicators, setMacdIndicators] = useState<{
+    dif: number;
+    dea: number;
+    macd: number;
+  } | null>(null);
+
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
 
@@ -105,10 +177,10 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         dateFormat: 'yyyy-MM-dd',
       },
     });
-      // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
+      // 为蜡烛图设置价格尺度，占据顶部 40% 的空间
       // 顶部留出 5% 空间给标记点显示
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.05, bottom: 0.3 },
+        scaleMargins: { top: 0.05, bottom: 0.55 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -145,9 +217,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    // 设置量能图的 scaleMargins，将其压在底部 30% 区域
+    // 设置量能图的 scaleMargins，占据中间 15% 区域 (55%-70%)
     chart.priceScale('').applyOptions({
-      scaleMargins: { top: 0.7, bottom: 0 },
+      scaleMargins: { top: 0.55, bottom: 0.25 },
     });
 
     // 添加量能MA均线系列
@@ -164,6 +236,35 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         priceLineVisible: false,
       });
       volumeMASeries.push(volumeMALine);
+    });
+
+    // 添加 MACD 副图
+    const macdPriceScaleId = 'macd';
+    chart.priceScale(macdPriceScaleId).applyOptions({
+      scaleMargins: { top: 0.75, bottom: 0 },
+    });
+
+    const macdLine = chart.addLineSeries({
+      priceScaleId: macdPriceScaleId,
+      color: '#ef4444',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    const signalLine = chart.addLineSeries({
+      priceScaleId: macdPriceScaleId,
+      color: '#22c55e',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    const histogramSeries = chart.addHistogramSeries({
+      priceScaleId: macdPriceScaleId,
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
 
     let formattedData = [];
@@ -217,6 +318,12 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       const volumeMAData = calculateVolumeMA(volumeData, period);
       volumeMASeries[index].setData(volumeMAData);
     });
+
+    // 计算并设置 MACD 数据
+    const macdData = calculateMACD(formattedData);
+    macdLine.setData(macdData.macdLine);
+    signalLine.setData(macdData.signalLine);
+    histogramSeries.setData(macdData.histogram);
 
     // 添加最高价、最低价和最大量能标记点（仅显示当前视图内的极值）
     const updateMarkers = () => {
@@ -406,6 +513,22 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
           vma30,
           vma60,
         });
+
+        // 获取MACD指标值
+        const macdLineData = param.seriesData.get(macdLine);
+        const signalLineData = param.seriesData.get(signalLine);
+        const histogramData = param.seriesData.get(histogramSeries);
+
+        const dif = macdLineData && typeof macdLineData === 'object' && 'value' in macdLineData ? macdLineData.value as number : 0;
+        const dea = signalLineData && typeof signalLineData === 'object' && 'value' in signalLineData ? signalLineData.value as number : 0;
+        const macd = histogramData && typeof histogramData === 'object' && 'value' in histogramData ? histogramData.value as number : 0;
+
+        // 设置MACD指标 - 显示在MACD副图区域左上角
+        setMacdIndicators({
+          dif,
+          dea,
+          macd,
+        });
       }
     });
 
@@ -453,9 +576,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         </div>
       )}
       
-      {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的70%位置） */}
+      {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的55%位置） */}
       {vmaIndicators && (
-        <div className="absolute top-[70%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
+        <div className="absolute top-[55%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
           <div className="grid grid-cols-3 md:grid-cols-5 gap-x-1.5 md:gap-x-3 gap-y-0.5 md:gap-y-1">
             <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">VMA5:</span>
@@ -476,6 +599,26 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
             <div className="flex items-center gap-0.5 md:gap-1 hidden md:flex">
               <span className="text-slate-500">VMA60:</span>
               <span className="font-mono text-[#FFEAA7]">{(vmaIndicators.vma60 / 10000).toFixed(2)}万</span>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* MACD指标 - 显示在MACD副图区域左上角（图表高度的75%位置） */}
+      {macdIndicators && (
+        <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
+          <div className="flex items-center gap-1.5 md:gap-3">
+            <div className="flex items-center gap-0.5 md:gap-1">
+              <span className="text-slate-500">DIF:</span>
+              <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-0.5 md:gap-1">
+              <span className="text-slate-500">DEA:</span>
+              <span className="font-mono text-[#22c55e]">{macdIndicators.dea.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center gap-0.5 md:gap-1">
+              <span className="text-slate-500">MACD:</span>
+              <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span>
             </div>
           </div>
         </div>
