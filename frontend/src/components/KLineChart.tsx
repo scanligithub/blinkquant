@@ -218,9 +218,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       volumeMASeries[index].setData(volumeMAData);
     });
 
-    // 添加最高价和最低价标记点（仅显示当前视图内的极值）
+    // 添加最高价、最低价和最大量能标记点（仅显示当前视图内的极值）
     const updateMarkers = () => {
-      if (formattedData.length === 0) return;
+      if (formattedData.length === 0 || volumeData.length === 0) return;
 
       // 获取当前可见的时间范围
       const visibleRange = chart.timeScale().getVisibleRange();
@@ -251,7 +251,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         }
       });
 
-      // 创建标记点 - 使用箭头指向极值K线
+      // 创建价格标记点 - 使用箭头指向极值K线
       const markers = [];
       if (maxTime !== null) {
         markers.push({
@@ -273,6 +273,34 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       }
 
       candlestickSeries.setMarkers(markers);
+
+      // 找出可见范围内的最大量能值
+      let maxVolume = -Infinity;
+      let maxVolumeTime: Time | null = null;
+
+      volumeData.forEach(item => {
+        const time = typeof item.time === 'number' ? item.time : (item.time as any).timestamp;
+        if (time >= visibleRange.from && time <= visibleRange.to) {
+          if (item.value > maxVolume) {
+            maxVolume = item.value;
+            maxVolumeTime = item.time;
+          }
+        }
+      });
+
+      // 创建量能标记点
+      const volumeMarkers = [];
+      if (maxVolumeTime !== null) {
+        volumeMarkers.push({
+          time: maxVolumeTime,
+          position: 'aboveBar' as const,
+          color: '#f59e0b',
+          shape: 'arrowDown' as const,
+          text: `最大量 ${(maxVolume / 10000).toFixed(2)}万`,
+        });
+      }
+
+      volumeSeries.setMarkers(volumeMarkers);
     };
 
     // 初始化标记点
