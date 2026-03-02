@@ -130,6 +130,8 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         color: maColors[index],
         lineWidth: 1,
         title: `MA${period}`,
+        lastValueVisible: false, // 隐藏右侧坐标轴上的彩色数值标签
+        priceLineVisible: false, // 隐藏当前价格水平虚线
       });
       maSeries.push(maLine);
     });
