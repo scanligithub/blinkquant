@@ -106,8 +106,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       },
     });
       // 为蜡烛图设置价格尺度，占据顶部 70% 的空间
+      // 顶部留出 5% 空间给标记点显示
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0, bottom: 0.3 },
+        scaleMargins: { top: 0.05, bottom: 0.3 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
