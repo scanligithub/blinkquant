@@ -250,23 +250,23 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         }
       });
 
-      // 创建标记点 - 使用圆形标记，显示在K线内部空位置
+      // 创建标记点 - 使用箭头指向极值K线
       const markers = [];
       if (maxTime !== null) {
         markers.push({
           time: maxTime,
-          position: 'inBar' as const,
+          position: 'aboveBar' as const,
           color: '#ef4444',
-          shape: 'circle' as const,
+          shape: 'arrowDown' as const,
           text: `最高 ${maxPrice.toFixed(2)}`,
         });
       }
       if (minTime !== null) {
         markers.push({
           time: minTime,
-          position: 'inBar' as const,
+          position: 'belowBar' as const,
           color: '#22c55e',
-          shape: 'circle' as const,
+          shape: 'arrowUp' as const,
           text: `最低 ${minPrice.toFixed(2)}`,
         });
       }
