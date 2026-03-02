@@ -217,6 +217,49 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       volumeMASeries[index].setData(volumeMAData);
     });
 
+    // 添加最高价和最低价标记点
+    if (formattedData.length > 0) {
+      // 找到最高价和最低价
+      let maxPrice = -Infinity;
+      let minPrice = Infinity;
+      let maxTime: Time | null = null;
+      let minTime: Time | null = null;
+
+      formattedData.forEach(item => {
+        if (item.high > maxPrice) {
+          maxPrice = item.high;
+          maxTime = item.time;
+        }
+        if (item.low < minPrice) {
+          minPrice = item.low;
+          minTime = item.time;
+        }
+      });
+
+      // 创建标记点
+      const markers = [];
+      if (maxTime !== null) {
+        markers.push({
+          time: maxTime,
+          position: 'aboveBar' as const,
+          color: '#ef4444',
+          shape: 'arrowDown' as const,
+          text: `最高 ${maxPrice.toFixed(2)}`,
+        });
+      }
+      if (minTime !== null) {
+        markers.push({
+          time: minTime,
+          position: 'belowBar' as const,
+          color: '#22c55e',
+          shape: 'arrowUp' as const,
+          text: `最低 ${minPrice.toFixed(2)}`,
+        });
+      }
+
+      candlestickSeries.setMarkers(markers);
+    }
+
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
