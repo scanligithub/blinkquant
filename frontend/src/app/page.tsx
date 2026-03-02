@@ -534,7 +534,7 @@ export default function Home() {
               </div>
             )}
             
-            <div ref={chartWrapperRef} className="bg-white rounded-2xl border border-slate-200 overflow-hidden h-[600px] shadow-sm relative flex flex-col" >
+            <div ref={chartWrapperRef} className={`bg-white rounded-2xl border border-slate-200 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 w-screen h-screen bg-white flex flex-col' : 'h-[600px]'} shadow-sm relative flex flex-col` }>
               {/* K线图周期选择器 */}
               {selectedStock && (
                 <div className="absolute top-4 right-4 z-10">
@@ -542,7 +542,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         if (!document.fullscreenElement) {
-                          chartAreaRef.current?.requestFullscreen();
+                          chartWrapperRef.current?.requestFullscreen();
                         } else {
                           document.exitFullscreen();
                         }
