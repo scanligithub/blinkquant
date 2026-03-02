@@ -33,7 +33,6 @@ export default function Home() {
   const [chartTimeframe, setChartTimeframe] = useState('D'); // 用于K线图周期选择
    const [isFullScreen, setIsFullScreen] = useState(false); // 全屏状态
    const chartWrapperRef = useRef<HTMLDivElement>(null); // 用于全屏 API
-   const chartAreaRef = useRef<HTMLDivElement>(null); // K线图区域全屏 API
    // 监听全屏变化，同步 isFullScreen 状态
    useEffect(() => {
      const handler = () => setIsFullScreen(!!document.fullscreenElement);
@@ -534,7 +533,7 @@ export default function Home() {
               </div>
             )}
             
-            <div ref={chartWrapperRef} className="bg-white rounded-2xl border border-slate-200 overflow-hidden h-[600px] shadow-sm relative flex flex-col" >
+            <div ref={chartWrapperRef} className={`bg-white rounded-2xl border border-slate-200 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 w-full h-full bg-white' : 'h-[600px]'} shadow-sm relative flex flex-col` }>
               {/* K线图周期选择器 */}
               {selectedStock && (
                 <div className="absolute top-4 right-4 z-10">
@@ -542,7 +541,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         if (!document.fullscreenElement) {
-                          chartAreaRef.current?.requestFullscreen();
+                          document.documentElement.requestFullscreen();
                         } else {
                           document.exitFullscreen();
                         }
@@ -579,7 +578,7 @@ export default function Home() {
                    <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
                 </div>
               )}
-              <div ref={chartAreaRef} className="flex-1 w-full h-full p-1">
+              <div className="flex-1 w-full h-full p-1">
                 {selectedStock ? (
                   <KLineChart code={selectedStock.code} data={selectedStock.data} />
                 ) : (
