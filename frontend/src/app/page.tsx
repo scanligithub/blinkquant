@@ -481,7 +481,7 @@ export default function Home() {
 
         {/* Results Area */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
-          <aside className="lg:col-span-1 order-2 lg:order-1">
+          <aside className="lg:col-span-1 order-1 lg:order-1">
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[400px] md:h-[500px] lg:h-[600px] shadow-sm">
               <div className="p-3 md:p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <h2 className="font-bold text-slate-700 text-sm md:text-base">结果</h2>
@@ -520,7 +520,7 @@ export default function Home() {
             </div>
           </aside>
 
-          <section className="lg:col-span-3 order-1 lg:order-2">
+          <section className="lg:col-span-3 order-2 lg:order-2">
             {/* 将所有内容统一放入 chartWrapperRef 中，原生全屏会自动放大这个 div */}
             <div
               ref={chartWrapperRef}
