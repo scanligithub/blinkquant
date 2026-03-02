@@ -192,10 +192,10 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         dateFormat: 'yyyy-MM-dd',
       },
     });
-      // 为蜡烛图设置价格尺度，占据顶部 40% 的空间
+      // 为蜡烛图设置价格尺度，占据顶部 50% 的空间
       // 顶部留出 5% 空间给标记点显示
       chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.05, bottom: 0.55 },
+        scaleMargins: { top: 0.05, bottom: 0.45 },
       });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -232,9 +232,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    // 设置量能图的 scaleMargins，占据中间 15% 区域 (55%-70%)
+    // 设置量能图的 scaleMargins，占据中间 20% 区域 (45%-65%)
     chart.priceScale('').applyOptions({
-      scaleMargins: { top: 0.55, bottom: 0.25 },
+      scaleMargins: { top: 0.45, bottom: 0.3 },
     });
 
     // 添加量能MA均线系列
@@ -256,7 +256,7 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     // 添加 MACD 副图
     const macdPriceScaleId = 'macd';
     chart.priceScale(macdPriceScaleId).applyOptions({
-      scaleMargins: { top: 0.75, bottom: 0 },
+      scaleMargins: { top: 0.65, bottom: 0 },
     });
 
     const macdLine = chart.addLineSeries({
@@ -619,9 +619,9 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
         </div>
       )}
       
-      {/* MACD指标 - 显示在MACD副图区域左上角（图表高度的75%位置） */}
+      {/* MACD指标 - 显示在MACD副图区域左上角（图表高度的65%位置） */}
       {macdIndicators && (
-        <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
+        <div className="absolute top-[65%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
           <div className="flex items-center gap-1.5 md:gap-3">
             <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">DIF:</span>
