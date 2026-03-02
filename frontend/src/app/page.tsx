@@ -302,32 +302,32 @@ export default function Home() {
       <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Header Title */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
           <div>
-            <h1 className="text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+            <h1 className="text-2xl md:text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
               BlinkQuant
             </h1>
-            <p className="text-slate-500 text-sm mt-1">分布式计算集群</p>
+            <p className="text-slate-500 text-xs md:text-sm mt-1">分布式计算集群</p>
           </div>
           
-          <div className="text-xs font-mono text-slate-400 bg-white px-3 py-1 rounded border border-slate-200 shadow-sm">
+          <div className="text-[10px] md:text-xs font-mono text-slate-400 bg-white px-2 md:px-3 py-1 rounded border border-slate-200 shadow-sm">
             状态: {clusterStatus?.cluster_health || '连接中...'}
           </div>
         </header>
 
         {/* Monitor Dashboard (直接平铺) */}
         {clusterStatus && (
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
             {clusterStatus.nodes.map((node: any, idx: number) => (
-              <div key={idx} className={`p-4 rounded-xl border shadow-sm transition-all ${
+              <div key={idx} className={`p-3 md:p-4 rounded-xl border shadow-sm transition-all ${
                   node.online ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'
                 }`}>
-                <div className="flex justify-between items-center mb-3">
+                <div className="flex justify-between items-center mb-2 md:mb-3">
                   <div className="flex items-center gap-2">
-                    <div className={`w-2.5 h-2.5 rounded-full ${node.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                    <span className="font-bold text-slate-700">Node {node.node || idx}</span>
+                    <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${node.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span className="font-bold text-slate-700 text-xs md:text-sm">Node {node.node || idx}</span>
                   </div>
-                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                  <span className={`text-[9px] md:text-[10px] uppercase font-bold px-1.5 md:px-2 py-0.5 rounded-full ${
                     node.status === 'healthy' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                   }`}>
                     {node.status || 'OFFLINE'}
@@ -335,7 +335,7 @@ export default function Home() {
                 </div>
                 
                 {node.online ? (
-                  <div className="grid grid-cols-2 gap-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-y-1.5 md:gap-y-2 text-[10px] md:text-xs">
                     <div className="text-slate-500">RAM (App):</div>
                     <div className="font-mono font-medium text-slate-900 text-right">{node.process_memory_gb} GB</div>
                     
@@ -349,7 +349,7 @@ export default function Home() {
                     <div className="font-mono text-slate-500 text-right">{node.rows_daily?.toLocaleString()}</div>
                   </div>
                 ) : (
-                  <div className="text-xs text-red-500 font-medium py-4 text-center">Connection Failed</div>
+                  <div className="text-[10px] md:text-xs text-red-500 font-medium py-3 md:py-4 text-center">Connection Failed</div>
                 )}
               </div>
             ))}
@@ -357,13 +357,13 @@ export default function Home() {
         )}
 
         {/* Input Controls */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <section className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
           {/* Search Input */}
-          <div className="flex flex-col gap-4 mb-6">
-            <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">搜索股票</label>
+          <div className="flex flex-col gap-3 md:gap-4 mb-4 md:mb-6">
+            <label className="text-xs md:text-sm font-bold text-slate-500 uppercase tracking-wider">搜索股票</label>
             <div className="relative z-20">
               <input
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 w-full"
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 md:px-4 md:py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 w-full text-sm md:text-base"
                 placeholder="例如：000952, 平安, PA"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -390,7 +390,7 @@ export default function Home() {
                         // It's likely a name, perform immediate local search
                         const qLower = searchQuery.toLowerCase();
                         const qPinyin = getPinyinInitials(searchQuery);
-                        
+                         
                         // 优先寻找"前缀匹配"的最优解
                         let found = stockList.find(({code, name}) => {
                           return (
@@ -410,7 +410,7 @@ export default function Home() {
                                 );
                             });
                         }
-                        
+                         
                         if (found) {
                           viewStock(found.code);
                           setSearchQuery('');
@@ -451,22 +451,22 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 md:gap-4">
             <div className="flex justify-between items-end">
-               <label className="text-sm font-bold text-slate-500 uppercase tracking-wider">策略公式</label>
+               <label className="text-xs md:text-sm font-bold text-slate-500 uppercase tracking-wider">策略公式</label>
             </div>
-            <div className="flex gap-4">
-              <input 
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400"
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 md:px-4 md:py-3 font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm md:text-base"
                 placeholder="例如：CLOSE > MA(CLOSE, 20)"
                 value={formula}
                 onChange={(e) => setFormula(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSelect()}
               />
-              <button 
+              <button
                 onClick={handleSelect}
                 disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center gap-2 min-w-[160px] justify-center"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 md:px-8 py-2 md:py-3 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 flex items-center gap-2 min-w-[120px] md:min-w-[160px] justify-center text-sm md:text-base"
               >
                 {loading ? (
                   <>
@@ -480,14 +480,14 @@ export default function Home() {
         </section>
 
         {/* Results Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          <aside className="lg:col-span-1">
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px] shadow-sm">
-              <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                <h2 className="font-bold text-slate-700">结果</h2>
-                <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono font-bold">{results.length}</span>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
+          <aside className="lg:col-span-1 order-2 lg:order-1">
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[400px] md:h-[500px] lg:h-[600px] shadow-sm">
+              <div className="p-3 md:p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h2 className="font-bold text-slate-700 text-sm md:text-base">结果</h2>
+                <span className="bg-blue-100 text-blue-700 text-[10px] md:text-xs px-2 py-0.5 rounded-full font-mono font-bold">{results.length}</span>
               </div>
-              <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-1 md:p-2 custom-scrollbar">
                 {results.length > 0 ? (
                   <div className="grid grid-cols-1 gap-1">
                     {results.map(code => {
@@ -500,19 +500,19 @@ export default function Home() {
                             console.log('Strategy result item clicked. Code:', code);
                             viewStock(code);
                           }}
-                          className={`w-full text-left px-4 py-3 rounded-lg transition-all text-sm flex justify-between items-center group
+                          className={`w-full text-left px-2 md:px-4 py-2 md:py-3 rounded-lg transition-all text-xs md:text-sm flex justify-between items-center group
                             ${selectedStock?.code === code
                               ? 'bg-blue-50 text-blue-700 border border-blue-100 font-bold'
                               : 'hover:bg-slate-50 text-slate-600 border border-transparent'}`}
                         >
-                          <span className="font-medium">{displayName}</span>
-                          <span className="text-xs font-mono text-slate-400">{code}</span>
+                          <span className="font-medium truncate">{displayName}</span>
+                          <span className="text-[10px] md:text-xs font-mono text-slate-400 ml-2 shrink-0">{code}</span>
                         </button>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm italic p-4 text-center">
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs md:text-sm italic p-2 md:p-4 text-center">
                     {loading ? '聚合集群数据中...' : '暂无结果。'}
                   </div>
                 )}
@@ -520,26 +520,26 @@ export default function Home() {
             </div>
           </aside>
 
-          <section className="lg:col-span-3">
+          <section className="lg:col-span-3 order-1 lg:order-2">
             {/* 将所有内容统一放入 chartWrapperRef 中，原生全屏会自动放大这个 div */}
             <div
               ref={chartWrapperRef}
-              className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[600px] shadow-sm w-full"
+              className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-[400px] md:h-[500px] lg:h-[600px] shadow-sm w-full"
             >
               {/* === 统一的顶部控制栏 (Header) === */}
               {selectedStock && (
-                <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-white z-10 shrink-0">
+                <div className="px-3 py-2 md:px-4 md:py-3 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-white z-10 shrink-0">
                   {/* 左侧：股票代码、名称、周期标签 */}
-                  <div className="flex items-baseline">
-                    <span className="text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
-                    <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
-                    <span className="ml-3 text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                  <div className="flex items-baseline flex-wrap">
+                    <span className="text-lg md:text-xl font-bold text-slate-900 tracking-wider">{selectedStock.code}</span>
+                    <span className="ml-2 text-sm md:text-base font-medium text-slate-500">{selectedStock.name}</span>
+                    <span className="ml-2 md:ml-3 text-[10px] md:text-xs text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                       {chartTimeframe === 'D' ? '1-DAY' : chartTimeframe === 'W' ? '1-WEEK' : '1-MONTH'}
                     </span>
                   </div>
 
                   {/* 右侧：全屏与周期切换按钮 */}
-                  <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
+                  <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200 w-full sm:w-auto overflow-x-auto">
                     <button
                       onClick={() => {
                         // 【核心修复】：请求 chartWrapperRef 全屏，而不是整个 document
@@ -551,7 +551,7 @@ export default function Home() {
                           document.exitFullscreen();
                         }
                       }}
-                      className="px-3 py-1 text-xs font-bold text-slate-600 bg-white shadow-sm border border-slate-200 rounded-md mr-2 hover:bg-slate-100 transition-colors"
+                      className="px-2 md:px-3 py-1 text-[10px] md:text-xs font-bold text-slate-600 bg-white shadow-sm border border-slate-200 rounded-md mr-1 md:mr-2 hover:bg-slate-100 transition-colors whitespace-nowrap"
                     >
                       {isFullScreen ? '退出全屏' : '全屏'}
                     </button>
@@ -565,7 +565,7 @@ export default function Home() {
                             setSelectedStock({ ...selectedStock, data: resampledData });
                           }
                         }}
-                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                        className={`px-2 md:px-3 py-1 text-[10px] md:text-xs font-bold rounded-md transition-all whitespace-nowrap ${
                           chartTimeframe === tf.value
                             ? 'bg-blue-600 text-white shadow-sm border border-blue-600'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'

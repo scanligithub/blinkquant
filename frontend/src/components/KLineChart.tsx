@@ -423,29 +423,29 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* 价格MA指标 - 显示在K线图区域左上角，排成一排 */}
       {maIndicators && (
-        <div className="absolute top-4 left-4 z-10 bg-transparent px-3 py-2 rounded-lg border-none shadow-none text-xs">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
+        <div className="absolute top-2 md:top-4 left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
+          <div className="flex items-center gap-1.5 md:gap-3 flex-wrap">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA5:</span>
               <span className="font-mono text-[#FF6B6B]">{maIndicators.ma5.toFixed(2)}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA10:</span>
               <span className="font-mono text-[#4ECDC4]">{maIndicators.ma10.toFixed(2)}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA20:</span>
               <span className="font-mono text-[#45B7D1]">{maIndicators.ma20.toFixed(2)}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA30:</span>
               <span className="font-mono text-[#96CEB4]">{maIndicators.ma30.toFixed(2)}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA60:</span>
               <span className="font-mono text-[#FFEAA7]">{maIndicators.ma60.toFixed(2)}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">MA120:</span>
               <span className="font-mono text-[#DDA0DD]">{maIndicators.ma120.toFixed(2)}</span>
             </div>
@@ -455,25 +455,25 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* 量能MA指标 - 显示在量能图区域左上角（图表高度的70%位置） */}
       {vmaIndicators && (
-        <div className="absolute top-[70%] left-4 z-10 bg-transparent px-3 py-2 rounded-lg border-none shadow-none text-xs">
-          <div className="grid grid-cols-5 gap-x-3 gap-y-1">
-            <div className="flex items-center gap-1">
+        <div className="absolute top-[70%] left-2 md:left-4 z-10 bg-transparent px-2 md:px-3 py-1 md:py-2 rounded-lg border-none shadow-none text-[9px] md:text-xs">
+          <div className="grid grid-cols-3 md:grid-cols-5 gap-x-1.5 md:gap-x-3 gap-y-0.5 md:gap-y-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">VMA5:</span>
               <span className="font-mono text-[#FF6B6B]">{(vmaIndicators.vma5 / 10000).toFixed(2)}万</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">VMA10:</span>
               <span className="font-mono text-[#4ECDC4]">{(vmaIndicators.vma10 / 10000).toFixed(2)}万</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1">
               <span className="text-slate-500">VMA20:</span>
               <span className="font-mono text-[#45B7D1]">{(vmaIndicators.vma20 / 10000).toFixed(2)}万</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1 hidden md:flex">
               <span className="text-slate-500">VMA30:</span>
               <span className="font-mono text-[#96CEB4]">{(vmaIndicators.vma30 / 10000).toFixed(2)}万</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1 hidden md:flex">
               <span className="text-slate-500">VMA60:</span>
               <span className="font-mono text-[#FFEAA7]">{(vmaIndicators.vma60 / 10000).toFixed(2)}万</span>
             </div>
@@ -483,34 +483,34 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       
       {/* Tooltip - 只显示基本OHLCV数据，位置动态调整 */}
       {tooltip && (
-        <div className={`absolute top-4 z-20 bg-white/95 backdrop-blur px-4 py-3 rounded-lg border border-slate-200 shadow-lg text-sm ${
-          tooltip.position === 'left' ? 'left-4' : 'right-4'
+        <div className={`absolute top-2 md:top-4 z-20 bg-white/95 backdrop-blur px-2 md:px-4 py-2 md:py-3 rounded-lg border border-slate-200 shadow-lg text-[10px] md:text-sm ${
+          tooltip.position === 'left' ? 'left-2 md:left-4' : 'right-2 md:right-4'
         }`}>
-          <div className="font-bold text-slate-900 mb-2">{tooltip.time}</div>
-          <div className="space-y-1">
-            <div className="flex justify-between gap-4">
+          <div className="font-bold text-slate-900 mb-1 md:mb-2">{tooltip.time}</div>
+          <div className="space-y-0.5 md:space-y-1">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">开盘:</span>
               <span className="font-mono text-slate-900">{tooltip.open.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">最高:</span>
               <span className="font-mono text-red-600">{tooltip.high.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">最低:</span>
               <span className="font-mono text-green-600">{tooltip.low.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">收盘:</span>
               <span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">涨跌幅:</span>
               <span className={`font-mono ${tooltip.changePercent >= 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {tooltip.changePercent >= 0 ? '+' : ''}{tooltip.changePercent.toFixed(2)}%
               </span>
             </div>
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between gap-2 md:gap-4">
               <span className="text-slate-500">成交量:</span>
               <span className="font-mono text-slate-900">{(tooltip.volume / 10000).toFixed(2)}万</span>
             </div>
