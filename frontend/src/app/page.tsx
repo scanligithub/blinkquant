@@ -30,13 +30,55 @@ export default function Home() {
   const [chartTimeframe, setChartTimeframe] = useState('D'); 
   const [subChartType, setSubChartType] = useState('MACD'); // 新增：副图切换状态 (MACD / MF)
   
-  const [isFullScreen, setIsFullScreen] = useState(false); 
-  const chartWrapperRef = useRef<HTMLDivElement>(null); 
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [showRotateHint, setShowRotateHint] = useState(false);
+  const chartWrapperRef = useRef<HTMLDivElement>(null);
+  
+  // 检测是否为iOS设备
+  const isIOS = () => {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  };
+  
+  // 检测是否为移动端
+  const isMobile = () => {
+    return window.innerWidth < 768;
+  };
   
   useEffect(() => {
-    const handler = () => setIsFullScreen(!!document.fullscreenElement);
+    const handler = () => {
+      const isFullscreen = !!document.fullscreenElement;
+      setIsFullScreen(isFullscreen);
+      
+      // 退出全屏时隐藏横屏提示
+      if (!isFullscreen) {
+        setShowRotateHint(false);
+        // 释放屏幕方向锁定
+        if (screen.orientation && screen.orientation.unlock) {
+          screen.orientation.unlock();
+        }
+      }
+    };
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+  
+  // 监听屏幕方向变化
+  useEffect(() => {
+    const handleOrientationChange = () => {
+      // 如果是横屏，隐藏提示
+      if (window.innerWidth > window.innerHeight) {
+        setShowRotateHint(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleOrientationChange);
+    window.addEventListener('orientationchange', handleOrientationChange);
+    
+    return () => {
+      window.removeEventListener('resize', handleOrientationChange);
+      window.removeEventListener('orientationchange', handleOrientationChange);
+    };
   }, []);
 
   const [results, setResults] = useState<string[]>([]);
@@ -319,12 +361,41 @@ export default function Home() {
 
                     <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
                       <button
-                        onClick={() => {
-                          // 【修复】：判断当前是否已经是全屏状态，执行不同的 API
+                        onClick={async () => {
                           if (!document.fullscreenElement) {
-                            chartWrapperRef.current?.requestFullscreen().catch(()=>{});
+                            // 进入全屏
+                            try {
+                              await chartWrapperRef.current?.requestFullscreen();
+                              
+                              // 移动端处理
+                              if (isMobile()) {
+                                if (isIOS()) {
+                                  // iOS：显示横屏提示
+                                  setShowRotateHint(true);
+                                } else {
+                                  // Android：强制横屏
+                                  try {
+                                    await (screen.orientation as any).lock('landscape');
+                                  } catch (e) {
+                                    console.log('Orientation lock not supported:', e);
+                                  }
+                                }
+                              }
+                            } catch (e) {
+                              console.log('Fullscreen request failed:', e);
+                            }
                           } else {
-                            document.exitFullscreen().catch(()=>{});
+                            // 退出全屏
+                            try {
+                              await document.exitFullscreen();
+                              setShowRotateHint(false);
+                              // 释放屏幕方向锁定
+                              if (screen.orientation && screen.orientation.unlock) {
+                                screen.orientation.unlock();
+                              }
+                            } catch (e) {
+                              console.log('Exit fullscreen failed:', e);
+                            }
                           }
                         }}
                         className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
