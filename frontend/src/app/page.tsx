@@ -318,7 +318,17 @@ export default function Home() {
                     </div>
 
                     <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
-                      <button onClick={() => { chartWrapperRef.current?.requestFullscreen().catch(()=>{}); }} className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2">
+                      <button 
+                        onClick={() => { 
+                          // 【修复】：判断当前是否已经是全屏状态，执行不同的 API
+                          if (!document.fullscreenElement) {
+                            chartWrapperRef.current?.requestFullscreen().catch(()=>{}); 
+                          } else {
+                            document.exitFullscreen().catch(()=>{});
+                          }
+                        }} 
+                        className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
+                      >
                         {isFullScreen ? '退出全屏' : '全屏'}
                       </button>
                       {TIMEFRAMES.map((tf) => (
