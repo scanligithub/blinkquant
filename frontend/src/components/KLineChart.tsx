@@ -122,9 +122,16 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
   const [priceExtremes, setPriceExtremes] = useState<any>(null);
   const [volumeMax, setVolumeMax] = useState<any>(null);
   const [extremesPositions, setExtremesPositions] = useState<any>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
+
+    // 检测是否为移动端
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
 
     const chart = createChart(chartContainerRef.current, {
       layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#334155' },
@@ -309,6 +316,23 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     histogramSeries.applyOptions({ visible: isMacd });
     mfSeries.applyOptions({ visible: !isMacd });
     mfTrendLine.applyOptions({ visible: !isMacd });
+    
+    // 根据屏幕宽度设置Y轴可见性
+    const updateYAxisVisibility = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      chart.priceScale('right').applyOptions({ visible: !mobile });
+      chart.priceScale('volume').applyOptions({ visible: !mobile });
+      chart.priceScale('subchart').applyOptions({ visible: !mobile });
+    };
+    updateYAxisVisibility();
+    
+    // 监听窗口大小变化
+    const handleResize = () => {
+      updateYAxisVisibility();
+      calculatePositions();
+    };
+    window.addEventListener('resize', handleResize);
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
@@ -368,7 +392,11 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     });
     resizeObserver.observe(chartContainerRef.current);
 
-    return () => { resizeObserver.disconnect(); chart.remove(); };
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+      window.removeEventListener('resize', handleResize);
+    };
   }, [data]);
 
   useEffect(() => {
