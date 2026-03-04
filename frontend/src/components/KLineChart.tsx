@@ -330,7 +330,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       
       {/* 主图悬浮框 */}
       {tooltip && (
-        <div className={`absolute top-2 z-20 bg-white/95 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow-lg text-[10px] md:text-xs pointer-events-none ${
+        <div className={`absolute top-8 z-20 bg-white/95 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow-lg text-[10px] md:text-xs pointer-events-none ${
           tooltip.position === 'left' ? 'left-4' : 'right-12'
         }`}>
           <div className="font-bold text-slate-900 mb-1">{tooltip.time}</div>
