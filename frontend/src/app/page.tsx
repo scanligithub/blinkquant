@@ -12,9 +12,9 @@ import { compressors } from 'hyparquet-compressors';
 import { getPinyinInitials } from '../utils/pinyin';
 
 const TIMEFRAMES = [
-  { label: 'Daily', value: 'D' },
-  { label: 'Weekly', value: 'W' },
-  { label: 'Monthly', value: 'M' },
+  { label: '日', value: 'D' },
+  { label: '周', value: 'W' },
+  { label: '月', value: 'M' },
 ];
 
 function formatStockCode(code: string): string {
