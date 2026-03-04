@@ -119,6 +119,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
   const [mfIndicators, setMfIndicators] = useState<any>(null);
   const [maIndicators, setMaIndicators] = useState<any>(null);
   const [volumeMaIndicators, setVolumeMaIndicators] = useState<any>(null);
+  const [priceExtremes, setPriceExtremes] = useState<any>(null);
+  const [volumeMax, setVolumeMax] = useState<number>(0);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -187,6 +189,18 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
 
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
+    
+    // 计算主图极值
+    const highs = formattedData.map(d => d.high);
+    const lows = formattedData.map(d => d.low);
+    const maxPrice = Math.max(...highs);
+    const minPrice = Math.min(...lows);
+    setPriceExtremes({ max: maxPrice, min: minPrice });
+    
+    // 计算量能最大值
+    const volumes = volumeData.map(d => d.value);
+    const maxVol = Math.max(...volumes);
+    setVolumeMax(maxVol);
     
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
@@ -284,6 +298,16 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     <div className="w-full h-full relative bg-white">
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       
+      {/* 主图极值显示 */}
+      <div className="absolute top-2 right-2 md:right-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+        {priceExtremes && (
+          <div className="flex flex-col items-end gap-0.5">
+            <span className="text-slate-500">高: <span className="font-mono text-red-600">{priceExtremes.max.toFixed(2)}</span></span>
+            <span className="text-slate-500">低: <span className="font-mono text-green-600">{priceExtremes.min.toFixed(2)}</span></span>
+          </div>
+        )}
+      </div>
+
       {/* 主图 MA 指标动态显示 */}
       <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
         {maIndicators && Object.entries(maIndicators).map(([key, item]: [string, any]) => (
@@ -291,6 +315,13 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             {key}: <span className="font-mono" style={{ color: item.color }}>{item.value.toFixed(2)}</span>
           </span>
         ))}
+      </div>
+
+      {/* 量能极值显示 */}
+      <div className="absolute top-[62%] right-2 md:right-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+        {volumeMax > 0 && (
+          <span className="text-slate-500">最大: <span className="font-mono text-slate-900">{formatVolume(volumeMax)}</span></span>
+        )}
       </div>
 
       {/* 量能 MA 指标动态显示 */}
