@@ -74,18 +74,27 @@ function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number 
   return { macdLine, signalLine, histogram };
 }
 
+// 【新增】：计算 N 日累计资金净流向
+function calculateRollingSum(data: any[], period: number): LineData[] {
+  const result: LineData[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) continue;
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += data[i - j].value;
+    result.push({ time: data[i].time, value: sum });
+  }
+  return result;
+}
+
 export default function KLineChart({ data, code, subChartType = 'MACD' }: { data: any, code: string, subChartType?: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesMap = useRef<{ [key: string]: any }>({}); // 保存所有的 series 实例以便动态控制
+  const seriesMap = useRef<{ [key: string]: any }>({});
   
   const [tooltip, setTooltip] = useState<any>(null);
-  const [maIndicators, setMaIndicators] = useState<any>(null);
-  const [vmaIndicators, setVmaIndicators] = useState<any>(null);
   const [macdIndicators, setMacdIndicators] = useState<any>(null);
-  const [mfIndicators, setMfIndicators] = useState<any>(null); // 新增：资金流指标
+  const [mfIndicators, setMfIndicators] = useState<any>(null); 
 
-  // ================= 1. 初始化图表与全量数据 =================
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
 
@@ -113,49 +122,46 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       priceScaleId: 'volume', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false,
     });
 
-    const volumeMAPeriods = [5, 10, 20, 30, 60];
-    const volumeMAColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
+    const volumeMAPeriods = [5, 10, 20];
+    const volumeMAColors = ['#FF6B6B', '#4ECDC4', '#45B7D1'];
     const volumeMASeries = volumeMAPeriods.map((period, index) => 
       chart.addLineSeries({ priceScaleId: 'volume', color: volumeMAColors[index], lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
     );
 
-    // 【核心修改】：MACD 和 资金流 共同使用 'subchart' 这个刻度区
+    // MACD 系列
     const macdLine = chart.addLineSeries({ priceScaleId: 'subchart', color: '#ef4444', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
     const signalLine = chart.addLineSeries({ priceScaleId: 'subchart', color: '#22c55e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
     const histogramSeries = chart.addHistogramSeries({ priceScaleId: 'subchart', baseLineColor: '#e2e8f0', lastValueVisible: false, priceLineVisible: false });
 
-    // 新增：资金流柱状图
+    // 资金流柱状图
     const mfSeries = chart.addHistogramSeries({
       priceScaleId: 'subchart',
       baseLineColor: '#e2e8f0',
       baseLineVisible: true,
-      priceFormat: {
-        type: 'custom',
-        formatter: (price: number) => (price / 100000000).toFixed(2) + '亿', // 格式化为亿
-      },
+      priceFormat: { type: 'custom', formatter: (price: number) => (price / 100000000).toFixed(2) + '亿' },
       lastValueVisible: false, priceLineVisible: false,
     });
 
-    // 将需要控制显示的 series 存入 ref
-    seriesMap.current = { macdLine, signalLine, histogramSeries, mfSeries };
+    // 【新增】：资金流 20日累计趋势折线 (黄色)
+    const mfTrendLine = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#f59e0b', // 琥珀黄
+      lineWidth: 2,
+      lastValueVisible: false, priceLineVisible: false,
+    });
 
-    // 配置刻度区域比例
+    seriesMap.current = { macdLine, signalLine, histogramSeries, mfSeries, mfTrendLine };
+
     chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.40 } });
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.60, bottom: 0.25 } });
-    chart.priceScale('subchart').applyOptions({ scaleMargins: { top: 0.75, bottom: 0.0 } }); // 共享的底部 25%
+    chart.priceScale('subchart').applyOptions({ scaleMargins: { top: 0.75, bottom: 0.0 } }); 
 
-    // 填充数据
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     
-    // 构建资金流数据 (正数红色向上，负数绿色向下)
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
-      return {
-        time: item.time,
-        value: val,
-        color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)',
-      };
+      return { time: item.time, value: val, color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)' };
     });
 
     candlestickSeries.setData(formattedData);
@@ -167,13 +173,14 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     macdLine.setData(macdData.macdLine);
     signalLine.setData(macdData.signalLine);
     histogramSeries.setData(macdData.histogram);
+    
     mfSeries.setData(mfData);
+    // 渲染 20 日累计趋势线
+    mfTrendLine.setData(calculateRollingSum(mfData, 20));
 
-    // 处理交互逻辑
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
       const cdData = param.seriesData.get(candlestickSeries);
-      const volData = param.seriesData.get(volumeSeries);
 
       if (cdData && typeof cdData === 'object' && 'open' in cdData) {
         const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
@@ -182,7 +189,6 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
         setTooltip({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
           open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
-          volume: volData && 'value' in volData ? volData.value as number : 0,
           changePercent: (((cdData.close as number) - (cdData.open as number)) / (cdData.open as number)) * 100,
           position: param.point.x < (chartContainerRef.current?.clientWidth || 0) / 2 ? 'right' : 'left',
         });
@@ -195,6 +201,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
 
         setMfIndicators({
           net: (param.seriesData.get(mfSeries) as any)?.value || 0,
+          trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0, // 提取趋势线当前点位数据
         });
       }
     });
@@ -210,7 +217,6 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     return () => { resizeObserver.disconnect(); chart.remove(); };
   }, [data]);
 
-  // ================= 2. 监听 subChartType 切换，控制显示/隐藏 =================
   useEffect(() => {
     if (!seriesMap.current.mfSeries) return;
     
@@ -220,6 +226,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     seriesMap.current.histogramSeries.applyOptions({ visible: isMacd });
     
     seriesMap.current.mfSeries.applyOptions({ visible: !isMacd });
+    seriesMap.current.mfTrendLine.applyOptions({ visible: !isMacd }); // 同步控制趋势线显隐
   }, [subChartType]);
 
   return (
@@ -237,7 +244,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
         )}
         {subChartType === 'MF' && mfIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
-            <span className="text-slate-500">主力净额: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{(mfIndicators.net / 100000000).toFixed(2)}亿</span></span>
+            <span className="text-slate-500">单日主力: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{(mfIndicators.net / 100000000).toFixed(2)}亿</span></span>
+            <span className="text-slate-500">20日趋势: <span className="font-mono text-[#f59e0b]">{(mfIndicators.trend / 100000000).toFixed(2)}亿</span></span>
           </div>
         )}
       </div>
