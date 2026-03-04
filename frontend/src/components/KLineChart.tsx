@@ -191,7 +191,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     
-    // 计算主图极值及对应位置
+    // 计算主图极值及对应位置（全部历史数据）
     let maxPrice = -Infinity, minPrice = Infinity;
     let maxPriceTime: any = null, minPriceTime: any = null;
     formattedData.forEach(d => {
@@ -200,13 +200,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     });
     setPriceExtremes({ max: maxPrice, min: minPrice, maxTime: maxPriceTime, minTime: minPriceTime });
     
-    // 计算量能最大值及对应位置
-    let maxVol = 0;
-    let maxVolTime: any = null;
-    volumeData.forEach(d => {
-      if (d.value > maxVol) { maxVol = d.value; maxVolTime = d.time; }
-    });
-    setVolumeMax({ value: maxVol, time: maxVolTime });
+    // 量能最大值将在可视范围内动态计算
+    setVolumeMax(null);
     
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
@@ -222,10 +217,11 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       if (!chartContainerRef.current) return;
       
       const positions: any = {};
+      const timeScale = chart.timeScale();
+      const visibleRange = timeScale.getVisibleRange();
       
       // 主图最高价位置
       if (maxPriceTime !== null) {
-        const timeScale = chart.timeScale();
         const x = timeScale.timeToCoordinate(maxPriceTime);
         const y = candlestickSeries.priceToCoordinate(maxPrice);
         if (x !== null && y !== null) {
@@ -235,7 +231,6 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       
       // 主图最低价位置
       if (minPriceTime !== null) {
-        const timeScale = chart.timeScale();
         const x = timeScale.timeToCoordinate(minPriceTime);
         const y = candlestickSeries.priceToCoordinate(minPrice);
         if (x !== null && y !== null) {
@@ -243,13 +238,28 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
         }
       }
       
-      // 量能最大值位置
-      if (maxVolTime !== null) {
-        const timeScale = chart.timeScale();
-        const x = timeScale.timeToCoordinate(maxVolTime);
-        const y = volumeSeries.priceToCoordinate(maxVol);
-        if (x !== null && y !== null) {
-          positions.maxVolume = { x, y, value: maxVol, label: '最大' };
+      // 量能最大值位置（基于可视范围）
+      if (visibleRange) {
+        const { from, to } = visibleRange;
+        let maxVol = 0;
+        let maxVolTime: any = null;
+        
+        volumeData.forEach(d => {
+          const timeValue = typeof d.time === 'number' ? d.time : (d.time as any).businessDay || d.time;
+          if (timeValue >= from && timeValue <= to) {
+            if (d.value > maxVol) {
+              maxVol = d.value;
+              maxVolTime = d.time;
+            }
+          }
+        });
+        
+        if (maxVolTime !== null) {
+          const x = timeScale.timeToCoordinate(maxVolTime);
+          const y = volumeSeries.priceToCoordinate(maxVol);
+          if (x !== null && y !== null) {
+            positions.maxVolume = { x, y, value: maxVol, label: '最大' };
+          }
         }
       }
       
