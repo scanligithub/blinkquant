@@ -301,6 +301,14 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     mfSeries.setData(mfData);
     // 渲染 20 日累计趋势线
     mfTrendLine.setData(calculateRollingSum(mfData, 20));
+    
+    // 根据初始 subChartType 设置副图系列的可见性
+    const isMacd = subChartType === 'MACD';
+    macdLine.applyOptions({ visible: isMacd });
+    signalLine.applyOptions({ visible: isMacd });
+    histogramSeries.applyOptions({ visible: isMacd });
+    mfSeries.applyOptions({ visible: !isMacd });
+    mfTrendLine.applyOptions({ visible: !isMacd });
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
