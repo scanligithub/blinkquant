@@ -2,6 +2,15 @@
 import { createChart, ColorType, IChartApi, LineData, Time } from 'lightweight-charts';
 import { useEffect, useRef, useState } from 'react';
 
+function formatVolume(volume: number): string {
+  if (volume >= 100000000) {
+    return (volume / 100000000).toFixed(2) + '亿';
+  } else if (volume >= 10000) {
+    return (volume / 10000).toFixed(2) + '万';
+  }
+  return volume.toString();
+}
+
 function calculateMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -181,6 +190,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
       const cdData = param.seriesData.get(candlestickSeries);
+      const volData = param.seriesData.get(volumeSeries);
 
       if (cdData && typeof cdData === 'object' && 'open' in cdData) {
         const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
@@ -189,6 +199,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
         setTooltip({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
           open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
+          volume: (volData as any)?.value || 0,
           changePercent: (((cdData.close as number) - (cdData.open as number)) / (cdData.open as number)) * 100,
           position: param.point.x < (chartContainerRef.current?.clientWidth || 0) / 2 ? 'right' : 'left',
         });
@@ -259,6 +270,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
           <div className="space-y-0.5">
             <div className="flex justify-between gap-4"><span className="text-slate-500">开盘:</span><span className="font-mono text-slate-900">{tooltip.open.toFixed(2)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">收盘:</span><span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-500">成交量:</span><span className="font-mono text-slate-900">{formatVolume(tooltip.volume)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">涨幅:</span><span className={`font-mono ${tooltip.changePercent >= 0 ? 'text-red-600' : 'text-green-600'}`}>{tooltip.changePercent >= 0 ? '+' : ''}{tooltip.changePercent.toFixed(2)}%</span></div>
           </div>
         </div>
