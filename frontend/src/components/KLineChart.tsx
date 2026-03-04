@@ -116,7 +116,9 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
   
   const [tooltip, setTooltip] = useState<any>(null);
   const [macdIndicators, setMacdIndicators] = useState<any>(null);
-  const [mfIndicators, setMfIndicators] = useState<any>(null); 
+  const [mfIndicators, setMfIndicators] = useState<any>(null);
+  const [maIndicators, setMaIndicators] = useState<any>(null);
+  const [volumeMaIndicators, setVolumeMaIndicators] = useState<any>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -230,8 +232,28 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
 
         setMfIndicators({
           net: (param.seriesData.get(mfSeries) as any)?.value || 0,
-          trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0, // 提取趋势线当前点位数据
+          trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0,
         });
+
+        // 获取主图MA最新值
+        const maValues: any = {};
+        maSeries.forEach((series, index) => {
+          const value = (param.seriesData.get(series) as any)?.value;
+          if (value !== undefined) {
+            maValues[`MA${maPeriods[index]}`] = { value, color: maColors[index] };
+          }
+        });
+        setMaIndicators(maValues);
+
+        // 获取量能MA最新值
+        const volumeMaValues: any = {};
+        volumeMASeries.forEach((series, index) => {
+          const value = (param.seriesData.get(series) as any)?.value;
+          if (value !== undefined) {
+            volumeMaValues[`VMA${volumeMAPeriods[index]}`] = { value, color: volumeMAColors[index] };
+          }
+        });
+        setVolumeMaIndicators(volumeMaValues);
       }
     });
 
@@ -262,6 +284,24 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     <div className="w-full h-full relative bg-white">
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       
+      {/* 主图 MA 指标动态显示 */}
+      <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+        {maIndicators && Object.entries(maIndicators).map(([key, item]: [string, any]) => (
+          <span key={key} className="text-slate-500 mr-2">
+            {key}: <span className="font-mono" style={{ color: item.color }}>{item.value.toFixed(2)}</span>
+          </span>
+        ))}
+      </div>
+
+      {/* 量能 MA 指标动态显示 */}
+      <div className="absolute top-[40%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+        {volumeMaIndicators && Object.entries(volumeMaIndicators).map(([key, item]: [string, any]) => (
+          <span key={key} className="text-slate-500 mr-2">
+            {key}: <span className="font-mono" style={{ color: item.color }}>{formatVolume(item.value)}</span>
+          </span>
+        ))}
+      </div>
+
       {/* MACD / 资金流 指标动态显示 */}
       <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
         {subChartType === 'MACD' && macdIndicators && (
