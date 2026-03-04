@@ -310,7 +310,7 @@ export default function Home() {
                     <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {/* 新增：副图切换 Tabs */}
                     <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
                       <button onClick={() => setSubChartType('MACD')} className={`px-3 py-1 text-xs font-bold rounded-md ${subChartType === 'MACD' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'}`}>MACD</button>
@@ -318,15 +318,15 @@ export default function Home() {
                     </div>
 
                     <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
-                      <button 
-                        onClick={() => { 
+                      <button
+                        onClick={() => {
                           // 【修复】：判断当前是否已经是全屏状态，执行不同的 API
                           if (!document.fullscreenElement) {
-                            chartWrapperRef.current?.requestFullscreen().catch(()=>{}); 
+                            chartWrapperRef.current?.requestFullscreen().catch(()=>{});
                           } else {
                             document.exitFullscreen().catch(()=>{});
                           }
-                        }} 
+                        }}
                         className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
                       >
                         {isFullScreen ? '退出全屏' : '全屏'}
@@ -335,7 +335,7 @@ export default function Home() {
                         <button key={tf.value} onClick={() => {
                             setChartTimeframe(tf.value);
                             if (dailyDataCache.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(dailyDataCache, tf.value) });
-                          }} 
+                          }}
                           className={`px-3 py-1 text-xs font-bold rounded-md ${chartTimeframe === tf.value ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200/50'}`}
                         >
                           {tf.label}
