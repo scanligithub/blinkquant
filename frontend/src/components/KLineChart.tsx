@@ -11,6 +11,20 @@ function formatVolume(volume: number): string {
   return volume.toString();
 }
 
+// 【新增】：智能资金单位格式化器
+function formatMoney(value: number): string {
+  if (!value || isNaN(value)) return '0.00';
+  const absVal = Math.abs(value);
+  
+  // 假设原始数据单位是 "元"
+  if (absVal >= 100000000) {
+    return (value / 100000000).toFixed(2) + '亿';
+  } else if (absVal >= 10000) {
+    return (value / 10000).toFixed(2) + '万';
+  }
+  return value.toFixed(2);
+}
+
 function calculateMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -147,7 +161,11 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       priceScaleId: 'subchart',
       baseLineColor: '#e2e8f0',
       baseLineVisible: true,
-      priceFormat: { type: 'custom', formatter: (price: number) => (price / 100000000).toFixed(2) + '亿' },
+      priceFormat: {
+        type: 'custom',
+        // 【修改】：使用智能格式化器，而不是写死的除以1亿
+        formatter: (price: number) => formatMoney(price)
+      },
       lastValueVisible: false, priceLineVisible: false,
     });
 
@@ -253,10 +271,19 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             <span className="text-slate-500">MACD: <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span></span>
           </div>
         )}
+        {/* 【修改】：调用 formatMoney 处理悬浮图例中的数值 */}
         {subChartType === 'MF' && mfIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
-            <span className="text-slate-500">单日主力: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{(mfIndicators.net / 100000000).toFixed(2)}亿</span></span>
-            <span className="text-slate-500">20日趋势: <span className="font-mono text-[#f59e0b]">{(mfIndicators.trend / 100000000).toFixed(2)}亿</span></span>
+            <span className="text-slate-500">
+              单日主力: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>
+                {formatMoney(mfIndicators.net)}
+              </span>
+            </span>
+            <span className="text-slate-500">
+              20日趋势: <span className="font-mono text-[#f59e0b]">
+                {formatMoney(mfIndicators.trend)}
+              </span>
+            </span>
           </div>
         )}
       </div>
