@@ -191,16 +191,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     
-    // 计算主图极值及对应位置（全部历史数据）
-    let maxPrice = -Infinity, minPrice = Infinity;
-    let maxPriceTime: any = null, minPriceTime: any = null;
-    formattedData.forEach(d => {
-      if (d.high > maxPrice) { maxPrice = d.high; maxPriceTime = d.time; }
-      if (d.low < minPrice) { minPrice = d.low; minPriceTime = d.time; }
-    });
-    setPriceExtremes({ max: maxPrice, min: minPrice, maxTime: maxPriceTime, minTime: minPriceTime });
-    
-    // 量能最大值将在可视范围内动态计算
+    // 主图极值和量能最大值将在可视范围内动态计算
+    setPriceExtremes(null);
     setVolumeMax(null);
     
     const mfData = data.map((item: any) => {
@@ -212,7 +204,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     volumeSeries.setData(volumeData);
     maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
     
-    // 计算极值在图表中的位置
+    // 计算极值在图表中的位置（基于可视范围）
     const calculatePositions = () => {
       if (!chartContainerRef.current) return;
       
@@ -220,29 +212,34 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       const timeScale = chart.timeScale();
       const visibleRange = timeScale.getVisibleRange();
       
-      // 主图最高价位置
-      if (maxPriceTime !== null) {
-        const x = timeScale.timeToCoordinate(maxPriceTime);
-        const y = candlestickSeries.priceToCoordinate(maxPrice);
-        if (x !== null && y !== null) {
-          positions.maxPrice = { x, y, value: maxPrice, label: '高' };
-        }
-      }
-      
-      // 主图最低价位置
-      if (minPriceTime !== null) {
-        const x = timeScale.timeToCoordinate(minPriceTime);
-        const y = candlestickSeries.priceToCoordinate(minPrice);
-        if (x !== null && y !== null) {
-          positions.minPrice = { x, y, value: minPrice, label: '低' };
-        }
-      }
-      
-      // 量能最大值位置（基于可视范围）
       if (visibleRange) {
         const { from, to } = visibleRange;
+        
+        // 主图最高价位置（基于可视范围）
+        let maxPrice = -Infinity;
+        let maxPriceTime: any = null;
+        
+        // 主图最低价位置（基于可视范围）
+        let minPrice = Infinity;
+        let minPriceTime: any = null;
+        
+        // 量能最大值位置（基于可视范围）
         let maxVol = 0;
         let maxVolTime: any = null;
+        
+        formattedData.forEach(d => {
+          const timeValue = typeof d.time === 'number' ? d.time : (d.time as any).businessDay || d.time;
+          if (timeValue >= from && timeValue <= to) {
+            if (d.high > maxPrice) {
+              maxPrice = d.high;
+              maxPriceTime = d.time;
+            }
+            if (d.low < minPrice) {
+              minPrice = d.low;
+              minPriceTime = d.time;
+            }
+          }
+        });
         
         volumeData.forEach(d => {
           const timeValue = typeof d.time === 'number' ? d.time : (d.time as any).businessDay || d.time;
@@ -254,6 +251,25 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
           }
         });
         
+        // 主图最高价位置
+        if (maxPriceTime !== null) {
+          const x = timeScale.timeToCoordinate(maxPriceTime);
+          const y = candlestickSeries.priceToCoordinate(maxPrice);
+          if (x !== null && y !== null) {
+            positions.maxPrice = { x, y, value: maxPrice, label: '高' };
+          }
+        }
+        
+        // 主图最低价位置
+        if (minPriceTime !== null) {
+          const x = timeScale.timeToCoordinate(minPriceTime);
+          const y = candlestickSeries.priceToCoordinate(minPrice);
+          if (x !== null && y !== null) {
+            positions.minPrice = { x, y, value: minPrice, label: '低' };
+          }
+        }
+        
+        // 量能最大值位置
         if (maxVolTime !== null) {
           const x = timeScale.timeToCoordinate(maxVolTime);
           const y = volumeSeries.priceToCoordinate(maxVol);
