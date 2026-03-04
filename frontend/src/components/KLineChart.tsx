@@ -2,7 +2,6 @@
 import { createChart, ColorType, IChartApi, LineData, Time } from 'lightweight-charts';
 import { useEffect, useRef, useState } from 'react';
 
-// 计算价格移动平均线
 function calculateMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -14,7 +13,6 @@ function calculateMA(data: any[], period: number): LineData[] {
   return result;
 }
 
-// 计算量能移动平均线
 function calculateVolumeMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -26,7 +24,6 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
   return result;
 }
 
-// 计算 EMA (指数移动平均)
 function calculateEMA(data: number[], period: number): number[] {
   const result: number[] = [];
   const multiplier = 2 / (period + 1);
@@ -44,7 +41,6 @@ function calculateEMA(data: number[], period: number): number[] {
   return result;
 }
 
-// 计算 MACD
 function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9) {
   const closes = data.map(item => item.close);
   const fastEMA = calculateEMA(closes, fastPeriod);
@@ -69,7 +65,6 @@ function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number 
     const macdValue = macdLine[i + signalPeriod - 1]?.value || 0;
     const signalValue = signalLine[i]?.value || 0;
     const diff = macdValue - signalValue;
-    // MACD 柱子标准算法：(DIF - DEA) * 2
     histogram.push({
       time: signalLine[i].time,
       value: diff * 2,
@@ -79,15 +74,18 @@ function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number 
   return { macdLine, signalLine, histogram };
 }
 
-export default function KLineChart({ data, code }: { data: any, code: string }) {
+export default function KLineChart({ data, code, subChartType = 'MACD' }: { data: any, code: string, subChartType?: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesMap = useRef<{ [key: string]: any }>({}); // 保存所有的 series 实例以便动态控制
   
   const [tooltip, setTooltip] = useState<any>(null);
   const [maIndicators, setMaIndicators] = useState<any>(null);
   const [vmaIndicators, setVmaIndicators] = useState<any>(null);
   const [macdIndicators, setMacdIndicators] = useState<any>(null);
+  const [mfIndicators, setMfIndicators] = useState<any>(null); // 新增：资金流指标
 
+  // ================= 1. 初始化图表与全量数据 =================
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
 
@@ -101,96 +99,67 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
       localization: { locale: 'zh-CN', dateFormat: 'yyyy-MM-dd' },
     });
 
-    // ================= 1. 创建所有 Series =================
-    
-    // [主图] K线
     const candlestickSeries = chart.addCandlestickSeries({
-      priceScaleId: 'right',
-      upColor: '#ef4444', downColor: '#22c55e', borderVisible: false,
-      wickUpColor: '#ef4444', wickDownColor: '#22c55e',
+      priceScaleId: 'right', upColor: '#ef4444', downColor: '#22c55e', borderVisible: false, wickUpColor: '#ef4444', wickDownColor: '#22c55e',
     });
 
-    // [主图] MA线
     const maPeriods = [5, 10, 20, 30, 60, 120];
     const maColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
     const maSeries = maPeriods.map((period, index) => 
-      chart.addLineSeries({
-        priceScaleId: 'right', color: maColors[index], lineWidth: 1,
-        lastValueVisible: false, priceLineVisible: false,
-      })
+      chart.addLineSeries({ priceScaleId: 'right', color: maColors[index], lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
     );
 
-    // [副图1] 量能柱
     const volumeSeries = chart.addHistogramSeries({
-      priceScaleId: 'volume',
-      priceFormat: { type: 'volume' },
-      lastValueVisible: false, priceLineVisible: false,
+      priceScaleId: 'volume', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false,
     });
 
-    // [副图1] 量能均线
     const volumeMAPeriods = [5, 10, 20, 30, 60];
     const volumeMAColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
     const volumeMASeries = volumeMAPeriods.map((period, index) => 
-      chart.addLineSeries({
-        priceScaleId: 'volume', color: volumeMAColors[index], lineWidth: 1,
-        lastValueVisible: false, priceLineVisible: false,
-      })
+      chart.addLineSeries({ priceScaleId: 'volume', color: volumeMAColors[index], lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
     );
 
-    // [副图2] MACD 线
-    const macdLine = chart.addLineSeries({
-      priceScaleId: 'macd', color: '#ef4444', lineWidth: 1,
+    // 【核心修改】：MACD 和 资金流 共同使用 'subchart' 这个刻度区
+    const macdLine = chart.addLineSeries({ priceScaleId: 'subchart', color: '#ef4444', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+    const signalLine = chart.addLineSeries({ priceScaleId: 'subchart', color: '#22c55e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+    const histogramSeries = chart.addHistogramSeries({ priceScaleId: 'subchart', baseLineColor: '#e2e8f0', lastValueVisible: false, priceLineVisible: false });
+
+    // 新增：资金流柱状图
+    const mfSeries = chart.addHistogramSeries({
+      priceScaleId: 'subchart',
+      baseLineColor: '#e2e8f0',
+      baseLineVisible: true,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => (price / 100000000).toFixed(2) + '亿', // 格式化为亿
+      },
       lastValueVisible: false, priceLineVisible: false,
     });
-    const signalLine = chart.addLineSeries({
-      priceScaleId: 'macd', color: '#22c55e', lineWidth: 1,
-      lastValueVisible: false, priceLineVisible: false,
-    });
+
+    // 将需要控制显示的 series 存入 ref
+    seriesMap.current = { macdLine, signalLine, histogramSeries, mfSeries };
+
+    // 配置刻度区域比例
+    chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.40 } });
+    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.60, bottom: 0.25 } });
+    chart.priceScale('subchart').applyOptions({ scaleMargins: { top: 0.75, bottom: 0.0 } }); // 共享的底部 25%
+
+    // 填充数据
+    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
+    const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     
-    // [副图2] MACD 柱 (允许负值，自动0轴)
-    const histogramSeries = chart.addHistogramSeries({
-      priceScaleId: 'macd',
-      baseLineColor: '#e2e8f0', // 添加 0 轴的颜色
-      lastValueVisible: false, priceLineVisible: false,
+    // 构建资金流数据 (正数红色向上，负数绿色向下)
+    const mfData = data.map((item: any) => {
+      const val = item.main_net || 0;
+      return {
+        time: item.time,
+        value: val,
+        color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)',
+      };
     });
-
-
-    // ================= 2. 统一配置所有 Scale 的 Margins (必须在Series之后) =================
-    
-    // 主图区域：0% ~ 60%
-    chart.priceScale('right').applyOptions({
-      scaleMargins: { top: 0.05, bottom: 0.40 }, 
-    });
-
-    // 量能区域：60% ~ 75%
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.60, bottom: 0.25 }, 
-    });
-
-    // MACD区域：75% ~ 100%
-    chart.priceScale('macd').applyOptions({
-      scaleMargins: { top: 0.75, bottom: 0.0 }, 
-    });
-
-
-    // ================= 3. 填充数据 =================
-
-    let formattedData: any[] = [];
-    let volumeData: any[] = [];
-
-    if (Array.isArray(data)) {
-        formattedData = data.map(item => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
-        volumeData = data.map(item => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
-    } else if (data && typeof data === 'object' && Array.isArray(data.date)) {
-        for (let i = 0; i < data.date.length; i++) {
-            formattedData.push({ time: data.date[i], open: data.open[i], high: data.high[i], low: data.low[i], close: data.close[i] });
-            volumeData.push({ time: data.date[i], value: data.volume[i], color: data.close[i] >= data.open[i] ? '#ef4444' : '#22c55e' });
-        }
-    }
 
     candlestickSeries.setData(formattedData);
     volumeSeries.setData(volumeData);
-    
     maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
     volumeMAPeriods.forEach((period, index) => volumeMASeries[index].setData(calculateVolumeMA(volumeData, period)));
 
@@ -198,150 +167,82 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
     macdLine.setData(macdData.macdLine);
     signalLine.setData(macdData.signalLine);
     histogramSeries.setData(macdData.histogram);
+    mfSeries.setData(mfData);
 
-    // ================= 4. UI 交互与事件 =================
-    const updateMarkers = () => {
-      if (formattedData.length === 0 || volumeData.length === 0) return;
-      const visibleRange = chart.timeScale().getVisibleRange();
-      if (!visibleRange) return;
-
-      const visibleData = formattedData.filter(item => {
-        const time = typeof item.time === 'number' ? item.time : (item.time as any).timestamp;
-        return time >= visibleRange.from && time <= visibleRange.to;
-      });
-
-      if (visibleData.length === 0) return;
-
-      let maxPrice = -Infinity, minPrice = Infinity;
-      let maxTime: Time | null = null, minTime: Time | null = null;
-      visibleData.forEach(item => {
-        if (item.high > maxPrice) { maxPrice = item.high; maxTime = item.time; }
-        if (item.low < minPrice) { minPrice = item.low; minTime = item.time; }
-      });
-
-      const markers = [];
-      if (maxTime) markers.push({ time: maxTime, position: 'aboveBar' as const, color: '#ef4444', shape: 'arrowDown' as const, text: `最高 ${maxPrice.toFixed(2)}` });
-      if (minTime) markers.push({ time: minTime, position: 'belowBar' as const, color: '#22c55e', shape: 'arrowUp' as const, text: `最低 ${minPrice.toFixed(2)}` });
-      candlestickSeries.setMarkers(markers);
-
-      let maxVolume = -Infinity;
-      let maxVolumeTime: Time | null = null;
-      volumeData.forEach(item => {
-        const time = typeof item.time === 'number' ? item.time : (item.time as any).timestamp;
-        if (time >= visibleRange.from && time <= visibleRange.to) {
-          if (item.value > maxVolume) { maxVolume = item.value; maxVolumeTime = item.time; }
-        }
-      });
-
-      const volumeMarkers = [];
-      if (maxVolumeTime) volumeMarkers.push({ time: maxVolumeTime, position: 'aboveBar' as const, color: '#f59e0b', shape: 'arrowDown' as const, text: `最大量 ${(maxVolume / 10000).toFixed(2)}万` });
-      volumeSeries.setMarkers(volumeMarkers);
-    };
-
-    updateMarkers();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(updateMarkers);
-    chart.timeScale().fitContent();
-    chartRef.current = chart;
-
-    const handleResize = () => {
-      if (chartContainerRef.current) chart.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
-    };
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(chartContainerRef.current);
-
+    // 处理交互逻辑
     chart.subscribeCrosshairMove((param) => {
-      if (!param.point || !param.time || !param.seriesData.size) {
-        setTooltip(null);
-        return;
-      }
-
-      const candlestickData = param.seriesData.get(candlestickSeries);
+      if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
+      const cdData = param.seriesData.get(candlestickSeries);
       const volData = param.seriesData.get(volumeSeries);
 
-      if (candlestickData && typeof candlestickData === 'object' && 'open' in candlestickData) {
+      if (cdData && typeof cdData === 'object' && 'open' in cdData) {
         const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
         const date = new Date(timeValue * 1000);
         
-        const open = candlestickData.open as number;
-        const close = candlestickData.close as number;
-
         setTooltip({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-          open: open, high: candlestickData.high as number, low: candlestickData.low as number, close: close,
+          open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
           volume: volData && 'value' in volData ? volData.value as number : 0,
-          changePercent: ((close - open) / open) * 100,
+          changePercent: (((cdData.close as number) - (cdData.open as number)) / (cdData.open as number)) * 100,
           position: param.point.x < (chartContainerRef.current?.clientWidth || 0) / 2 ? 'right' : 'left',
         });
         
-        setMaIndicators({
-          ma5: (param.seriesData.get(maSeries[0]) as any)?.value || 0,
-          ma10: (param.seriesData.get(maSeries[1]) as any)?.value || 0,
-          ma20: (param.seriesData.get(maSeries[2]) as any)?.value || 0,
-          ma30: (param.seriesData.get(maSeries[3]) as any)?.value || 0,
-          ma60: (param.seriesData.get(maSeries[4]) as any)?.value || 0,
-          ma120: (param.seriesData.get(maSeries[5]) as any)?.value || 0,
-        });
-        
-        setVmaIndicators({
-          vma5: (param.seriesData.get(volumeMASeries[0]) as any)?.value || 0,
-          vma10: (param.seriesData.get(volumeMASeries[1]) as any)?.value || 0,
-          vma20: (param.seriesData.get(volumeMASeries[2]) as any)?.value || 0,
-          vma30: (param.seriesData.get(volumeMASeries[3]) as any)?.value || 0,
-          vma60: (param.seriesData.get(volumeMASeries[4]) as any)?.value || 0,
-        });
-
         setMacdIndicators({
           dif: (param.seriesData.get(macdLine) as any)?.value || 0,
           dea: (param.seriesData.get(signalLine) as any)?.value || 0,
           macd: (param.seriesData.get(histogramSeries) as any)?.value || 0,
         });
+
+        setMfIndicators({
+          net: (param.seriesData.get(mfSeries) as any)?.value || 0,
+        });
       }
     });
 
+    chart.timeScale().fitContent();
+    chartRef.current = chart;
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (chartContainerRef.current) chart.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
+    });
+    resizeObserver.observe(chartContainerRef.current);
+
     return () => { resizeObserver.disconnect(); chart.remove(); };
   }, [data]);
+
+  // ================= 2. 监听 subChartType 切换，控制显示/隐藏 =================
+  useEffect(() => {
+    if (!seriesMap.current.mfSeries) return;
+    
+    const isMacd = subChartType === 'MACD';
+    seriesMap.current.macdLine.applyOptions({ visible: isMacd });
+    seriesMap.current.signalLine.applyOptions({ visible: isMacd });
+    seriesMap.current.histogramSeries.applyOptions({ visible: isMacd });
+    
+    seriesMap.current.mfSeries.applyOptions({ visible: !isMacd });
+  }, [subChartType]);
 
   return (
     <div className="w-full h-full relative bg-white">
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       
-      {/* 价格MA */}
-      {maIndicators && (
-        <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs">
-          <div className="flex items-center gap-1.5 md:gap-3 flex-wrap">
-            <span className="text-slate-500">MA5: <span className="font-mono text-[#FF6B6B]">{maIndicators.ma5.toFixed(2)}</span></span>
-            <span className="text-slate-500">MA10: <span className="font-mono text-[#4ECDC4]">{maIndicators.ma10.toFixed(2)}</span></span>
-            <span className="text-slate-500">MA20: <span className="font-mono text-[#45B7D1]">{maIndicators.ma20.toFixed(2)}</span></span>
-            <span className="text-slate-500">MA30: <span className="font-mono text-[#96CEB4]">{maIndicators.ma30.toFixed(2)}</span></span>
-            <span className="text-slate-500">MA60: <span className="font-mono text-[#FFEAA7]">{maIndicators.ma60.toFixed(2)}</span></span>
-            <span className="text-slate-500">MA120: <span className="font-mono text-[#DDA0DD]">{maIndicators.ma120.toFixed(2)}</span></span>
-          </div>
-        </div>
-      )}
-      
-      {/* 量能 VMA (精确定位到 60% 高度) */}
-      {vmaIndicators && (
-        <div className="absolute top-[60%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
-          <div className="flex items-center gap-1.5 md:gap-3">
-            <span className="text-slate-500">VMA5: <span className="font-mono text-[#FF6B6B]">{(vmaIndicators.vma5 / 10000).toFixed(2)}万</span></span>
-            <span className="text-slate-500">VMA10: <span className="font-mono text-[#4ECDC4]">{(vmaIndicators.vma10 / 10000).toFixed(2)}万</span></span>
-            <span className="text-slate-500">VMA20: <span className="font-mono text-[#45B7D1]">{(vmaIndicators.vma20 / 10000).toFixed(2)}万</span></span>
-          </div>
-        </div>
-      )}
-      
-      {/* MACD 指标 (精确定位到 75% 高度) */}
-      {macdIndicators && (
-        <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+      {/* MACD / 资金流 指标动态显示 */}
+      <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+        {subChartType === 'MACD' && macdIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
             <span className="text-slate-500">DIF: <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span></span>
             <span className="text-slate-500">DEA: <span className="font-mono text-[#22c55e]">{macdIndicators.dea.toFixed(2)}</span></span>
             <span className="text-slate-500">MACD: <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span></span>
           </div>
-        </div>
-      )}
+        )}
+        {subChartType === 'MF' && mfIndicators && (
+          <div className="flex items-center gap-1.5 md:gap-3">
+            <span className="text-slate-500">主力净额: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{(mfIndicators.net / 100000000).toFixed(2)}亿</span></span>
+          </div>
+        )}
+      </div>
       
-      {/* 悬浮提示框 */}
+      {/* 主图悬浮框 */}
       {tooltip && (
         <div className={`absolute top-2 z-20 bg-white/95 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow-lg text-[10px] md:text-xs pointer-events-none ${
           tooltip.position === 'left' ? 'left-4' : 'right-12'
@@ -349,11 +250,8 @@ export default function KLineChart({ data, code }: { data: any, code: string }) 
           <div className="font-bold text-slate-900 mb-1">{tooltip.time}</div>
           <div className="space-y-0.5">
             <div className="flex justify-between gap-4"><span className="text-slate-500">开盘:</span><span className="font-mono text-slate-900">{tooltip.open.toFixed(2)}</span></div>
-            <div className="flex justify-between gap-4"><span className="text-slate-500">最高:</span><span className="font-mono text-red-600">{tooltip.high.toFixed(2)}</span></div>
-            <div className="flex justify-between gap-4"><span className="text-slate-500">最低:</span><span className="font-mono text-green-600">{tooltip.low.toFixed(2)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">收盘:</span><span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">涨幅:</span><span className={`font-mono ${tooltip.changePercent >= 0 ? 'text-red-600' : 'text-green-600'}`}>{tooltip.changePercent >= 0 ? '+' : ''}{tooltip.changePercent.toFixed(2)}%</span></div>
-            <div className="flex justify-between gap-4"><span className="text-slate-500">成交量:</span><span className="font-mono text-slate-900">{(tooltip.volume / 10000).toFixed(2)}万</span></div>
           </div>
         </div>
       )}
