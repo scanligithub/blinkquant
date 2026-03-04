@@ -120,7 +120,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
   const [maIndicators, setMaIndicators] = useState<any>(null);
   const [volumeMaIndicators, setVolumeMaIndicators] = useState<any>(null);
   const [priceExtremes, setPriceExtremes] = useState<any>(null);
-  const [volumeMax, setVolumeMax] = useState<number>(0);
+  const [volumeMax, setVolumeMax] = useState<any>(null);
+  const [extremesPositions, setExtremesPositions] = useState<any>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -190,17 +191,22 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     
-    // 计算主图极值
-    const highs = formattedData.map(d => d.high);
-    const lows = formattedData.map(d => d.low);
-    const maxPrice = Math.max(...highs);
-    const minPrice = Math.min(...lows);
-    setPriceExtremes({ max: maxPrice, min: minPrice });
+    // 计算主图极值及对应位置
+    let maxPrice = -Infinity, minPrice = Infinity;
+    let maxPriceTime: any = null, minPriceTime: any = null;
+    formattedData.forEach(d => {
+      if (d.high > maxPrice) { maxPrice = d.high; maxPriceTime = d.time; }
+      if (d.low < minPrice) { minPrice = d.low; minPriceTime = d.time; }
+    });
+    setPriceExtremes({ max: maxPrice, min: minPrice, maxTime: maxPriceTime, minTime: minPriceTime });
     
-    // 计算量能最大值
-    const volumes = volumeData.map(d => d.value);
-    const maxVol = Math.max(...volumes);
-    setVolumeMax(maxVol);
+    // 计算量能最大值及对应位置
+    let maxVol = 0;
+    let maxVolTime: any = null;
+    volumeData.forEach(d => {
+      if (d.value > maxVol) { maxVol = d.value; maxVolTime = d.time; }
+    });
+    setVolumeMax({ value: maxVol, time: maxVolTime });
     
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
@@ -210,6 +216,55 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     candlestickSeries.setData(formattedData);
     volumeSeries.setData(volumeData);
     maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
+    
+    // 计算极值在图表中的位置
+    const calculatePositions = () => {
+      if (!chartContainerRef.current) return;
+      
+      const positions: any = {};
+      
+      // 主图最高价位置
+      if (maxPriceTime !== null) {
+        const timeScale = chart.timeScale();
+        const x = timeScale.timeToCoordinate(maxPriceTime);
+        const y = candlestickSeries.priceToCoordinate(maxPrice);
+        if (x !== null && y !== null) {
+          positions.maxPrice = { x, y, value: maxPrice, label: '高' };
+        }
+      }
+      
+      // 主图最低价位置
+      if (minPriceTime !== null) {
+        const timeScale = chart.timeScale();
+        const x = timeScale.timeToCoordinate(minPriceTime);
+        const y = candlestickSeries.priceToCoordinate(minPrice);
+        if (x !== null && y !== null) {
+          positions.minPrice = { x, y, value: minPrice, label: '低' };
+        }
+      }
+      
+      // 量能最大值位置
+      if (maxVolTime !== null) {
+        const timeScale = chart.timeScale();
+        const x = timeScale.timeToCoordinate(maxVolTime);
+        const y = volumeSeries.priceToCoordinate(maxVol);
+        if (x !== null && y !== null) {
+          positions.maxVolume = { x, y, value: maxVol, label: '最大' };
+        }
+      }
+      
+      setExtremesPositions(positions);
+    };
+    
+    // 初始计算位置
+    setTimeout(calculatePositions, 100);
+    
+    // 监听图表尺寸变化和可见范围变化
+    const handleVisibleRangeChange = () => {
+      calculatePositions();
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+    chart.timeScale().subscribeVisibleTimeRangeChange(handleVisibleRangeChange);
     volumeMAPeriods.forEach((period, index) => volumeMASeries[index].setData(calculateVolumeMA(volumeData, period)));
 
     const macdData = calculateMACD(formattedData);
@@ -299,14 +354,42 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
       
       {/* 主图极值显示 */}
-      <div className="absolute top-2 right-2 md:right-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
-        {priceExtremes && (
-          <div className="flex flex-col items-end gap-0.5">
-            <span className="text-slate-500">高: <span className="font-mono text-red-600">{priceExtremes.max.toFixed(2)}</span></span>
-            <span className="text-slate-500">低: <span className="font-mono text-green-600">{priceExtremes.min.toFixed(2)}</span></span>
-          </div>
-        )}
-      </div>
+      {extremesPositions && (
+        <>
+          {extremesPositions.maxPrice && (
+            <div
+              className="absolute z-10 bg-white/95 backdrop-blur px-2 py-1 rounded border border-red-200 shadow-sm text-[9px] md:text-xs pointer-events-none"
+              style={{
+                left: `${extremesPositions.maxPrice.x}px`,
+                top: `${extremesPositions.maxPrice.y - 30}px`,
+                transform: 'translateX(-50%)'
+              }}
+            >
+              <div className="flex items-center gap-1">
+                <span className="text-red-600 font-bold">{extremesPositions.maxPrice.label}</span>
+                <span className="font-mono text-red-600">{extremesPositions.maxPrice.value.toFixed(2)}</span>
+              </div>
+              <div className="absolute left-1/2 -bottom-2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-red-200 transform -translate-x-1/2"></div>
+            </div>
+          )}
+          {extremesPositions.minPrice && (
+            <div
+              className="absolute z-10 bg-white/95 backdrop-blur px-2 py-1 rounded border border-green-200 shadow-sm text-[9px] md:text-xs pointer-events-none"
+              style={{
+                left: `${extremesPositions.minPrice.x}px`,
+                top: `${extremesPositions.minPrice.y + 10}px`,
+                transform: 'translateX(-50%)'
+              }}
+            >
+              <div className="flex items-center gap-1">
+                <span className="text-green-600 font-bold">{extremesPositions.minPrice.label}</span>
+                <span className="font-mono text-green-600">{extremesPositions.minPrice.value.toFixed(2)}</span>
+              </div>
+              <div className="absolute left-1/2 -top-2 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-green-200 transform -translate-x-1/2"></div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* 主图 MA 指标动态显示 */}
       <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
@@ -318,11 +401,22 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       </div>
 
       {/* 量能极值显示 */}
-      <div className="absolute top-[62%] right-2 md:right-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
-        {volumeMax > 0 && (
-          <span className="text-slate-500">最大: <span className="font-mono text-slate-900">{formatVolume(volumeMax)}</span></span>
-        )}
-      </div>
+      {extremesPositions && extremesPositions.maxVolume && (
+        <div
+          className="absolute z-10 bg-white/95 backdrop-blur px-2 py-1 rounded border border-slate-200 shadow-sm text-[9px] md:text-xs pointer-events-none"
+          style={{
+            left: `${extremesPositions.maxVolume.x}px`,
+            top: `${extremesPositions.maxVolume.y - 30}px`,
+            transform: 'translateX(-50%)'
+          }}
+        >
+          <div className="flex items-center gap-1">
+            <span className="text-slate-600 font-bold">{extremesPositions.maxVolume.label}</span>
+            <span className="font-mono text-slate-900">{formatVolume(extremesPositions.maxVolume.value)}</span>
+          </div>
+          <div className="absolute left-1/2 -bottom-2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-300 transform -translate-x-1/2"></div>
+        </div>
+      )}
 
       {/* 量能 MA 指标动态显示 */}
       <div className="absolute top-[62%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
