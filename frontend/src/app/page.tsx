@@ -254,48 +254,54 @@ export default function Home() {
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-6">
         
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">BlinkQuant</h1>
-            <p className="text-slate-500 text-xs md:text-sm mt-1">分布式计算集群</p>
-          </div>
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="text-xs md:text-sm font-mono text-slate-400 bg-white px-3 py-2 rounded-lg border shadow-sm">
-              集群: {clusterStatus?.cluster_health || '连接中...'}
+        <header className="flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">BlinkQuant</h1>
+              <p className="text-slate-500 text-xs md:text-sm mt-1">分布式计算集群</p>
             </div>
-            {clusterStatus?.nodes?.map((node: any, idx: number) => (
-              <div key={idx} className={`text-xs md:text-sm font-mono px-3 py-2 rounded-lg border shadow-sm ${node.online ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${node.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <span className="font-bold text-slate-700 text-sm md:text-base">Node {node.node || idx}</span>
-                  <span className={`text-xs md:text-sm uppercase font-bold px-2 md:px-2.5 py-0.5 rounded-full ${
-                    node.status === 'healthy' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    {node.status || 'OFFLINE'}
-                  </span>
-                </div>
-                {node.online ? (
-                  <div className="mt-2 space-y-1">
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs md:text-sm">进程内存</span>
-                      <div className="font-mono font-medium text-slate-900 text-right text-xs md:text-sm">{node.process_memory_gb} GB</div>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs md:text-sm">系统空闲</span>
-                      <div className="font-mono font-bold text-blue-600 text-right text-xs md:text-sm">{node.system_memory_free_gb} GB</div>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs md:text-sm">磁盘空闲</span>
-                      <div className="font-mono text-slate-900 text-right text-xs md:text-sm">{node.disk_free_gb} GB</div>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs md:text-sm">数据行</span>
-                      <div className="font-mono text-slate-500 text-right text-xs md:text-sm">{node.rows_daily?.toLocaleString()}</div>
-                    </div>
-                  </div>
-                ) : null}
+          </div>
+          <div className="flex flex-col gap-3">
+            <div className="flex justify-center">
+              <div className="text-xs md:text-sm font-mono text-slate-400 bg-white px-3 py-2 rounded-lg border shadow-sm">
+                集群: {clusterStatus?.cluster_health || '连接中...'}
               </div>
-            ))}
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              {clusterStatus?.nodes?.map((node: any, idx: number) => (
+                <div key={idx} className={`text-xs md:text-sm font-mono px-3 py-2 rounded-lg border shadow-sm ${node.online ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${node.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span className="font-bold text-slate-700 text-sm md:text-base">Node {node.node || idx}</span>
+                    <span className={`text-xs md:text-sm uppercase font-bold px-2 md:px-2.5 py-0.5 rounded-full ${
+                      node.status === 'healthy' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {node.status || 'OFFLINE'}
+                    </span>
+                  </div>
+                  {node.online ? (
+                    <div className="mt-2 space-y-1">
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500 text-xs md:text-sm">进程内存</span>
+                        <div className="font-mono font-medium text-slate-900 text-right text-xs md:text-sm">{node.process_memory_gb} GB</div>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500 text-xs md:text-sm">系统空闲</span>
+                        <div className="font-mono font-bold text-blue-600 text-right text-xs md:text-sm">{node.system_memory_free_gb} GB</div>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500 text-xs md:text-sm">磁盘空闲</span>
+                        <div className="font-mono text-slate-900 text-right text-xs md:text-sm">{node.disk_free_gb} GB</div>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500 text-xs md:text-sm">数据行</span>
+                        <div className="font-mono text-slate-500 text-right text-xs md:text-sm">{node.rows_daily?.toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         </header>
 
