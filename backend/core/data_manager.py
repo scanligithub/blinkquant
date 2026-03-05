@@ -145,29 +145,34 @@ class DataManager:
             ])
 
     def _apply_forward_adjustment(self):
-        """执行前复权处理：OHLC * (当日复权因子 / 最新复权因子)"""
+        """执行前复权处理：OHLC * (当日复权因子 / 最新复权因子)，Volume / (当日复权因子 / 最新复权因子)"""
         if self.df_daily is None: return
-        
+
         if "adjustFactor" not in self.df_daily.columns:
             logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
             return
 
         logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
-        
+
         # 强制按代码和时间升序排序，确保 .last() 绝对是最新的一天！
         self.df_daily = self.df_daily.sort(["code", "date"])
-        
+
         # 计算每只股票最新的复权因子
-        # 使用 over("code") 窗口函数定位每只股票时间轴上的最后一个因子
-        qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").last().over("code")
-        
+        # 使用 sort_by("date").last().over("code") 显式声明时间轴排序，确保 100% 确定性
+        qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").sort_by("date").last().over("code")
+
+        # 应用前复权：
+        # - OHLC 乘以复权系数（价格与复权因子成正比）
+        # - Volume 除以复权系数（成交量与复权因子成反比，除权后股数增加）
+        # - Amount 无需处理（金额 = 价格 × 股数，复权前后乘积不变）
         self.df_daily = self.df_daily.with_columns([
             (pl.col("open") * qfq_expr).alias("open"),
             (pl.col("high") * qfq_expr).alias("high"),
             (pl.col("low") * qfq_expr).alias("low"),
             (pl.col("close") * qfq_expr).alias("close"),
+            (pl.col("volume") / qfq_expr).alias("volume"),
         ])
-        
+
         gc.collect()
 
     def _optimize_memory(self, df: pl.DataFrame, name: str):
