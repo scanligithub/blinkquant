@@ -706,7 +706,7 @@ export default function KLineChart({
   useEffect(() => {
     if (!seriesMap.current.mfSeries || !data) return;
   
-    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
+    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
