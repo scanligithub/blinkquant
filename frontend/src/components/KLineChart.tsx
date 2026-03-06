@@ -658,6 +658,15 @@ export default function KLineChart({
                     } else if (currentType === 'BOLL') {
                       const bollLabels = ['中轨', '上轨', '下轨'];
                       label = bollLabels[index] || `BOLL${index}`;
+                    } else if (currentType === 'VWAP') {
+                      label = 'VWAP';
+                    } else if (currentType === 'SAR') {
+                      label = 'SAR';
+                    } else if (currentType === 'ICHIMOKU') {
+                      const ichimokuLabels = ['十番线', '基番线', 'A span', 'B span'];
+                      label = ichimokuLabels[index] || `Ichimoku${index}`;
+                    } else if (currentType === 'BBI') {
+                      label = 'BBI';
                     } else {
                       label = `Line${index}`;
                     }
