@@ -289,12 +289,114 @@ export default function KLineChart({
       lastValueVisible: false, priceLineVisible: false,
     });
 
-    seriesMap.current = { 
-      macdLine, 
-      signalLine, 
-      histogramSeries, 
-      mfSeries, 
+    // RSI 系列
+    const rsiSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#9b59b6',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // KDJ 系列 (K, D, J 三条线)
+    const kdjKSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#e74c3c',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    const kdjDSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#3498db',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    const kdjJSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#f1c40f',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // WR 系列 (威廉指标)
+    const wrSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#e67e22',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // OBV 系列 (能量潮)
+    const obvSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#1abc9c',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // CCI 系列 (顺势指标)
+    const cciSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#34495e',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // DMI 系列 (+DI, -DI, ADX 三条线)
+    const dmiPdiSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#e74c3c',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    const dmiMdiSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#3498db',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    const dmiAdxSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#9b59b6',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    // MFI 系列 (资金流量指数)
+    const mfiSeries = chart.addLineSeries({
+      priceScaleId: 'subchart',
+      color: '#e91e63',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+  
+    seriesMap.current = {
+      macdLine,
+      signalLine,
+      histogramSeries,
+      mfSeries,
       mfTrendLine,
+      rsiSeries,
+      kdjKSeries,
+      kdjDSeries,
+      kdjJSeries,
+      wrSeries,
+      obvSeries,
+      cciSeries,
+      dmiPdiSeries,
+      dmiMdiSeries,
+      dmiAdxSeries,
+      mfiSeries,
       maSeries,
       volumeMASeries,
     };
@@ -473,6 +575,46 @@ export default function KLineChart({
           net: (param.seriesData.get(mfSeries) as any)?.value || 0,
           trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0,
         });
+
+        // RSI 指标
+        const rsiValue = (param.seriesData.get(seriesMap.current.rsiSeries) as any)?.value;
+        setRsiIndicators(rsiValue !== undefined && rsiValue !== 0 ? { rsi: rsiValue } : null);
+
+        // KDJ 指标
+        const kdjK = (param.seriesData.get(seriesMap.current.kdjKSeries) as any)?.value;
+        const kdjD = (param.seriesData.get(seriesMap.current.kdjDSeries) as any)?.value;
+        const kdjJ = (param.seriesData.get(seriesMap.current.kdjJSeries) as any)?.value;
+        if (kdjK !== undefined && kdjK !== 0) {
+          setKdjIndicators({ k: kdjK, d: kdjD, j: kdjJ });
+        } else {
+          setKdjIndicators(null);
+        }
+
+        // WR 指标
+        const wrValue = (param.seriesData.get(seriesMap.current.wrSeries) as any)?.value;
+        setWrIndicators(wrValue !== undefined && wrValue !== 0 ? { wr: wrValue } : null);
+
+        // OBV 指标
+        const obvValue = (param.seriesData.get(seriesMap.current.obvSeries) as any)?.value;
+        setObvIndicators(obvValue !== undefined && obvValue !== 0 ? { obv: obvValue } : null);
+
+        // CCI 指标
+        const cciValue = (param.seriesData.get(seriesMap.current.cciSeries) as any)?.value;
+        setCciIndicators(cciValue !== undefined && cciValue !== 0 ? { cci: cciValue } : null);
+
+        // DMI 指标
+        const dmiPdi = (param.seriesData.get(seriesMap.current.dmiPdiSeries) as any)?.value;
+        const dmiMdi = (param.seriesData.get(seriesMap.current.dmiMdiSeries) as any)?.value;
+        const dmiAdx = (param.seriesData.get(seriesMap.current.dmiAdxSeries) as any)?.value;
+        if (dmiPdi !== undefined && dmiPdi !== 0) {
+          setDmiIndicators({ pdi: dmiPdi, mdi: dmiMdi, adx: dmiAdx });
+        } else {
+          setDmiIndicators(null);
+        }
+
+        // MFI 指标
+        const mfiValue = (param.seriesData.get(seriesMap.current.mfiSeries) as any)?.value;
+        setMfiIndicators(mfiValue !== undefined && mfiValue !== 0 ? { mfi: mfiValue } : null);
 
         // 获取主图指标最新值（根据当前选择的指标类型显示对应名称）
         const mainChartValues: any = {};
@@ -807,30 +949,88 @@ export default function KLineChart({
         ))}
       </div>
 
-      {/* MACD / 资金流 指标动态显示 - 紧跟副图配置按钮 */}
-      <div className="absolute top-[calc(75%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none" style={{ marginLeft: '48px' }}>
-        {subChartType === 'MACD' && macdIndicators && (
-          <div className="flex items-center gap-1.5 md:gap-3">
-            <span className="text-slate-500">DIF: <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span></span>
-            <span className="text-slate-500">DEA: <span className="font-mono text-[#22c55e]">{macdIndicators.dea.toFixed(2)}</span></span>
-            <span className="text-slate-500">MACD: <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span></span>
-          </div>
-        )}
-        {subChartType === 'MF' && mfIndicators && (
-          <div className="flex items-center gap-1.5 md:gap-3">
-            <span className="text-slate-500">
-              单日主力: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>
-                {formatMoney(mfIndicators.net)}
-              </span>
-            </span>
-            <span className="text-slate-500">
-              20 日趋势: <span className="font-mono text-[#f59e0b]">
-                {formatMoney(mfIndicators.trend)}
-              </span>
-            </span>
-          </div>
-        )}
-      </div>
+      {/* 副图指标动态显示 - 紧跟副图配置按钮 */}
+              <div className="absolute top-[calc(75%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none" style={{ marginLeft: '48px' }}>
+                {/* MACD */}
+                {subChartType === 'MACD' && macdIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">DIF: <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span></span>
+                    <span className="text-slate-500">DEA: <span className="font-mono text-[#22c55e]">{macdIndicators.dea.toFixed(2)}</span></span>
+                    <span className="text-slate-500">MACD: <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* 资金流 MF */}
+                {subChartType === 'MF' && mfIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">
+                      单日主力: <span className={`font-mono ${mfIndicators.net >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>
+                        {formatMoney(mfIndicators.net)}
+                      </span>
+                    </span>
+                    <span className="text-slate-500">
+                      20 日趋势: <span className="font-mono text-[#f59e0b]">
+                        {formatMoney(mfIndicators.trend)}
+                      </span>
+                    </span>
+                  </div>
+                )}
+                {/* RSI */}
+                {subChartType === 'RSI' && rsiIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">RSI(14): <span className="font-mono text-[#9b59b6]">{rsiIndicators.rsi.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* KDJ */}
+                {subChartType === 'KDJ' && kdjIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">K: <span className="font-mono text-[#e74c3c]">{kdjIndicators.k.toFixed(2)}</span></span>
+                    <span className="text-slate-500">D: <span className="font-mono text-[#3498db]">{kdjIndicators.d.toFixed(2)}</span></span>
+                    <span className="text-slate-500">J: <span className="font-mono text-[#f1c40f]">{kdjIndicators.j.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* WR */}
+                {subChartType === 'WR' && wrIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">WR(14): <span className="font-mono text-[#e67e22]">{wrIndicators.wr.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* OBV */}
+                {subChartType === 'OBV' && obvIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">OBV: <span className="font-mono text-[#1abc9c]">{formatVolume(obvIndicators.obv)}</span></span>
+                  </div>
+                )}
+                {/* CCI */}
+                {subChartType === 'CCI' && cciIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">CCI(20): <span className="font-mono text-[#34495e]">{cciIndicators.cci.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* DMI */}
+                {subChartType === 'DMI' && dmiIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">+DI: <span className="font-mono text-[#e74c3c]">{dmiIndicators.pdi.toFixed(2)}</span></span>
+                    <span className="text-slate-500">-DI: <span className="font-mono text-[#3498db]">{dmiIndicators.mdi.toFixed(2)}</span></span>
+                    <span className="text-slate-500">ADX: <span className="font-mono text-[#9b59b6]">{dmiIndicators.adx.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* MFI */}
+                {subChartType === 'MFI' && mfiIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    <span className="text-slate-500">MFI(14): <span className="font-mono text-[#e91e63]">{mfiIndicators.mfi.toFixed(2)}</span></span>
+                  </div>
+                )}
+                {/* VOL */}
+                {subChartType === 'VOL' && volumeMaIndicators && (
+                  <div className="flex items-center gap-1.5 md:gap-3">
+                    {Object.entries(volumeMaIndicators).map(([key, item]: [string, any]) => (
+                      <span key={key} className="text-slate-500">
+                        {key}: <span className="font-mono" style={{ color: item.color }}>{formatVolume(item.value)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
       {/* 主图悬浮框 */}
       {tooltip && (
