@@ -829,12 +829,12 @@ export default function KLineChart({
           </button>
       
           {mainMenuOpen && (
-            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[200px]">
               {Object.entries(MAIN_INDICATORS).map(([key, config]) => (
                 <button
                   key={key}
                   onClick={() => handleMainSelect(key)}
-                  className={`w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50 transition-colors ${
+                  className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 transition-colors ${
                     mainChartType === key ? 'text-blue-600 font-medium bg-blue-50' : 'text-slate-600'
                   }`}
                 >
@@ -866,12 +866,12 @@ export default function KLineChart({
           </button>
       
           {subMenuOpen && (
-            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[200px]">
               {Object.entries(SUB_INDICATORS).map(([key, config]) => (
                 <button
                   key={key}
                   onClick={() => handleSubSelect(key)}
-                  className={`w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50 transition-colors ${
+                  className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 transition-colors ${
                     subChartType === key ? 'text-blue-600 font-medium bg-blue-50' : 'text-slate-600'
                   }`}
                 >
