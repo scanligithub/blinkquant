@@ -707,6 +707,13 @@ export default function KLineChart({
   const [mfIndicators, setMfIndicators] = useState<any>(null);
   const [maIndicators, setMaIndicators] = useState<any>(null);
   const [volumeMaIndicators, setVolumeMaIndicators] = useState<any>(null);
+  const [rsiIndicators, setRsiIndicators] = useState<any>(null);
+  const [kdjIndicators, setKdjIndicators] = useState<any>(null);
+  const [wrIndicators, setWrIndicators] = useState<any>(null);
+  const [obvIndicators, setObvIndicators] = useState<any>(null);
+  const [cciIndicators, setCciIndicators] = useState<any>(null);
+  const [dmiIndicators, setDmiIndicators] = useState<any>(null);
+  const [mfiIndicators, setMfiIndicators] = useState<any>(null);
   const [priceExtremes, setPriceExtremes] = useState<any>(null);
   const [volumeMax, setVolumeMax] = useState<any>(null);
   const [extremesPositions, setExtremesPositions] = useState<any>(null);
