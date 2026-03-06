@@ -269,9 +269,18 @@ export default function KLineChart({
     const signalLine = chart.addLineSeries({ priceScaleId: 'subchart', color: '#22c55e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
     const histogramSeries = chart.addHistogramSeries({ priceScaleId: 'subchart', baseLineColor: '#e2e8f0', lastValueVisible: false, priceLineVisible: false });
 
-    // 资金流柱状图
-    const mfSeries = chart.addHistogramSeries({
-      priceScaleId: 'subchart',
+    // 副图成交量柱状图（用于 VOL 指标）
+            const volHistogramSeries = chart.addHistogramSeries({
+              priceScaleId: 'subchart',
+              baseLineColor: '#e2e8f0',
+              baseLineVisible: true,
+              priceFormat: { type: 'volume' },
+              lastValueVisible: false, priceLineVisible: false,
+            });
+    
+            // 资金流柱状图
+            const mfSeries = chart.addHistogramSeries({
+              priceScaleId: 'subchart',
       baseLineColor: '#e2e8f0',
       baseLineVisible: true,
       priceFormat: {
@@ -397,10 +406,11 @@ export default function KLineChart({
               dmiMdiSeries,
               dmiAdxSeries,
               mfiSeries,
-              volumeSeries,
-              maSeries,
-              volumeMASeries,
-            };
+                      volHistogramSeries,
+                      volumeSeries,
+                      maSeries,
+                      volumeMASeries,
+                    };
 
     chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.40 } });
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.60, bottom: 0.25 } });
@@ -739,11 +749,9 @@ export default function KLineChart({
             if (seriesMap.current.dmiMdiSeries) seriesMap.current.dmiMdiSeries.applyOptions({ visible: false });
             if (seriesMap.current.dmiAdxSeries) seriesMap.current.dmiAdxSeries.applyOptions({ visible: false });
             // MFI
-            if (seriesMap.current.mfiSeries) seriesMap.current.mfiSeries.applyOptions({ visible: false });
-            // VOL
-            if (seriesMap.current.volumeMASeries) {
-              seriesMap.current.volumeMASeries.forEach((series: any) => series.applyOptions({ visible: false }));
-            }
+                    if (seriesMap.current.mfiSeries) seriesMap.current.mfiSeries.applyOptions({ visible: false });
+                    // VOL
+                    if (seriesMap.current.volHistogramSeries) seriesMap.current.volHistogramSeries.applyOptions({ visible: false });
   
     if (subChartType === 'MACD') {
       const macdData = calculateMACD(formattedData);
@@ -811,17 +819,11 @@ export default function KLineChart({
                 if (chartRef.current) chartRef.current.timeScale().fitContent();
               }
             } else if (subChartType === 'VOL') {
-                      // VOL 显示成交量柱状图和均线在主图表的成交量区域
-                      // 确保成交量柱状图可见
-                      if (seriesMap.current.volumeSeries) {
-                        seriesMap.current.volumeSeries.applyOptions({ visible: true });
+                      // VOL 显示成交量柱状图和均线在副图区域
+                      if (seriesMap.current.volHistogramSeries) {
+                        seriesMap.current.volHistogramSeries.setData(volumeData);
+                        seriesMap.current.volHistogramSeries.applyOptions({ visible: true });
                       }
-                      [5, 10, 20].forEach((period, index) => {
-                        if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
-                          seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
-                          seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
-                        }
-                      });
                       if (chartRef.current) chartRef.current.timeScale().fitContent();
                     }
   }, [subChartType, data]);
