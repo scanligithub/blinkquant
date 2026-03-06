@@ -617,25 +617,25 @@ export default function KLineChart({
         setMfiIndicators(mfiValue !== undefined && mfiValue !== 0 ? { mfi: mfiValue } : null);
 
         // 获取主图指标最新值（根据当前选择的指标类型显示对应名称）
-        const mainChartValues: any = {};
-        maSeries.forEach((series, index) => {
-          const value = (param.seriesData.get(series) as any)?.value;
-          if (value !== undefined && value !== 0) {
-            // 根据当前主图指标类型生成对应的标签（使用 ref 获取最新值）
-            let label: string;
-            const currentType = mainChartTypeRef.current || 'MA';
-            if (currentType === 'MA' || currentType === 'EMA') {
-              label = `${currentType}${maPeriods[index]}`;
-            } else if (currentType === 'BOLL') {
-              const bollLabels = ['中轨', '上轨', '下轨'];
-              label = bollLabels[index] || `BOLL${index}`;
-            } else {
-              label = `Line${index}`;
-            }
-            mainChartValues[label] = { value, color: maColors[index] };
-          }
-        });
-        setMaIndicators(mainChartValues);
+                const mainChartValues: any = {};
+                maSeries.forEach((series, index) => {
+                  const value = (param.seriesData.get(series) as any)?.value;
+                  if (value !== undefined && value !== 0) {
+                    // 根据当前主图指标类型生成对应的标签（使用 ref 获取最新值）
+                    let label: string;
+                    const currentType = mainChartTypeRef.current || 'MA';
+                    if (currentType === 'MA' || currentType === 'EMA' || currentType === 'WMA' || currentType === 'SMMA') {
+                      label = `${currentType}${maPeriods[index]}`;
+                    } else if (currentType === 'BOLL') {
+                      const bollLabels = ['中轨', '上轨', '下轨'];
+                      label = bollLabels[index] || `BOLL${index}`;
+                    } else {
+                      label = `Line${index}`;
+                    }
+                    mainChartValues[label] = { value, color: maColors[index] };
+                  }
+                });
+                setMaIndicators(mainChartValues);
 
         // 获取量能 MA 最新值
         const volumeMaValues: any = {};
