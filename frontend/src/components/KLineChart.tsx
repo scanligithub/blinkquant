@@ -481,7 +481,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       )}
 
       {/* 量能 MA 指标动态显示 */}
-      <div className="absolute top-[60%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+      <div className="absolute top-[calc(60%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
         {volumeMaIndicators && Object.entries(volumeMaIndicators).map(([key, item]: [string, any]) => (
           <span key={key} className="text-slate-500 mr-2">
             {key}: <span className="font-mono" style={{ color: item.color }}>{formatVolume(item.value)}</span>
@@ -490,7 +490,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       </div>
 
       {/* MACD / 资金流 指标动态显示 */}
-      <div className="absolute top-[75%] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+      <div className="absolute top-[calc(75%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
         {subChartType === 'MACD' && macdIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
             <span className="text-slate-500">DIF: <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span></span>
