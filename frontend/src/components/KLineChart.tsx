@@ -509,15 +509,25 @@ export default function KLineChart({
           trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0,
         });
 
-        // 获取主图 MA 最新值
-        const maValues: any = {};
+        // 获取主图指标最新值（根据当前选择的指标类型显示对应名称）
+        const mainChartValues: any = {};
         maSeries.forEach((series, index) => {
           const value = (param.seriesData.get(series) as any)?.value;
-          if (value !== undefined) {
-            maValues[`MA${maPeriods[index]}`] = { value, color: maColors[index] };
+          if (value !== undefined && value !== 0) {
+            // 根据当前主图指标类型生成对应的标签
+            let label: string;
+            if (mainChartType === 'MA' || mainChartType === 'EMA') {
+              label = `${mainChartType}${maPeriods[index]}`;
+            } else if (mainChartType === 'BOLL') {
+              const bollLabels = ['中轨', '上轨', '下轨'];
+              label = bollLabels[index] || `BOLL${index}`;
+            } else {
+              label = `Line${index}`;
+            }
+            mainChartValues[label] = { value, color: maColors[index] };
           }
         });
-        setMaIndicators(maValues);
+        setMaIndicators(mainChartValues);
 
         // 获取量能 MA 最新值
         const volumeMaValues: any = {};
