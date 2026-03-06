@@ -795,11 +795,11 @@ export default function KLineChart({
   }, [subChartType, data]);
 
   // 响应 mainChartType 变化 - 重新计算并设置主图指标
-  useEffect(() => {
-    if (!seriesMap.current.maSeries || !chartRef.current || !data) return;
+          useEffect(() => {
+            if (!seriesMap.current.maSeries || !chartRef.current || !data) return;
   
-    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
-    const maSeries = seriesMap.current.maSeries;
+            const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume }));
+            const maSeries = seriesMap.current.maSeries;
   
     // 清除旧指标数据
     maSeries.forEach((series: any) => series.setData([]));
