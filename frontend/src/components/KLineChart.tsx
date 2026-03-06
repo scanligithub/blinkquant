@@ -713,12 +713,36 @@ export default function KLineChart({
       return { time: item.time, value: val, color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)' };
     });
   
-    // 默认隐藏所有副图系列
-    seriesMap.current.macdLine.applyOptions({ visible: false });
-    seriesMap.current.signalLine.applyOptions({ visible: false });
-    seriesMap.current.histogramSeries.applyOptions({ visible: false });
-    seriesMap.current.mfSeries.applyOptions({ visible: false });
-    seriesMap.current.mfTrendLine.applyOptions({ visible: false });
+    // 默认隐藏并清除所有副图系列
+            // MACD
+            seriesMap.current.macdLine.applyOptions({ visible: false });
+            seriesMap.current.signalLine.applyOptions({ visible: false });
+            seriesMap.current.histogramSeries.applyOptions({ visible: false });
+            // MF
+            seriesMap.current.mfSeries.applyOptions({ visible: false });
+            seriesMap.current.mfTrendLine.applyOptions({ visible: false });
+            // RSI
+            if (seriesMap.current.rsiSeries) seriesMap.current.rsiSeries.applyOptions({ visible: false });
+            // KDJ
+            if (seriesMap.current.kdjKSeries) seriesMap.current.kdjKSeries.applyOptions({ visible: false });
+            if (seriesMap.current.kdjDSeries) seriesMap.current.kdjDSeries.applyOptions({ visible: false });
+            if (seriesMap.current.kdjJSeries) seriesMap.current.kdjJSeries.applyOptions({ visible: false });
+            // WR
+            if (seriesMap.current.wrSeries) seriesMap.current.wrSeries.applyOptions({ visible: false });
+            // OBV
+            if (seriesMap.current.obvSeries) seriesMap.current.obvSeries.applyOptions({ visible: false });
+            // CCI
+            if (seriesMap.current.cciSeries) seriesMap.current.cciSeries.applyOptions({ visible: false });
+            // DMI
+            if (seriesMap.current.dmiPdiSeries) seriesMap.current.dmiPdiSeries.applyOptions({ visible: false });
+            if (seriesMap.current.dmiMdiSeries) seriesMap.current.dmiMdiSeries.applyOptions({ visible: false });
+            if (seriesMap.current.dmiAdxSeries) seriesMap.current.dmiAdxSeries.applyOptions({ visible: false });
+            // MFI
+            if (seriesMap.current.mfiSeries) seriesMap.current.mfiSeries.applyOptions({ visible: false });
+            // VOL
+            if (seriesMap.current.volumeMASeries) {
+              seriesMap.current.volumeMASeries.forEach((series: any) => series.applyOptions({ visible: false }));
+            }
   
     if (subChartType === 'MACD') {
       const macdData = calculateMACD(formattedData);
