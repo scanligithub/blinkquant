@@ -461,7 +461,7 @@ export default function KLineChart({
     mfTrendLine.applyOptions({ visible: !isMacd });
 
     // 根据屏幕宽度设置 Y 轴可见性
-    const updateYAxisVisibility = useCallback(() => {
+    const updateYAxisVisibility = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
       if (chartRef.current) {
@@ -469,7 +469,7 @@ export default function KLineChart({
         chartRef.current.priceScale('volume').applyOptions({ visible: !mobile });
         chartRef.current.priceScale('subchart').applyOptions({ visible: !mobile });
       }
-    }, []);
+    };
     
     // 初始设置 Y 轴可见性
     updateYAxisVisibility();
