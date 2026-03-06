@@ -522,30 +522,109 @@ export default function KLineChart({
     };
   }, [data]);
 
-  // 响应 subChartType 变化
+  // 响应 subChartType 变化 - 更新副图指标显示
   useEffect(() => {
-    if (!seriesMap.current.mfSeries) return;
-
-    const isMacd = subChartType === 'MACD';
-    seriesMap.current.macdLine.applyOptions({ visible: isMacd });
-    seriesMap.current.signalLine.applyOptions({ visible: isMacd });
-    seriesMap.current.histogramSeries.applyOptions({ visible: isMacd });
-
-    seriesMap.current.mfSeries.applyOptions({ visible: !isMacd });
-    seriesMap.current.mfTrendLine.applyOptions({ visible: !isMacd });
-  }, [subChartType]);
+    if (!seriesMap.current.mfSeries || !data) return;
+  
+    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
+    const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
+    const mfData = data.map((item: any) => {
+      const val = item.main_net || 0;
+      return { time: item.time, value: val, color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)' };
+    });
+  
+    // 默认隐藏所有副图系列
+    seriesMap.current.macdLine.applyOptions({ visible: false });
+    seriesMap.current.signalLine.applyOptions({ visible: false });
+    seriesMap.current.histogramSeries.applyOptions({ visible: false });
+    seriesMap.current.mfSeries.applyOptions({ visible: false });
+    seriesMap.current.mfTrendLine.applyOptions({ visible: false });
+  
+    if (subChartType === 'MACD') {
+      const macdData = calculateMACD(formattedData);
+      seriesMap.current.macdLine.setData(macdData.macdLine);
+      seriesMap.current.signalLine.setData(macdData.signalLine);
+      seriesMap.current.histogramSeries.setData(macdData.histogram);
+      seriesMap.current.macdLine.applyOptions({ visible: true });
+      seriesMap.current.signalLine.applyOptions({ visible: true });
+      seriesMap.current.histogramSeries.applyOptions({ visible: true });
+    } else if (subChartType === 'MF') {
+      seriesMap.current.mfSeries.setData(mfData);
+      seriesMap.current.mfTrendLine.setData(calculateRollingSum(mfData, 20));
+      seriesMap.current.mfSeries.applyOptions({ visible: true });
+      seriesMap.current.mfTrendLine.applyOptions({ visible: true });
+    } else if (subChartType === 'RSI') {
+      const rsiData = calculateRSI(formattedData, 14);
+      if (seriesMap.current.rsiSeries) {
+        seriesMap.current.rsiSeries.setData(rsiData);
+        seriesMap.current.rsiSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'KDJ') {
+      const kdjData = calculateKDJ(formattedData, 9, 3, 3);
+      if (seriesMap.current.kdjKSeries) {
+        seriesMap.current.kdjKSeries.setData(kdjData.k);
+        seriesMap.current.kdjDSeries.setData(kdjData.d);
+        seriesMap.current.kdjJSeries.setData(kdjData.j);
+        seriesMap.current.kdjKSeries.applyOptions({ visible: true });
+        seriesMap.current.kdjDSeries.applyOptions({ visible: true });
+        seriesMap.current.kdjJSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'WR') {
+      const wrData = calculateWR(formattedData, 14);
+      if (seriesMap.current.wrSeries) {
+        seriesMap.current.wrSeries.setData(wrData);
+        seriesMap.current.wrSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'OBV') {
+      const obvData = calculateOBV(formattedData);
+      if (seriesMap.current.obvSeries) {
+        seriesMap.current.obvSeries.setData(obvData);
+        seriesMap.current.obvSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'CCI') {
+      const cciData = calculateCCI(formattedData, 20);
+      if (seriesMap.current.cciSeries) {
+        seriesMap.current.cciSeries.setData(cciData);
+        seriesMap.current.cciSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'DMI') {
+      const dmiData = calculateDMI(formattedData, 14);
+      if (seriesMap.current.dmiPdiSeries) {
+        seriesMap.current.dmiPdiSeries.setData(dmiData.pdi);
+        seriesMap.current.dmiMdiSeries.setData(dmiData.mdi);
+        seriesMap.current.dmiAdxSeries.setData(dmiData.adx);
+        seriesMap.current.dmiPdiSeries.applyOptions({ visible: true });
+        seriesMap.current.dmiMdiSeries.applyOptions({ visible: true });
+        seriesMap.current.dmiAdxSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'MFI') {
+      const mfiData = calculateMFI(formattedData, 14);
+      if (seriesMap.current.mfiSeries) {
+        seriesMap.current.mfiSeries.setData(mfiData);
+        seriesMap.current.mfiSeries.applyOptions({ visible: true });
+      }
+    } else if (subChartType === 'VOL') {
+      // VOL 已经在主图表中显示，这里可以显示成交量均线
+      [5, 10, 20].forEach((period, index) => {
+        if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
+          seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
+          seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
+        }
+      });
+    }
+  }, [subChartType, data]);
 
   // 响应 mainChartType 变化 - 重新计算并设置主图指标
   useEffect(() => {
-    if (!seriesMap.current.maSeries || !chartRef.current) return;
-
+    if (!seriesMap.current.maSeries || !chartRef.current || !data) return;
+  
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const maSeries = seriesMap.current.maSeries;
-
+  
     // 清除旧指标数据
     maSeries.forEach((series: any) => series.setData([]));
-
-    if (mainChartType === 'MA' || mainChartType === 'EMA') {
+  
+    if (mainChartType === 'MA' || mainChartType === 'EMA' || mainChartType === 'WMA' || mainChartType === 'SMMA') {
       const config = MAIN_INDICATORS[mainChartType];
       config.periods.forEach((period, index) => {
         if (maSeries[index]) {
@@ -554,13 +633,38 @@ export default function KLineChart({
         }
       });
     } else if (mainChartType === 'BOLL') {
-      // BOLL 需要特殊处理，这里暂时只显示中轨
       const bollData = calculateBoll(formattedData, 20);
       if (maSeries[0]) maSeries[0].setData(bollData.middle);
       if (maSeries[1]) maSeries[1].setData(bollData.upper);
       if (maSeries[2]) maSeries[2].setData(bollData.lower);
-      // 隐藏多余的线
       for (let i = 3; i < maSeries.length; i++) {
+        maSeries[i].setData([]);
+      }
+    } else if (mainChartType === 'VWAP') {
+      const vwapData = calculateVWAP(formattedData);
+      if (maSeries[0]) maSeries[0].setData(vwapData);
+      for (let i = 1; i < maSeries.length; i++) {
+        maSeries[i].setData([]);
+      }
+    } else if (mainChartType === 'SAR') {
+      const sarData = calculateSAR(formattedData);
+      if (maSeries[0]) maSeries[0].setData(sarData);
+      for (let i = 1; i < maSeries.length; i++) {
+        maSeries[i].setData([]);
+      }
+    } else if (mainChartType === 'ICHIMOKU') {
+      const ichimokuData = calculateIchimoku(formattedData);
+      if (maSeries[0]) maSeries[0].setData(ichimokuData.tenkan);
+      if (maSeries[1]) maSeries[1].setData(ichimokuData.kijun);
+      if (maSeries[2]) maSeries[2].setData(ichimokuData.spanA);
+      if (maSeries[3]) maSeries[3].setData(ichimokuData.spanB);
+      for (let i = 4; i < maSeries.length; i++) {
+        maSeries[i].setData([]);
+      }
+    } else if (mainChartType === 'BBI') {
+      const bbiData = calculateBBI(formattedData);
+      if (maSeries[0]) maSeries[0].setData(bbiData);
+      for (let i = 1; i < maSeries.length; i++) {
         maSeries[i].setData([]);
       }
     } else if (mainChartType === 'NONE') {
