@@ -418,8 +418,37 @@ export default function KLineChart({
     });
 
     candlestickSeries.setData(formattedData);
-    volumeSeries.setData(volumeData);
-    maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
+            volumeSeries.setData(volumeData);
+            // 根据初始 mainChartType 设置对应的指标数据
+            if (mainChartType === 'MA') {
+              maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
+            } else if (mainChartType === 'EMA') {
+              maPeriods.forEach((period, index) => maSeries[index].setData(calculateEMAForData(formattedData, period)));
+            } else if (mainChartType === 'WMA') {
+              maPeriods.forEach((period, index) => maSeries[index].setData(calculateWMA(formattedData, period)));
+            } else if (mainChartType === 'SMMA') {
+              maPeriods.forEach((period, index) => maSeries[index].setData(calculateSMMA(formattedData, period)));
+            } else if (mainChartType === 'BOLL') {
+              const bollData = calculateBoll(formattedData, 20);
+              if (maSeries[0]) maSeries[0].setData(bollData.middle);
+              if (maSeries[1]) maSeries[1].setData(bollData.upper);
+              if (maSeries[2]) maSeries[2].setData(bollData.lower);
+            } else if (mainChartType === 'VWAP') {
+              const vwapData = calculateVWAP(formattedData);
+              if (maSeries[0]) maSeries[0].setData(vwapData);
+            } else if (mainChartType === 'SAR') {
+              const sarData = calculateSAR(formattedData);
+              if (maSeries[0]) maSeries[0].setData(sarData);
+            } else if (mainChartType === 'ICHIMOKU') {
+              const ichimokuData = calculateIchimoku(formattedData);
+              if (maSeries[0]) maSeries[0].setData(ichimokuData.tenkan);
+              if (maSeries[1]) maSeries[1].setData(ichimokuData.kijun);
+              if (maSeries[2]) maSeries[2].setData(ichimokuData.spanA);
+              if (maSeries[3]) maSeries[3].setData(ichimokuData.spanB);
+            } else if (mainChartType === 'BBI') {
+              const bbiData = calculateBBI(formattedData);
+              if (maSeries[0]) maSeries[0].setData(bbiData);
+            }
 
     // 计算极值在图表中的位置（基于可视范围）
     const calculatePositions = () => {
