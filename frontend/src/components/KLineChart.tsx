@@ -461,15 +461,19 @@ export default function KLineChart({
     mfTrendLine.applyOptions({ visible: !isMacd });
 
     // 根据屏幕宽度设置 Y 轴可见性
-    const updateYAxisVisibility = () => {
+    const updateYAxisVisibility = useCallback(() => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      chart.priceScale('right').applyOptions({ visible: !mobile });
-      chart.priceScale('volume').applyOptions({ visible: !mobile });
-      chart.priceScale('subchart').applyOptions({ visible: !mobile });
-    };
+      if (chartRef.current) {
+        chartRef.current.priceScale('right').applyOptions({ visible: !mobile });
+        chartRef.current.priceScale('volume').applyOptions({ visible: !mobile });
+        chartRef.current.priceScale('subchart').applyOptions({ visible: !mobile });
+      }
+    }, []);
+    
+    // 初始设置 Y 轴可见性
     updateYAxisVisibility();
-
+    
     // 监听窗口大小变化
     const handleResize = () => {
       updateYAxisVisibility();
