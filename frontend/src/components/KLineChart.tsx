@@ -596,8 +596,8 @@ export default function KLineChart({
     <div className="w-full h-full relative bg-white">
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
 
-      {/* 主图指标配置按钮 - 右上角 */}
-      <div ref={mainMenuRef} className="absolute top-2 right-2 z-20">
+      {/* 主图指标配置按钮和数据显示 - 左上角 */}
+      <div ref={mainMenuRef} className="absolute top-2 left-2 md:left-4 z-20 flex items-center gap-2">
         <div className="relative">
           <button
             onClick={() => setMainMenuOpen(!mainMenuOpen)}
@@ -605,9 +605,9 @@ export default function KLineChart({
           >
             <SettingsIcon className="w-4 h-4 text-slate-500" />
           </button>
-          
+      
           {mainMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
               {Object.entries(MAIN_INDICATORS).map(([key, config]) => (
                 <button
                   key={key}
@@ -623,9 +623,18 @@ export default function KLineChart({
           )}
         </div>
       </div>
-
-      {/* 副图指标配置按钮 */}
-      <div ref={subMenuRef} className="absolute top-[calc(75%-1.5rem)] right-2 z-20">
+      
+      {/* 主图 MA 指标动态显示 - 紧跟配置按钮 */}
+      <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none" style={{ marginLeft: '48px' }}>
+        {maIndicators && Object.entries(maIndicators).map(([key, item]: [string, any]) => (
+          <span key={key} className="text-slate-500 mr-2">
+            {key}: <span className="font-mono" style={{ color: item.color }}>{item.value.toFixed(2)}</span>
+          </span>
+        ))}
+      </div>
+      
+      {/* 副图指标配置按钮 - 副图区域左上角 */}
+      <div ref={subMenuRef} className="absolute top-[calc(75%-1.5rem)] left-2 md:left-4 z-20">
         <div className="relative">
           <button
             onClick={() => setSubMenuOpen(!subMenuOpen)}
@@ -633,9 +642,9 @@ export default function KLineChart({
           >
             <SettingsIcon className="w-4 h-4 text-slate-500" />
           </button>
-          
+      
           {subMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+            <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
               {Object.entries(SUB_INDICATORS).map(([key, config]) => (
                 <button
                   key={key}
@@ -690,14 +699,6 @@ export default function KLineChart({
         </>
       )}
 
-      {/* 主图 MA 指标动态显示 */}
-      <div className="absolute top-2 left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
-        {maIndicators && Object.entries(maIndicators).map(([key, item]: [string, any]) => (
-          <span key={key} className="text-slate-500 mr-2">
-            {key}: <span className="font-mono" style={{ color: item.color }}>{item.value.toFixed(2)}</span>
-          </span>
-        ))}
-      </div>
 
       {/* 量能极值显示 */}
       {extremesPositions && extremesPositions.maxVolume && (
@@ -726,8 +727,8 @@ export default function KLineChart({
         ))}
       </div>
 
-      {/* MACD / 资金流 指标动态显示 */}
-      <div className="absolute top-[calc(75%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none">
+      {/* MACD / 资金流 指标动态显示 - 紧跟副图配置按钮 */}
+      <div className="absolute top-[calc(75%-1.2rem)] left-2 md:left-4 z-10 bg-transparent px-2 py-1 rounded-lg text-[9px] md:text-xs pointer-events-none" style={{ marginLeft: '48px' }}>
         {subChartType === 'MACD' && macdIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
             <span className="text-slate-500">DIF: <span className="font-mono text-[#ef4444]">{macdIndicators.dif.toFixed(2)}</span></span>
