@@ -223,7 +223,13 @@ export default function KLineChart({
   const [volumeMax, setVolumeMax] = useState<any>(null);
   const [extremesPositions, setExtremesPositions] = useState<any>(null);
   const [isMobile, setIsMobile] = useState(false);
-
+  
+  // 使用 ref 跟踪 mainChartType 的最新值（用于回调函数中）
+  const mainChartTypeRef = useRef(mainChartType);
+  useEffect(() => {
+    mainChartTypeRef.current = mainChartType;
+  }, [mainChartType]);
+  
   // 配置菜单状态
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [subMenuOpen, setSubMenuOpen] = useState(false);
@@ -514,11 +520,12 @@ export default function KLineChart({
         maSeries.forEach((series, index) => {
           const value = (param.seriesData.get(series) as any)?.value;
           if (value !== undefined && value !== 0) {
-            // 根据当前主图指标类型生成对应的标签
+            // 根据当前主图指标类型生成对应的标签（使用 ref 获取最新值）
             let label: string;
-            if (mainChartType === 'MA' || mainChartType === 'EMA') {
-              label = `${mainChartType}${maPeriods[index]}`;
-            } else if (mainChartType === 'BOLL') {
+            const currentType = mainChartTypeRef.current || 'MA';
+            if (currentType === 'MA' || currentType === 'EMA') {
+              label = `${currentType}${maPeriods[index]}`;
+            } else if (currentType === 'BOLL') {
               const bollLabels = ['中轨', '上轨', '下轨'];
               label = bollLabels[index] || `BOLL${index}`;
             } else {
