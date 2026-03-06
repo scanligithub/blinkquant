@@ -780,42 +780,45 @@ export default function KLineChart({
         seriesMap.current.wrSeries.applyOptions({ visible: true });
       }
     } else if (subChartType === 'OBV') {
-      const obvData = calculateOBV(formattedData);
-      if (seriesMap.current.obvSeries) {
-        seriesMap.current.obvSeries.setData(obvData);
-        seriesMap.current.obvSeries.applyOptions({ visible: true });
-      }
-    } else if (subChartType === 'CCI') {
-      const cciData = calculateCCI(formattedData, 20);
-      if (seriesMap.current.cciSeries) {
-        seriesMap.current.cciSeries.setData(cciData);
-        seriesMap.current.cciSeries.applyOptions({ visible: true });
-      }
-    } else if (subChartType === 'DMI') {
-      const dmiData = calculateDMI(formattedData, 14);
-      if (seriesMap.current.dmiPdiSeries) {
-        seriesMap.current.dmiPdiSeries.setData(dmiData.pdi);
-        seriesMap.current.dmiMdiSeries.setData(dmiData.mdi);
-        seriesMap.current.dmiAdxSeries.setData(dmiData.adx);
-        seriesMap.current.dmiPdiSeries.applyOptions({ visible: true });
-        seriesMap.current.dmiMdiSeries.applyOptions({ visible: true });
-        seriesMap.current.dmiAdxSeries.applyOptions({ visible: true });
-      }
-    } else if (subChartType === 'MFI') {
-      const mfiData = calculateMFI(formattedData, 14);
-      if (seriesMap.current.mfiSeries) {
-        seriesMap.current.mfiSeries.setData(mfiData);
-        seriesMap.current.mfiSeries.applyOptions({ visible: true });
-      }
-    } else if (subChartType === 'VOL') {
-      // VOL 已经在主图表中显示，这里可以显示成交量均线
-      [5, 10, 20].forEach((period, index) => {
-        if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
-          seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
-          seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
-        }
-      });
-    }
+              const obvData = calculateOBV(formattedData);
+              if (seriesMap.current.obvSeries) {
+                seriesMap.current.obvSeries.setData(obvData);
+                seriesMap.current.obvSeries.applyOptions({ visible: true });
+                if (chartRef.current) chartRef.current.timeScale().fitContent();
+              }
+            } else if (subChartType === 'CCI') {
+              const cciData = calculateCCI(formattedData, 20);
+              if (seriesMap.current.cciSeries) {
+                seriesMap.current.cciSeries.setData(cciData);
+                seriesMap.current.cciSeries.applyOptions({ visible: true });
+              }
+            } else if (subChartType === 'DMI') {
+              const dmiData = calculateDMI(formattedData, 14);
+              if (seriesMap.current.dmiPdiSeries) {
+                seriesMap.current.dmiPdiSeries.setData(dmiData.pdi);
+                seriesMap.current.dmiMdiSeries.setData(dmiData.mdi);
+                seriesMap.current.dmiAdxSeries.setData(dmiData.adx);
+                seriesMap.current.dmiPdiSeries.applyOptions({ visible: true });
+                seriesMap.current.dmiMdiSeries.applyOptions({ visible: true });
+                seriesMap.current.dmiAdxSeries.applyOptions({ visible: true });
+              }
+            } else if (subChartType === 'MFI') {
+              const mfiData = calculateMFI(formattedData, 14);
+              if (seriesMap.current.mfiSeries) {
+                seriesMap.current.mfiSeries.setData(mfiData);
+                seriesMap.current.mfiSeries.applyOptions({ visible: true });
+                if (chartRef.current) chartRef.current.timeScale().fitContent();
+              }
+            } else if (subChartType === 'VOL') {
+              // VOL 已经在主图表中显示，这里可以显示成交量均线
+              [5, 10, 20].forEach((period, index) => {
+                if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
+                  seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
+                  seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
+                }
+              });
+              if (chartRef.current) chartRef.current.timeScale().fitContent();
+            }
   }, [subChartType, data]);
 
   // 响应 mainChartType 变化 - 重新计算并设置主图指标
