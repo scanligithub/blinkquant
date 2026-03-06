@@ -1,6 +1,25 @@
 'use client';
 import { createChart, ColorType, IChartApi, LineData, Time } from 'lightweight-charts';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+
+// 内联 Settings 图标组件
+const SettingsIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
 
 function formatVolume(volume: number): string {
   if (volume >= 100000000) {
@@ -15,7 +34,7 @@ function formatVolume(volume: number): string {
 function formatMoney(value: number): string {
   if (!value || isNaN(value)) return '0.00';
   const absVal = Math.abs(value);
-  
+
   // 假设原始数据单位是 "元"
   if (absVal >= 100000000) {
     return (value / 100000000).toFixed(2) + '亿';
@@ -36,6 +55,52 @@ function calculateMA(data: any[], period: number): LineData[] {
   return result;
 }
 
+function calculateEMAForData(data: any[], period: number): LineData[] {
+  const closes = data.map(item => item.close);
+  const result: number[] = [];
+  const multiplier = 2 / (period + 1);
+  for (let i = 0; i < period - 1 && i < closes.length; i++) result.push(0);
+  if (closes.length < period) return data.map(d => ({ time: d.time, value: 0 }));
+
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += closes[i];
+  result.push(sum / period);
+
+  for (let i = period; i < closes.length; i++) {
+    const ema = (closes[i] - result[i - 1]) * multiplier + result[i - 1];
+    result.push(ema);
+  }
+
+  return data.map((d, i) => ({ time: d.time, value: result[i] || 0 }));
+}
+
+// 计算布林带
+function calculateBoll(data: any[], period: number = 20, multiplier: number = 2) {
+  const closes = data.map(item => item.close);
+  const upper: LineData[] = [];
+  const middle: LineData[] = [];
+  const lower: LineData[] = [];
+
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      upper.push({ time: data[i].time, value: 0 });
+      middle.push({ time: data[i].time, value: 0 });
+      lower.push({ time: data[i].time, value: 0 });
+      continue;
+    }
+
+    const slice = closes.slice(i - period + 1, i + 1);
+    const ma = slice.reduce((a, b) => a + b, 0) / period;
+    const std = Math.sqrt(slice.reduce((a, b) => a + Math.pow(b - ma, 2), 0) / period);
+
+    middle.push({ time: data[i].time, value: ma });
+    upper.push({ time: data[i].time, value: ma + multiplier * std });
+    lower.push({ time: data[i].time, value: ma - multiplier * std });
+  }
+
+  return { upper, middle, lower };
+}
+
 function calculateVolumeMA(data: any[], period: number): LineData[] {
   const result: LineData[] = [];
   for (let i = 0; i < data.length; i++) {
@@ -47,42 +112,25 @@ function calculateVolumeMA(data: any[], period: number): LineData[] {
   return result;
 }
 
-function calculateEMA(data: number[], period: number): number[] {
-  const result: number[] = [];
-  const multiplier = 2 / (period + 1);
-  for (let i = 0; i < period - 1 && i < data.length; i++) result.push(0);
-  if (data.length < period) return result;
-  
-  let sum = 0;
-  for (let i = 0; i < period; i++) sum += data[i];
-  result.push(sum / period);
-  
-  for (let i = period; i < data.length; i++) {
-    const ema = (data[i] - result[i - 1]) * multiplier + result[i - 1];
-    result.push(ema);
-  }
-  return result;
-}
-
 function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9) {
   const closes = data.map(item => item.close);
-  const fastEMA = calculateEMA(closes, fastPeriod);
-  const slowEMA = calculateEMA(closes, slowPeriod);
-  
+  const fastEMA = calculateEMAForData(data, fastPeriod).map(d => d.value);
+  const slowEMA = calculateEMAForData(data, slowPeriod).map(d => d.value);
+
   const macdLine: LineData[] = [];
   for (let i = slowPeriod - 1; i < data.length; i++) {
     const dif = fastEMA[i] - slowEMA[i];
     if (!isNaN(dif) && isFinite(dif)) macdLine.push({ time: data[i].time, value: dif });
   }
-  
+
   const macdValues = macdLine.map(item => item.value);
-  const signalEMA = calculateEMA(macdValues, signalPeriod);
+  const signalEMA = calculateEMAForData(macdLine.map((d, i) => ({ time: d.time, close: d.value })), signalPeriod).map(d => d.value);
   const signalLine: LineData[] = [];
   for (let i = signalPeriod - 1; i < macdLine.length; i++) {
     const dea = signalEMA[i];
     if (!isNaN(dea) && isFinite(dea)) signalLine.push({ time: macdLine[i].time, value: dea });
   }
-  
+
   const histogram: any[] = [];
   for (let i = 0; i < signalLine.length; i++) {
     const macdValue = macdLine[i + signalPeriod - 1]?.value || 0;
@@ -91,7 +139,7 @@ function calculateMACD(data: any[], fastPeriod: number = 12, slowPeriod: number 
     histogram.push({
       time: signalLine[i].time,
       value: diff * 2,
-      color: diff >= 0 ? '#ef4444' : '#22c55e', 
+      color: diff >= 0 ? '#ef4444' : '#22c55e',
     });
   }
   return { macdLine, signalLine, histogram };
@@ -109,11 +157,63 @@ function calculateRollingSum(data: any[], period: number): LineData[] {
   return result;
 }
 
-export default function KLineChart({ data, code, subChartType = 'MACD' }: { data: any, code: string, subChartType?: string }) {
+// 主图指标配置
+const MAIN_INDICATORS = {
+  MA: {
+    label: 'MA',
+    periods: [5, 10, 20, 30, 60, 120],
+    colors: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
+    calculate: calculateMA,
+  },
+  EMA: {
+    label: 'EMA',
+    periods: [5, 10, 20, 30, 60, 120],
+    colors: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
+    calculate: calculateEMAForData,
+  },
+  BOLL: {
+    label: 'BOLL',
+    periods: [20],
+    colors: { upper: '#FF6B6B', middle: '#45B7D1', lower: '#96CEB4' },
+    calculate: calculateBoll,
+  },
+  NONE: {
+    label: '无指标',
+    periods: [],
+    colors: [],
+    calculate: () => [],
+  },
+};
+
+// 副图指标配置
+const SUB_INDICATORS = {
+  MACD: { label: 'MACD' },
+  MF: { label: '资金流' },
+};
+
+interface KLineChartProps {
+  data: any;
+  code: string;
+  subChartType?: string;
+  onSubChartTypeChange?: (type: string) => void;
+  mainChartType?: string;
+  onMainChartTypeChange?: (type: string) => void;
+}
+
+export default function KLineChart({ 
+  data, 
+  code, 
+  subChartType = 'MACD',
+  onSubChartTypeChange,
+  mainChartType = 'MA',
+  onMainChartTypeChange
+}: KLineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesMap = useRef<{ [key: string]: any }>({});
-  
+  const seriesMap = useRef<{ 
+    [key: string]: any 
+  }>({});
+
   const [tooltip, setTooltip] = useState<any>(null);
   const [macdIndicators, setMacdIndicators] = useState<any>(null);
   const [mfIndicators, setMfIndicators] = useState<any>(null);
@@ -123,6 +223,42 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
   const [volumeMax, setVolumeMax] = useState<any>(null);
   const [extremesPositions, setExtremesPositions] = useState<any>(null);
   const [isMobile, setIsMobile] = useState(false);
+
+  // 配置菜单状态
+  const [mainMenuOpen, setMainMenuOpen] = useState(false);
+  const [subMenuOpen, setSubMenuOpen] = useState(false);
+  const mainMenuRef = useRef<HTMLDivElement>(null);
+  const subMenuRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (mainMenuRef.current && !mainMenuRef.current.contains(event.target as Node)) {
+        setMainMenuOpen(false);
+      }
+      if (subMenuRef.current && !subMenuRef.current.contains(event.target as Node)) {
+        setSubMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // 主图指标切换处理
+  const handleMainSelect = useCallback((type: string) => {
+    setMainMenuOpen(false);
+    if (onMainChartTypeChange) {
+      onMainChartTypeChange(type);
+    }
+  }, [onMainChartTypeChange]);
+
+  // 副图指标切换处理
+  const handleSubSelect = useCallback((type: string) => {
+    setSubMenuOpen(false);
+    if (onSubChartTypeChange) {
+      onSubChartTypeChange(type);
+    }
+  }, [onSubChartTypeChange]);
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
@@ -149,7 +285,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
 
     const maPeriods = [5, 10, 20, 30, 60, 120];
     const maColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'];
-    const maSeries = maPeriods.map((period, index) => 
+    const maSeries = maPeriods.map((period, index) =>
       chart.addLineSeries({ priceScaleId: 'right', color: maColors[index], lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
     );
 
@@ -159,7 +295,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
 
     const volumeMAPeriods = [5, 10, 20];
     const volumeMAColors = ['#FF6B6B', '#4ECDC4', '#45B7D1'];
-    const volumeMASeries = volumeMAPeriods.map((period, index) => 
+    const volumeMASeries = volumeMAPeriods.map((period, index) =>
       chart.addLineSeries({ priceScaleId: 'volume', color: volumeMAColors[index], lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
     );
 
@@ -175,33 +311,40 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       baseLineVisible: true,
       priceFormat: {
         type: 'custom',
-        // 【修改】：使用智能格式化器，而不是写死的除以1亿
         formatter: (price: number) => formatMoney(price)
       },
       lastValueVisible: false, priceLineVisible: false,
     });
 
-    // 【新增】：资金流 20日累计趋势折线 (黄色)
+    // 资金流 20 日累计趋势折线 (黄色)
     const mfTrendLine = chart.addLineSeries({
       priceScaleId: 'subchart',
-      color: '#f59e0b', // 琥珀黄
+      color: '#f59e0b',
       lineWidth: 2,
       lastValueVisible: false, priceLineVisible: false,
     });
 
-    seriesMap.current = { macdLine, signalLine, histogramSeries, mfSeries, mfTrendLine };
+    seriesMap.current = { 
+      macdLine, 
+      signalLine, 
+      histogramSeries, 
+      mfSeries, 
+      mfTrendLine,
+      maSeries,
+      volumeMASeries,
+    };
 
     chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.40 } });
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.60, bottom: 0.25 } });
-    chart.priceScale('subchart').applyOptions({ scaleMargins: { top: 0.75, bottom: 0.0 } }); 
+    chart.priceScale('subchart').applyOptions({ scaleMargins: { top: 0.75, bottom: 0.0 } });
 
     const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
     const volumeData = data.map((item: any) => ({ time: item.time, value: item.volume, color: item.close >= item.open ? '#ef4444' : '#22c55e' }));
-    
+
     // 主图极值和量能最大值将在可视范围内动态计算
     setPriceExtremes(null);
     setVolumeMax(null);
-    
+
     const mfData = data.map((item: any) => {
       const val = item.main_net || 0;
       return { time: item.time, value: val, color: val >= 0 ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)' };
@@ -210,30 +353,30 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     candlestickSeries.setData(formattedData);
     volumeSeries.setData(volumeData);
     maPeriods.forEach((period, index) => maSeries[index].setData(calculateMA(formattedData, period)));
-    
+
     // 计算极值在图表中的位置（基于可视范围）
     const calculatePositions = () => {
       if (!chartContainerRef.current) return;
-      
+
       const positions: any = {};
       const timeScale = chart.timeScale();
       const visibleRange = timeScale.getVisibleRange();
-      
+
       if (visibleRange) {
         const { from, to } = visibleRange;
-        
+
         // 主图最高价位置（基于可视范围）
         let maxPrice = -Infinity;
         let maxPriceTime: any = null;
-        
+
         // 主图最低价位置（基于可视范围）
         let minPrice = Infinity;
         let minPriceTime: any = null;
-        
+
         // 量能最大值位置（基于可视范围）
         let maxVol = 0;
         let maxVolTime: any = null;
-        
+
         formattedData.forEach(d => {
           const timeValue = typeof d.time === 'number' ? d.time : (d.time as any).businessDay || d.time;
           if (timeValue >= from && timeValue <= to) {
@@ -247,7 +390,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             }
           }
         });
-        
+
         volumeData.forEach(d => {
           const timeValue = typeof d.time === 'number' ? d.time : (d.time as any).businessDay || d.time;
           if (timeValue >= from && timeValue <= to) {
@@ -257,7 +400,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             }
           }
         });
-        
+
         // 主图最高价位置
         if (maxPriceTime !== null) {
           const x = timeScale.timeToCoordinate(maxPriceTime);
@@ -266,7 +409,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             positions.maxPrice = { x, y, value: maxPrice, label: '高' };
           }
         }
-        
+
         // 主图最低价位置
         if (minPriceTime !== null) {
           const x = timeScale.timeToCoordinate(minPriceTime);
@@ -275,7 +418,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             positions.minPrice = { x, y, value: minPrice, label: '低' };
           }
         }
-        
+
         // 量能最大值位置
         if (maxVolTime !== null) {
           const x = timeScale.timeToCoordinate(maxVolTime);
@@ -285,13 +428,13 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
           }
         }
       }
-      
+
       setExtremesPositions(positions);
     };
-    
+
     // 初始计算位置
     setTimeout(calculatePositions, 100);
-    
+
     // 监听图表尺寸变化和可见范围变化
     const handleVisibleRangeChange = () => {
       calculatePositions();
@@ -304,11 +447,11 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     macdLine.setData(macdData.macdLine);
     signalLine.setData(macdData.signalLine);
     histogramSeries.setData(macdData.histogram);
-    
+
     mfSeries.setData(mfData);
     // 渲染 20 日累计趋势线
     mfTrendLine.setData(calculateRollingSum(mfData, 20));
-    
+
     // 根据初始 subChartType 设置副图系列的可见性
     const isMacd = subChartType === 'MACD';
     macdLine.applyOptions({ visible: isMacd });
@@ -316,8 +459,8 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     histogramSeries.applyOptions({ visible: isMacd });
     mfSeries.applyOptions({ visible: !isMacd });
     mfTrendLine.applyOptions({ visible: !isMacd });
-    
-    // 根据屏幕宽度设置Y轴可见性
+
+    // 根据屏幕宽度设置 Y 轴可见性
     const updateYAxisVisibility = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
@@ -326,7 +469,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       chart.priceScale('subchart').applyOptions({ visible: !mobile });
     };
     updateYAxisVisibility();
-    
+
     // 监听窗口大小变化
     const handleResize = () => {
       updateYAxisVisibility();
@@ -342,7 +485,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
       if (cdData && typeof cdData === 'object' && 'open' in cdData) {
         const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
         const date = new Date(timeValue * 1000);
-        
+
         setTooltip({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
           open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
@@ -350,7 +493,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
           changePercent: (((cdData.close as number) - (cdData.open as number)) / (cdData.open as number)) * 100,
           position: param.point.x < (chartContainerRef.current?.clientWidth || 0) / 2 ? 'right' : 'left',
         });
-        
+
         setMacdIndicators({
           dif: (param.seriesData.get(macdLine) as any)?.value || 0,
           dea: (param.seriesData.get(signalLine) as any)?.value || 0,
@@ -362,7 +505,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
           trend: (param.seriesData.get(mfTrendLine) as any)?.value || 0,
         });
 
-        // 获取主图MA最新值
+        // 获取主图 MA 最新值
         const maValues: any = {};
         maSeries.forEach((series, index) => {
           const value = (param.seriesData.get(series) as any)?.value;
@@ -372,7 +515,7 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
         });
         setMaIndicators(maValues);
 
-        // 获取量能MA最新值
+        // 获取量能 MA 最新值
         const volumeMaValues: any = {};
         volumeMASeries.forEach((series, index) => {
           const value = (param.seriesData.get(series) as any)?.value;
@@ -399,22 +542,112 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
     };
   }, [data]);
 
+  // 响应 subChartType 变化
   useEffect(() => {
     if (!seriesMap.current.mfSeries) return;
-    
+
     const isMacd = subChartType === 'MACD';
     seriesMap.current.macdLine.applyOptions({ visible: isMacd });
     seriesMap.current.signalLine.applyOptions({ visible: isMacd });
     seriesMap.current.histogramSeries.applyOptions({ visible: isMacd });
-    
+
     seriesMap.current.mfSeries.applyOptions({ visible: !isMacd });
-    seriesMap.current.mfTrendLine.applyOptions({ visible: !isMacd }); // 同步控制趋势线显隐
+    seriesMap.current.mfTrendLine.applyOptions({ visible: !isMacd });
   }, [subChartType]);
+
+  // 响应 mainChartType 变化 - 重新计算并设置主图指标
+  useEffect(() => {
+    if (!seriesMap.current.maSeries || !chartRef.current) return;
+
+    const formattedData = data.map((item: any) => ({ time: item.time, open: item.open, high: item.high, low: item.low, close: item.close }));
+    const maSeries = seriesMap.current.maSeries;
+
+    // 清除旧指标数据
+    maSeries.forEach((series: any) => series.setData([]));
+
+    if (mainChartType === 'MA' || mainChartType === 'EMA') {
+      const config = MAIN_INDICATORS[mainChartType];
+      config.periods.forEach((period, index) => {
+        if (maSeries[index]) {
+          const dataPoints = config.calculate(formattedData, period);
+          maSeries[index].setData(dataPoints);
+        }
+      });
+    } else if (mainChartType === 'BOLL') {
+      // BOLL 需要特殊处理，这里暂时只显示中轨
+      const bollData = calculateBoll(formattedData, 20);
+      if (maSeries[0]) maSeries[0].setData(bollData.middle);
+      if (maSeries[1]) maSeries[1].setData(bollData.upper);
+      if (maSeries[2]) maSeries[2].setData(bollData.lower);
+      // 隐藏多余的线
+      for (let i = 3; i < maSeries.length; i++) {
+        maSeries[i].setData([]);
+      }
+    } else if (mainChartType === 'NONE') {
+      maSeries.forEach((series: any) => series.setData([]));
+    }
+  }, [mainChartType, data]);
 
   return (
     <div className="w-full h-full relative bg-white">
       <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
-      
+
+      {/* 主图指标配置按钮 - 右上角 */}
+      <div ref={mainMenuRef} className="absolute top-2 right-2 z-20">
+        <div className="relative">
+          <button
+            onClick={() => setMainMenuOpen(!mainMenuOpen)}
+            className="p-1.5 rounded-md hover:bg-slate-100 transition-colors bg-white/90 backdrop-blur shadow-sm"
+          >
+            <SettingsIcon className="w-4 h-4 text-slate-500" />
+          </button>
+          
+          {mainMenuOpen && (
+            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+              {Object.entries(MAIN_INDICATORS).map(([key, config]) => (
+                <button
+                  key={key}
+                  onClick={() => handleMainSelect(key)}
+                  className={`w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50 transition-colors ${
+                    mainChartType === key ? 'text-blue-600 font-medium bg-blue-50' : 'text-slate-600'
+                  }`}
+                >
+                  {config.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 副图指标配置按钮 */}
+      <div ref={subMenuRef} className="absolute top-[calc(75%-1.5rem)] right-2 z-20">
+        <div className="relative">
+          <button
+            onClick={() => setSubMenuOpen(!subMenuOpen)}
+            className="p-1.5 rounded-md hover:bg-slate-100 transition-colors bg-white/90 backdrop-blur shadow-sm"
+          >
+            <SettingsIcon className="w-4 h-4 text-slate-500" />
+          </button>
+          
+          {subMenuOpen && (
+            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[100px]">
+              {Object.entries(SUB_INDICATORS).map(([key, config]) => (
+                <button
+                  key={key}
+                  onClick={() => handleSubSelect(key)}
+                  className={`w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50 transition-colors ${
+                    subChartType === key ? 'text-blue-600 font-medium bg-blue-50' : 'text-slate-600'
+                  }`}
+                >
+                  {config.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* 主图极值显示 */}
       {extremesPositions && (
         <>
@@ -498,7 +731,6 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
             <span className="text-slate-500">MACD: <span className={`font-mono ${macdIndicators.macd >= 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>{macdIndicators.macd.toFixed(2)}</span></span>
           </div>
         )}
-        {/* 【修改】：调用 formatMoney 处理悬浮图例中的数值 */}
         {subChartType === 'MF' && mfIndicators && (
           <div className="flex items-center gap-1.5 md:gap-3">
             <span className="text-slate-500">
@@ -507,14 +739,14 @@ export default function KLineChart({ data, code, subChartType = 'MACD' }: { data
               </span>
             </span>
             <span className="text-slate-500">
-              20日趋势: <span className="font-mono text-[#f59e0b]">
+              20 日趋势: <span className="font-mono text-[#f59e0b]">
                 {formatMoney(mfIndicators.trend)}
               </span>
             </span>
           </div>
         )}
       </div>
-      
+
       {/* 主图悬浮框 */}
       {tooltip && (
         <div className={`absolute top-8 z-20 bg-white/95 backdrop-blur px-3 py-2 rounded-lg border border-slate-200 shadow-lg text-[10px] md:text-xs pointer-events-none ${

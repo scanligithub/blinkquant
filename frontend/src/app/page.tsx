@@ -26,9 +26,10 @@ function formatStockCode(code: string): string {
 
 export default function Home() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
-  const [timeframe, setTimeframe] = useState('D'); 
-  const [chartTimeframe, setChartTimeframe] = useState('D'); 
-  const [subChartType, setSubChartType] = useState('MACD'); // 新增：副图切换状态 (MACD / MF)
+  const [timeframe, setTimeframe] = useState('D');
+  const [chartTimeframe, setChartTimeframe] = useState('D');
+  const [subChartType, setSubChartType] = useState('MACD');
+  const [mainChartType, setMainChartType] = useState('MA'); // 新增：主图指标切换状态
   
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [showRotateHint, setShowRotateHint] = useState(false);
@@ -394,13 +395,7 @@ export default function Home() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* 新增：副图切换 Tabs */}
-                    <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
-                      <button onClick={() => setSubChartType('MACD')} className={`px-3 py-1 text-xs font-bold rounded-md ${subChartType === 'MACD' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'}`}>MACD</button>
-                      <button onClick={() => setSubChartType('MF')} className={`px-3 py-1 text-xs font-bold rounded-md ${subChartType === 'MF' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'}`}>资金流</button>
-                    </div>
-
-                    <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
+                  <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
                       <button
                         onClick={async () => {
                           if (!document.fullscreenElement) {
@@ -461,7 +456,14 @@ export default function Home() {
               <div className="flex-1 w-full h-full relative p-1">
                 {chartLoading && <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-sm flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div></div>}
                 {selectedStock ? (
-                  <KLineChart code={selectedStock.code} data={selectedStock.data} subChartType={subChartType} />
+                  <KLineChart
+                    code={selectedStock.code}
+                    data={selectedStock.data}
+                    subChartType={subChartType}
+                    onSubChartTypeChange={setSubChartType}
+                    mainChartType={mainChartType}
+                    onMainChartTypeChange={setMainChartType}
+                  />
                 ) : (
                   <div className="h-full flex items-center justify-center text-slate-400 bg-slate-50">选择股票查看图表</div>
                 )}
