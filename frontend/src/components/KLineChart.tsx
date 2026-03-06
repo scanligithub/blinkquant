@@ -393,13 +393,14 @@ export default function KLineChart({
       wrSeries,
       obvSeries,
       cciSeries,
-      dmiPdiSeries,
-      dmiMdiSeries,
-      dmiAdxSeries,
-      mfiSeries,
-      maSeries,
-      volumeMASeries,
-    };
+              dmiPdiSeries,
+              dmiMdiSeries,
+              dmiAdxSeries,
+              mfiSeries,
+              volumeSeries,
+              maSeries,
+              volumeMASeries,
+            };
 
     chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.40 } });
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.60, bottom: 0.25 } });
@@ -810,7 +811,11 @@ export default function KLineChart({
                 if (chartRef.current) chartRef.current.timeScale().fitContent();
               }
             } else if (subChartType === 'VOL') {
-                      // VOL 显示成交量均线在主图表的成交量区域
+                      // VOL 显示成交量柱状图和均线在主图表的成交量区域
+                      // 确保成交量柱状图可见
+                      if (seriesMap.current.volumeSeries) {
+                        seriesMap.current.volumeSeries.applyOptions({ visible: true });
+                      }
                       [5, 10, 20].forEach((period, index) => {
                         if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
                           seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
