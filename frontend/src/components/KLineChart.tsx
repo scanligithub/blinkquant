@@ -810,15 +810,15 @@ export default function KLineChart({
                 if (chartRef.current) chartRef.current.timeScale().fitContent();
               }
             } else if (subChartType === 'VOL') {
-              // VOL 已经在主图表中显示，这里可以显示成交量均线
-              [5, 10, 20].forEach((period, index) => {
-                if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
-                  seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
-                  seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
-                }
-              });
-              if (chartRef.current) chartRef.current.timeScale().fitContent();
-            }
+                      // VOL 显示成交量均线在主图表的成交量区域
+                      [5, 10, 20].forEach((period, index) => {
+                        if (seriesMap.current.volumeMASeries && seriesMap.current.volumeMASeries[index]) {
+                          seriesMap.current.volumeMASeries[index].setData(calculateVolumeMA(volumeData, period));
+                          seriesMap.current.volumeMASeries[index].applyOptions({ visible: true });
+                        }
+                      });
+                      if (chartRef.current) chartRef.current.timeScale().fitContent();
+                    }
   }, [subChartType, data]);
 
   // 响应 mainChartType 变化 - 重新计算并设置主图指标
