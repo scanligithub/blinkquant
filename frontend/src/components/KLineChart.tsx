@@ -182,9 +182,37 @@ export default function KLineChart({
   const [volumeMax, setVolumeMax] = useState<any>(null);
   const [extremesPositions, setExtremesPositions] = useState<any>(null);
   const [isMobile, setIsMobile] = useState(false);
-  
+  const isUnmounted = useRef(false);
+  const chartRefCleanup = useRef<IChartApi | null>(null);
+
   // 使用 ref 跟踪 mainChartType 的最新值（用于回调函数中）
   const mainChartTypeRef = useRef(mainChartType);
+
+  // 根据屏幕宽度设置 Y 轴可见性 - 定义为组件级回调
+  const updateYAxisVisibility = useCallback(() => {
+    if (isUnmounted.current || !chartRefCleanup.current) return;
+    const mobile = window.innerWidth < 768;
+    setIsMobile(mobile);
+    try {
+      chartRefCleanup.current.priceScale('right').applyOptions({ visible: !mobile });
+      chartRefCleanup.current.priceScale('volume').applyOptions({ visible: !mobile });
+      chartRefCleanup.current.priceScale('subchart').applyOptions({ visible: !mobile });
+    } catch (e) {
+      // 图表可能已被销毁，忽略错误
+      console.warn('YAxis visibility update failed:', e);
+    }
+  }, []);
+
+  // 监听窗口大小变化 - 定义为组件级回调
+  const handleResize = useCallback(() => {
+    if (isUnmounted.current || !chartRefCleanup.current) return;
+    try {
+      updateYAxisVisibility();
+      // calculatePositions 需要在 useEffect 内部定义，这里简化处理
+    } catch (e) {
+      console.warn('Resize handler failed:', e);
+    }
+  }, [updateYAxisVisibility]);
   useEffect(() => {
     mainChartTypeRef.current = mainChartType;
   }, [mainChartType]);
@@ -573,26 +601,16 @@ export default function KLineChart({
     mfSeries.applyOptions({ visible: !isMacd });
     mfTrendLine.applyOptions({ visible: !isMacd });
 
-    // 根据屏幕宽度设置 Y 轴可见性
-    const updateYAxisVisibility = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
-      if (chartRef.current) {
-        chartRef.current.priceScale('right').applyOptions({ visible: !mobile });
-        chartRef.current.priceScale('volume').applyOptions({ visible: !mobile });
-        chartRef.current.priceScale('subchart').applyOptions({ visible: !mobile });
-      }
-    };
-    
-    // 初始设置 Y 轴可见性
-    updateYAxisVisibility();
-    
-    // 监听窗口大小变化
-    const handleResize = () => {
-      updateYAxisVisibility();
-      calculatePositions();
-    };
+    // 存储图表引用到 cleanup ref
+    chartRefCleanup.current = chart;
+  
+    // 添加全局 resize 监听器
     window.addEventListener('resize', handleResize);
+  
+    // 初始设置 Y 轴可见性 - 使用 setTimeout 确保图表完全初始化
+    setTimeout(() => {
+      updateYAxisVisibility();
+    }, 0);
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
@@ -713,11 +731,17 @@ export default function KLineChart({
     resizeObserver.observe(chartContainerRef.current);
 
     return () => {
+      isUnmounted.current = true;
       resizeObserver.disconnect();
-      chart.remove();
       window.removeEventListener('resize', handleResize);
+      chartRefCleanup.current = null;
+      try {
+        chart.remove();
+      } catch (e) {
+        console.warn('Chart removal failed:', e);
+      }
     };
-  }, [data]);
+  }, [data, handleResize, updateYAxisVisibility]);
 
   // 响应 subChartType 变化 - 更新副图指标显示
   useEffect(() => {
