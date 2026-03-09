@@ -108,7 +108,8 @@ def _get_pinyin_initials(text: str) -> str:
     # full模式返回所有拼音，然后取首字母并拼接
     pinyin_list = pinyin(text, style=Style.FIRST_LETTER)
     initials = ''.join([item[0] for item in pinyin_list])
-    return initials.lower()
+    # 只保留字母字符，移除所有非字母字符（如空格、括号、数字等）
+    return ''.join(c for c in initials.lower() if c.isalpha())
 
 @router.get("/search")
 def search_stocks(q: str):

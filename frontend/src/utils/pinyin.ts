@@ -16,5 +16,6 @@ export function getPinyinInitials(text: string): string {
   const initials = pinyin(text, { pattern: 'first', toneType: 'none', type: 'array' })
     .join('')
     .toLowerCase();
-  return initials;
+  // 只保留字母字符，移除所有非字母字符（如空格、括号、数字等）
+  return initials.replace(/[^a-z]/g, '');
 }
