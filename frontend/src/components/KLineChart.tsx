@@ -256,6 +256,9 @@ export default function KLineChart({
   useEffect(() => {
     if (!chartContainerRef.current || !data) return;
 
+    // 重置卸载标志（每次重新创建图表时）
+    isUnmounted.current = false;
+
     // 检测是否为移动端
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
@@ -607,10 +610,8 @@ export default function KLineChart({
     // 添加全局 resize 监听器
     window.addEventListener('resize', handleResize);
   
-    // 初始设置 Y 轴可见性 - 使用 setTimeout 确保图表完全初始化
-    setTimeout(() => {
-      updateYAxisVisibility();
-    }, 0);
+    // 初始设置 Y 轴可见性 - 直接调用，因为图表已创建完成
+    updateYAxisVisibility();
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || !param.seriesData.size) { setTooltip(null); return; }
