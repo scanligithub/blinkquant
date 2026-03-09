@@ -10,6 +10,7 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import { getPinyinInitials } from '../utils/pinyin';
+import { cleanSearchInput } from '../utils/cleanInput';
 
 const TIMEFRAMES = [
   { label: '日', value: 'D' },
@@ -135,25 +136,27 @@ export default function Home() {
     }
     setSearchLoading(true);
     const handler = setTimeout(() => {
-      const qLower = searchQuery.toLowerCase();
-      const qPinyin = getPinyinInitials(searchQuery);
+      // 清理搜索关键字，去除空格、标点等干扰字符
+      const cleanedQuery = cleanSearchInput(searchQuery);
+      const qLower = cleanedQuery;
+      const qPinyin = getPinyinInitials(cleanedQuery);
 
       const scoredResults = stockList.map(stock => {
         const { code, name } = stock;
         if (!name || !name.trim() || code.includes('.000')) return { ...stock, score: 0 };
 
-        const nameLower = name.toLowerCase();
-        const codeLower = code.toLowerCase();
+        const nameClean = name.trim().toLowerCase();
+        const codeClean = code.trim().toLowerCase();
         const namePinyin = getPinyinInitials(name);
         let score = 0;
 
-        if (codeLower === qLower || nameLower === qLower) score += 1000;
-        if (codeLower.startsWith(qLower)) score += 100;
+        if (codeClean === qLower || nameClean === qLower) score += 1000;
+        if (codeClean.startsWith(qLower)) score += 100;
         if (namePinyin.startsWith(qPinyin)) score += 80;
-        if (nameLower.startsWith(qLower)) score += 80;
-        if (codeLower.includes(qLower)) score += 10;
+        if (nameClean.startsWith(qLower)) score += 80;
+        if (codeClean.includes(qLower)) score += 10;
         if (namePinyin.includes(qPinyin)) score += 5;
-        if (nameLower.includes(qLower)) score += 5;
+        if (nameClean.includes(qLower)) score += 5;
 
         return { ...stock, score };
       });
