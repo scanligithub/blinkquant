@@ -83,10 +83,13 @@ class DataManager:
         lazy_frames = []
         
         for f in stock_files:
-            path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
-            # 构建惰性分片逻辑
-            lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
-            lazy_frames.append(lf)
+          path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./dataCache")
+          # 构建惰性分片逻辑 - 使用确定性路由
+          # 提取股票代码中的数字部分进行取余（如 "sh.600519" -> 600519 % 3）
+          # 确保无论节点如何重启，同一只股票的所有年份数据绝对落在同一个 Node 上！
+          node_filter = (pl.col("code").str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
+          lf = pl.scan_parquet(path).filter(node_filter)
+          lazy_frames.append(lf)
             
         if lazy_frames:
             logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
@@ -145,35 +148,45 @@ class DataManager:
             ])
 
     def _apply_forward_adjustment(self):
-        """执行前复权处理：OHLC * (当日复权因子 / 最新复权因子)，Volume / (当日复权因子 / 最新复权因子)"""
-        if self.df_daily is None: return
-
-        if "adjustFactor" not in self.df_daily.columns:
-            logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
-            return
-
-        logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
-
-        # 强制按代码和时间升序排序，确保 .last() 绝对是最新的一天！
-        self.df_daily = self.df_daily.sort(["code", "date"])
-
-        # 计算每只股票最新的复权因子
-        # 使用 sort_by("date").last().over("code") 显式声明时间轴排序，确保 100% 确定性
-        qfq_expr = pl.col("adjustFactor") / pl.col("adjustFactor").sort_by("date").last().over("code")
-
-        # 应用前复权：
-        # - OHLC 乘以复权系数（价格与复权因子成正比）
-        # - Volume 除以复权系数（成交量与复权因子成反比，除权后股数增加）
-        # - Amount 无需处理（金额 = 价格 × 股数，复权前后乘积不变）
-        self.df_daily = self.df_daily.with_columns([
-            (pl.col("open") * qfq_expr).alias("open"),
-            (pl.col("high") * qfq_expr).alias("high"),
-            (pl.col("low") * qfq_expr).alias("low"),
-            (pl.col("close") * qfq_expr).alias("close"),
-            (pl.col("volume") / qfq_expr).alias("volume"),
-        ])
-
-        gc.collect()
+      """执行前复权处理，增加极强的数据鲁棒性防止价格断崖"""
+      if self.df_daily is None: return
+      if "adjustFactor" not in self.df_daily.columns:
+        logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
+        return
+    
+      logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
+    
+      # 1. 强制按代码和时间升序排序，这是时间序列计算的基础
+      self.df_daily = self.df_daily.sort(["code", "date"])
+    
+      # 2. 清洗复权因子：将 <=0 的异常值视为 null，并用前后有效值填补，终极兜底为 1.0
+      adj_col = (
+        pl.when(pl.col("adjustFactor") <= 0)
+        .then(None)
+        .otherwise(pl.col("adjustFactor"))
+        .forward_fill()
+        .backward_fill()
+        .fill_null(1.0)
+      )
+    
+      # 3. 稳健地获取每只股票的最新复权因子
+      latest_adj = adj_col.last().over("code")
+    
+      # 4. 计算复权系数 (防止任何可能的除以 0 情况)
+      qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
+    
+      # 5. 应用前复权并严格定义数据类型
+      self.df_daily = self.df_daily.with_columns([
+        (pl.col("open") * qfq_expr).cast(pl.Float32).alias("open"),
+        (pl.col("high") * qfq_expr).cast(pl.Float32).alias("high"),
+        (pl.col("low") * qfq_expr).cast(pl.Float32).alias("low"),
+        (pl.col("close") * qfq_expr).cast(pl.Float32).alias("close"),
+        (pl.col("volume") / qfq_expr).cast(pl.Float64).alias("volume"),
+        # 将清洗后的安全复权因子覆写回去，防止下游引擎被毒害
+        adj_col.cast(pl.Float32).alias("adjustFactor")
+      ])
+    
+      gc.collect()
 
     def _optimize_memory(self, df: pl.DataFrame, name: str):
         """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
