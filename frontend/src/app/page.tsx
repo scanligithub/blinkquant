@@ -22,7 +22,8 @@ function formatStockCode(code: string): string {
   const numericCode = code.replace(/[^0-9]/g, '');
   if (numericCode.startsWith('6')) return `sh.${numericCode}`;
   else if (numericCode.startsWith('0') || numericCode.startsWith('3')) return `sz.${numericCode}`;
-  return code; 
+  else if (numericCode.startsWith('4') || numericCode.startsWith('8') || numericCode.startsWith('9')) return `bj.${numericCode}`;
+  return code;
 }
 
 export default function Home() {
@@ -112,18 +113,32 @@ export default function Home() {
 
   useEffect(() => {
     const loadStockList = async () => {
-      const cached = localStorage.getItem('stockList');
-      if (cached) {
-        setStockList(JSON.parse(cached));
-        return;
+      const CACHE_KEY = 'stockListCache_v1';
+      const CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 小时过期
+      const cachedStr = localStorage.getItem(CACHE_KEY);
+      if (cachedStr) {
+        try {
+          const cachedData = JSON.parse(cachedStr);
+          // 检查是否在有效期内
+          if (Date.now() - cachedData.timestamp < CACHE_EXPIRY_MS) {
+            setStockList(cachedData.list);
+            return;
+          }
+        } catch (e) {
+          // 解析失败或格式不对，直接跳过走网络请求
+          console.warn('Cache parse failed, fetching fresh list');
+        }
       }
       try {
         const res = await fetch('/api/stock-list');
         if (!res.ok) throw new Error('Failed to load stock list');
         const data = await res.json();
         setStockList(data);
-        localStorage.setItem('stockList', JSON.stringify(data));
-      } catch (err) {}
+        // 存入带时间戳的对象
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), list: data }));
+      } catch (err) {
+        console.error('Failed to load stock list', err);
+      }
     };
     loadStockList();
   }, []);
@@ -143,7 +158,7 @@ export default function Home() {
 
       const scoredResults = stockList.map(stock => {
         const { code, name } = stock;
-        if (!name || !name.trim() || code.includes('.000')) return { ...stock, score: 0 };
+        if (!name || !name.trim()) return { ...stock, score: 0 };
 
         const nameClean = name.trim().toLowerCase();
         const codeClean = code.trim().toLowerCase();
