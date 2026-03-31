@@ -183,4 +183,8 @@ def get_node_status():
 
 @router.get("/health")
 def health_check():
-    return {"status": "healthy" if data_manager.df_daily is not None else "loading"}
+    # 只要 Uvicorn 跑起来就回 200，防止 HF 杀掉进程
+    # 但返回具体状态让前端感知
+    if data_manager.df_daily is not None:
+        return {"status": "healthy"}
+    return {"status": "initializing"}

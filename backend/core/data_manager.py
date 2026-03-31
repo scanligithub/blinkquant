@@ -1,8 +1,11 @@
 import os
 import gc
+import time
 import polars as pl
 import psycopg2
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from .data_types import AShareDataSchema
 from huggingface_hub import hf_hub_download, list_repo_files
 
@@ -63,6 +66,148 @@ class DataManager:
             
         except Exception as e:
             logger.error(f"Critical Load Error: {e}", exc_info=True)
+
+    async def async_load_data(self):
+        """异步、并行的加载逻辑"""
+        start_time = time.time()
+        try:
+            logger.info(f"🚀 Node {self.node_index}: Background Data Load Started...")
+            # 1. 并行下载/加载原始数据
+            await self._load_raw_parquet_async()
+            # 2. 以下逻辑涉及 Polars 计算，消耗 CPU，同步执行
+            self._apply_forward_adjustment()
+            self._optimize_memory(self.df_daily, "df_daily")
+            self._optimize_memory(self.df_sector_daily, "df_sector_daily")
+            self._resample_all()
+            self._evolve_from_db()
+            gc.collect()
+            logger.info(f"✅ Node {self.node_index}: Load completed in {time.time() - start_time:.2f}s")
+        except Exception as e:
+            logger.error(f"❌ Background Load Failed: {e}", exc_info=True)
+
+    async def _load_raw_parquet_async(self):
+        """异步并行加载原始数据"""
+        logger.info(f"Node {self.node_index}: Starting async _load_raw_parquet...")
+        all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
+
+        # --- 0. 股票列表加载 (用于股票名称映射) ---
+        stock_list_file = [f for f in all_files if "stock_list.parquet" in f]
+        if stock_list_file:
+            def download_stock_list():
+                return hf_hub_download(
+                    repo_id=self.repo_id,
+                    filename=stock_list_file[-1],
+                    repo_type="dataset",
+                    token=self.hf_token,
+                    cache_dir="./data_cache",
+                    resume_download=True
+                )
+            loop = asyncio.get_event_loop()
+            path = await loop.run_in_executor(None, download_stock_list)
+            stock_list_df = pl.read_parquet(path)
+            self.code_to_name = {row[0]: row[1] for row in stock_list_df.select(["code", "code_name"]).iter_rows()}
+            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name from 'code_name' column with {len(self.code_to_name)} entries.")
+        else:
+            logger.warning(f"Node {self.node_index}: stock_list.parquet not found, stock name search may not work.")
+
+        # --- 1. 股票日线加载 - 并行下载 ---
+        stock_files = sorted([f for f in all_files if "stock_kline_" in f])
+
+        def download_one(filename, cache_dir="./dataCache"):
+            return hf_hub_download(
+                repo_id=self.repo_id,
+                filename=filename,
+                repo_type="dataset",
+                token=self.hf_token,
+                cache_dir=cache_dir,
+                resume_download=True
+            )
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # 并行下载所有股票文件
+            download_tasks = [
+                loop.run_in_executor(executor, download_one, f, "./dataCache")
+                for f in stock_files
+            ]
+            paths = await asyncio.gather(*download_tasks)
+
+            lazy_frames = []
+            for path in paths:
+                node_filter = (pl.col("code").str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
+                lf = pl.scan_parquet(path).filter(node_filter)
+                lazy_frames.append(lf)
+
+            if lazy_frames:
+                logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
+                try:
+                    self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
+                    self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+                    logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
+                except Exception as e:
+                    logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
+            else:
+                logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
+
+        # --- 2. 资金流数据加载与合并 - 并行下载 ---
+        money_flow_files = sorted([f for f in all_files if "stock_money_flow_" in f])
+        if money_flow_files:
+            money_flow_tasks = [
+                loop.run_in_executor(executor, download_one, f, "./data_cache")
+                for f in money_flow_files
+            ]
+            money_flow_paths = await asyncio.gather(*money_flow_tasks)
+
+            money_flow_lazy_frames = []
+            for path in money_flow_paths:
+                lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
+                money_flow_lazy_frames.append(lf)
+
+            if money_flow_lazy_frames:
+                try:
+                    df_money_flow = pl.concat(money_flow_lazy_frames).collect(streaming=True)
+                    df_money_flow = df_money_flow.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+
+                    if self.df_daily is not None and not self.df_daily.is_empty():
+                        self.df_daily = self.df_daily.join(df_money_flow, on=["date", "code"], how="left")
+                    else:
+                        self.df_daily = df_money_flow
+                except Exception as e:
+                    logger.error(f"Node {self.node_index}: Error collecting or merging money flow data: {e}", exc_info=True)
+
+        # --- 3. 板块行情加载 - 并行下载 ---
+        sector_files = sorted([f for f in all_files if "sector_kline_" in f])
+        if sector_files:
+            sector_tasks = [
+                loop.run_in_executor(executor, download_one, f, "./data_cache")
+                for f in sector_files
+            ]
+            sector_paths = await asyncio.gather(*sector_tasks)
+
+            s_dfs = []
+            for path in sector_paths:
+                s_dfs.append(pl.read_parquet(path))
+
+            if s_dfs:
+                self.df_sector_daily = pl.concat(s_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+
+        # --- 4. 股票 - 板块映射表加载 ---
+        map_file = [f for f in all_files if "sector_constituents" in f]
+        if map_file:
+            def download_map():
+                return hf_hub_download(
+                    repo_id=self.repo_id,
+                    filename=map_file[-1],
+                    repo_type="dataset",
+                    token=self.hf_token,
+                    cache_dir="./data_cache",
+                    resume_download=True
+                )
+            path = await loop.run_in_executor(executor, download_map)
+            self.df_mapping = pl.read_parquet(path).select([
+                pl.col("stock_code").alias("code"),
+                pl.col("sector_code")
+            ])
 
     def _load_raw_parquet(self):
         logger.info(f"Node {self.node_index}: Starting _load_raw_parquet...")
