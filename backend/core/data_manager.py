@@ -25,6 +25,8 @@ class DataManager:
         self.df_monthly = None
         self.code_to_name = {}
         self.df_sector_daily = None
+        # 显式初始化 df_mapping 为 None，防止 AttributeError
+        self.df_mapping = None
 
         # 指标计算算子映射
         self.INDICATOR_MAP = {

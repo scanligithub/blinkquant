@@ -60,15 +60,19 @@ class SelectionEngine:
         lf = df.lazy()
 
         # 3. 关联板块 (Safe Join)
-        if data_manager.df_mapping is not None and s_df is not None:
+        # 安全获取 df_mapping，如果不存在则返回 None，避免 AttributeError
+        df_mapping = getattr(data_manager, 'df_mapping', None)
+        if df_mapping is not None and s_df is not None:
             try:
                 sector_exprs = [pl.col("date"), pl.col("code").alias("sector_code"), pl.col("close").alias("s_close")]
-                if "pctChg" in s_df.columns: sector_exprs.append(pl.col("pctChg").alias("s_pctChg"))
-                
+                if "pctChg" in s_df.columns:
+                    sector_exprs.append(pl.col("pctChg").alias("s_pctChg"))
                 s_lazy = s_df.lazy().select(sector_exprs)
-                lf = (lf.join(data_manager.df_mapping.lazy(), on="code", how="left")
-                        .join(s_lazy, on=["date", "sector_code"], how="left"))
-            except: pass
+                lf = (lf.join(df_mapping.lazy(), on="code", how="left")
+                      .join(s_lazy, on=["date", "sector_code"], how="left"))
+            except Exception as e:
+                logger.warning(f"Sector join failed: {e}")
+                pass
 
         try:
             # 4. 解析与计算 (Parser 内部直接引用统一列名)
