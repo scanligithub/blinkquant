@@ -159,8 +159,8 @@ class DataManager:
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
         self.df_daily = self.df_daily.sort(["code", "date"])
 
-        # 复权逻辑优化：使用 Over
-        adj_col = pl.col("adjustFactor").fill_null(1.0).forward_fill().over("code")
+        # 复权逻辑修复：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
+        adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
 
