@@ -54,6 +54,13 @@ class DataManager:
             # 最终清理，确保释放所有临时字节流
             del all_data_map
             gc.collect()
+            # 新增：调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
+            try:
+                import ctypes
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+                logger.info(f"Node {self.node_index}: Forced libc malloc_trim successfully.")
+            except Exception as e:
+                logger.warning(f"Node {self.node_index}: malloc_trim failed: {e}")
             logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
         except Exception as e:
             logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
