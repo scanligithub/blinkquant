@@ -155,15 +155,51 @@ class DataManager:
         """执行前复权处理"""
         if self.df_daily is None or "adjustFactor" not in self.df_daily.columns:
             return
-
+    
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
+    
+        # ======================= BEGIN DIAGNOSTIC PROBE =======================
+        # 在执行任何计算前，打印指定股票在跨年期间最原始的复权因子
+        # 注意：我们使用 2023/2024 年，因为 K 线图上的 '2026' 是前端显示错误
+        try:
+            # 你可以修改这里的代码和日期来调试不同的股票
+            debug_stock_code = "sh.603489"  # 八方股份（向下断层）
+            # debug_stock_code = "sz.002812"  # 恩捷股份（向上断层）
+            start_debug_date = "2023-12-22"
+            end_debug_date = "2024-01-10"
+    
+            # 从 self.df_daily 中过滤出原始数据
+            debug_data = (
+                self.df_daily
+                .filter(
+                    (pl.col("code") == debug_stock_code) &
+                    (pl.col("date") >= pl.lit(start_debug_date).str.to_date()) &
+                    (pl.col("date") <= pl.lit(end_debug_date).str.to_date())
+                )
+                .select(["date", "code", "close", "adjustFactor"])  # 只看我们关心的列
+                .sort("date")
+            )
+    
+            # 在日志中清晰地打印出来
+            logger.info("=" * 25 + " RAW DATA VERIFICATION " + "=" * 25)
+            logger.info(f"Checking raw factors for {debug_stock_code} from {start_debug_date} to {end_debug_date}:")
+            if debug_data.is_empty():
+                logger.warning(f"DIAGNOSTIC: No data found for {debug_stock_code} in the specified date range.")
+            else:
+                # Polars 的默认打印格式非常适合日志查看
+                logger.info("\n" + str(debug_data))
+            logger.info("=" * 28 + " END VERIFICATION " + "=" * 28)
+        except Exception as e:
+            logger.error(f"DIAGNOSTIC PROBE FAILED: {e}", exc_info=True)
+        # ======================== END DIAGNOSTIC PROBE ========================
+    
         self.df_daily = self.df_daily.sort(["code", "date"])
-
+    
         # 复权逻辑修复：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
         adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
-
+    
         self.df_daily = self.df_daily.with_columns([
             (pl.col("open") * qfq_expr).cast(pl.Float32),
             (pl.col("high") * qfq_expr).cast(pl.Float32),
