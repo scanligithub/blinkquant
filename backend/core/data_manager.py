@@ -165,7 +165,7 @@ class DataManager:
             # 你可以修改这里的代码和日期来调试不同的股票
             debug_stock_code = "sh.600901"  # 八方股份（向下断层）
             # debug_stock_code = "sz.002812"  # 恩捷股份（向上断层）
-            start_debug_date = "2023-06-22"
+            start_debug_date = "2023-06-26"
             end_debug_date = "2023-07-10"
     
             # 从 self.df_daily 中过滤出原始数据
