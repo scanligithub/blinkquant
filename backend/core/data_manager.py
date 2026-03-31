@@ -1,15 +1,15 @@
 import os
 import gc
 import time
-import polars as pl
-import psycopg2
-import logging
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from .data_types import AShareDataSchema
-from huggingface_hub import hf_hub_download, list_repo_files
+import io
+import logging
+import httpx
+import polars as pl
+from huggingface_hub import list_repo_files
 
 logger = logging.getLogger(__name__)
+
 
 class DataManager:
     def __init__(self):
@@ -19,20 +19,13 @@ class DataManager:
         self.postgres_url = os.getenv("POSTGRES_URL")
         self.repo_id = "scanli/stocka-data"
 
-        # 行情数据表
+        # 内存中的数据对象
         self.df_daily = None
         self.df_weekly = None
         self.df_monthly = None
         self.code_to_name = {}
-        
-        # 板块数据表
         self.df_sector_daily = None
-        self.df_sector_weekly = None
-        self.df_sector_monthly = None
-        
-        # 关系映射表
-        self.df_mapping = None
-        
+
         # 指标计算算子映射
         self.INDICATOR_MAP = {
             'MA': lambda col, p: col.rolling_mean(window_size=p).over("code"),
@@ -41,393 +34,160 @@ class DataManager:
             'ROC': lambda col, p: ((col / col.shift(p).over("code")) - 1) * 100
         }
 
-    def load_data(self):
-        """启动分布式数据加载与预处理流程"""
-        try:
-            # 1. 原始数据加载与分片
-            self._load_raw_parquet()
-            
-            # 2. 执行前复权 (必须在重采样和内存优化之前)
-            self._apply_forward_adjustment()
-            
-            # 3. 内存类型优化 (Float64 -> Float32)
-            self._optimize_memory(self.df_daily, "df_daily")
-            self._optimize_memory(self.df_sector_daily, "df_sector_daily")
-            
-            # 4. 时间周期重采样 (W/M)
-            self._resample_all()
-            
-            # 5. 指标自进化挂载 (从 DB 加载热点指标)
-            self._evolve_from_db()
-            
-            # 6. 最终内存回收
-            gc.collect()
-            logger.info(f"Node {self.node_index}: Boot sequence complete.")
-            
-        except Exception as e:
-            logger.error(f"Critical Load Error: {e}", exc_info=True)
-
     async def async_load_data(self):
-        """异步、并行的加载逻辑"""
+        """完全基于 RAM 的异步加载主入口"""
         start_time = time.time()
         try:
-            logger.info(f"🚀 Node {self.node_index}: Background Data Load Started...")
-            # 1. 并行下载/加载原始数据
-            await self._load_raw_parquet_async()
-            # 2. 以下逻辑涉及 Polars 计算，消耗 CPU，同步执行
-            self._apply_forward_adjustment()
-            self._optimize_memory(self.df_daily, "df_daily")
-            self._optimize_memory(self.df_sector_daily, "df_sector_daily")
-            self._resample_all()
-            self._evolve_from_db()
+            logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
+            # 1. 并发下载所有文件内容到内存
+            all_data_map = await self._download_all_to_ram()
+            # 2. 从内存字节流解析并分片加载
+            self._process_ram_data(all_data_map)
+            # 3. 数据预处理 (CPU 密集型)
+            if self.df_daily is not None:
+                self._apply_forward_adjustment()
+                self._optimize_memory(self.df_daily, "df_daily")
+                self._optimize_memory(self.df_sector_daily, "df_sector_daily")
+                self._resample_all()
+            # 最终清理，确保释放所有临时字节流
+            del all_data_map
             gc.collect()
-            logger.info(f"✅ Node {self.node_index}: Load completed in {time.time() - start_time:.2f}s")
+            logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
         except Exception as e:
-            logger.error(f"❌ Background Load Failed: {e}", exc_info=True)
+            logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
 
-    async def _load_raw_parquet_async(self):
-        """异步并行加载原始数据"""
-        logger.info(f"Node {self.node_index}: Starting async _load_raw_parquet...")
+    async def _download_all_to_ram(self):
+        """并发获取所有 Parquet 文件的字节流"""
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
+        data_files = [f for f in all_files if f.endswith(".parquet")]
 
-        # --- 0. 股票列表加载 (用于股票名称映射) ---
-        stock_list_file = [f for f in all_files if "stock_list.parquet" in f]
+        # 构建下载 URL (Hugging Face 官方标准格式)
+        base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
+        headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
+
+        data_map = {}
+
+        # 限制并发数为 10，防止被 HF 屏蔽
+        semaphore = asyncio.Semaphore(10)
+
+        async def download_file(client, filename):
+            async with semaphore:
+                url = base_url + filename
+                response = await client.get(url, timeout=60.0)
+                response.raise_for_status()
+                return filename, response.content
+
+        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            tasks = [download_file(client, f) for f in data_files]
+            results = await asyncio.gather(*tasks)
+
+        for fname, content in results:
+            data_map[fname] = content
+
+        return data_map
+
+    def _process_ram_data(self, data_map):
+        """解析内存中的字节流并按节点索引分片"""
+        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames...")
+
+        # 1. 股票列表 (全量)
+        stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
         if stock_list_file:
-            def download_stock_list():
-                return hf_hub_download(
-                    repo_id=self.repo_id,
-                    filename=stock_list_file[-1],
-                    repo_type="dataset",
-                    token=self.hf_token,
-                    cache_dir="./data_cache",
-                    resume_download=True
-                )
-            loop = asyncio.get_event_loop()
-            path = await loop.run_in_executor(None, download_stock_list)
-            stock_list_df = pl.read_parquet(path)
-            self.code_to_name = {row[0]: row[1] for row in stock_list_df.select(["code", "code_name"]).iter_rows()}
-            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name from 'code_name' column with {len(self.code_to_name)} entries.")
-        else:
-            logger.warning(f"Node {self.node_index}: stock_list.parquet not found, stock name search may not work.")
+            sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
+            self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
 
-        # --- 1. 股票日线加载 - 并行下载 ---
-        stock_files = sorted([f for f in all_files if "stock_kline_" in f])
+        # 2. 股票日线 (分片加载)
+        kline_files = sorted([f for f in data_map if "stock_kline_" in f])
+        kline_dfs = []
+        for f in kline_files:
+            # 读取整个文件到 Polars 后立即过滤，减少内存峰值
+            df = pl.read_parquet(io.BytesIO(data_map[f]))
+            # 确定性分片：code 数字部分 % 3
+            node_filter = (df["code"].str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
+            kline_dfs.append(df.filter(node_filter))
 
-        def download_one(filename, cache_dir="./dataCache"):
-            return hf_hub_download(
-                repo_id=self.repo_id,
-                filename=filename,
-                repo_type="dataset",
-                token=self.hf_token,
-                cache_dir=cache_dir,
-                resume_download=True
-            )
+        if kline_dfs:
+            self.df_daily = pl.concat(kline_dfs)
+            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
 
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            # 并行下载所有股票文件
-            download_tasks = [
-                loop.run_in_executor(executor, download_one, f, "./dataCache")
-                for f in stock_files
-            ]
-            paths = await asyncio.gather(*download_tasks)
+        # 3. 资金流 (分片并合并)
+        flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
+        if flow_files:
+            flow_dfs = []
+            for f in flow_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                node_filter = (df["code"].str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
+                flow_dfs.append(df.filter(node_filter))
+            df_flow = pl.concat(flow_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+            if self.df_daily is not None:
+                self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
 
-            lazy_frames = []
-            for path in paths:
-                node_filter = (pl.col("code").str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
-                lf = pl.scan_parquet(path).filter(node_filter)
-                lazy_frames.append(lf)
-
-            if lazy_frames:
-                logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
-                try:
-                    self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
-                    self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-                    logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
-                except Exception as e:
-                    logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
-            else:
-                logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
-
-        # --- 2. 资金流数据加载与合并 - 并行下载 ---
-        money_flow_files = sorted([f for f in all_files if "stock_money_flow_" in f])
-        if money_flow_files:
-            money_flow_tasks = [
-                loop.run_in_executor(executor, download_one, f, "./data_cache")
-                for f in money_flow_files
-            ]
-            money_flow_paths = await asyncio.gather(*money_flow_tasks)
-
-            money_flow_lazy_frames = []
-            for path in money_flow_paths:
-                lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
-                money_flow_lazy_frames.append(lf)
-
-            if money_flow_lazy_frames:
-                try:
-                    df_money_flow = pl.concat(money_flow_lazy_frames).collect(streaming=True)
-                    df_money_flow = df_money_flow.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-
-                    if self.df_daily is not None and not self.df_daily.is_empty():
-                        self.df_daily = self.df_daily.join(df_money_flow, on=["date", "code"], how="left")
-                    else:
-                        self.df_daily = df_money_flow
-                except Exception as e:
-                    logger.error(f"Node {self.node_index}: Error collecting or merging money flow data: {e}", exc_info=True)
-
-        # --- 3. 板块行情加载 - 并行下载 ---
-        sector_files = sorted([f for f in all_files if "sector_kline_" in f])
+        # 4. 板块数据 (全量)
+        sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
-            sector_tasks = [
-                loop.run_in_executor(executor, download_one, f, "./data_cache")
-                for f in sector_files
-            ]
-            sector_paths = await asyncio.gather(*sector_tasks)
-
-            s_dfs = []
-            for path in sector_paths:
-                s_dfs.append(pl.read_parquet(path))
-
-            if s_dfs:
-                self.df_sector_daily = pl.concat(s_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-
-        # --- 4. 股票 - 板块映射表加载 ---
-        map_file = [f for f in all_files if "sector_constituents" in f]
-        if map_file:
-            def download_map():
-                return hf_hub_download(
-                    repo_id=self.repo_id,
-                    filename=map_file[-1],
-                    repo_type="dataset",
-                    token=self.hf_token,
-                    cache_dir="./data_cache",
-                    resume_download=True
-                )
-            path = await loop.run_in_executor(executor, download_map)
-            self.df_mapping = pl.read_parquet(path).select([
-                pl.col("stock_code").alias("code"),
-                pl.col("sector_code")
-            ])
-
-    def _load_raw_parquet(self):
-        logger.info(f"Node {self.node_index}: Starting _load_raw_parquet...")
-        all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
-        
-        # --- 0. 股票列表加载 (用于股票名称映射) ---
-        stock_list_file = [f for f in all_files if "stock_list.parquet" in f]
-        if stock_list_file:
-            path = hf_hub_download(repo_id=self.repo_id, filename=stock_list_file[-1], repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
-            stock_list_df = pl.read_parquet(path)
-            self.code_to_name = {row[0]: row[1] for row in stock_list_df.select(["code", "code_name"]).iter_rows()}
-            logger.info(f"Node {self.node_index}: Loaded stock_list.parquet and populated code_to_name from 'code_name' column with {len(self.code_to_name)} entries.")
-        else:
-            logger.warning(f"Node {self.node_index}: stock_list.parquet not found, stock name search may not work.")
-
-        # --- 1. 股票日线加载 ---
-        stock_files = sorted([f for f in all_files if "stock_kline_" in f])
-        lazy_frames = []
-        
-        for f in stock_files:
-          path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./dataCache")
-          # 构建惰性分片逻辑 - 使用确定性路由
-          # 提取股票代码中的数字部分进行取余（如 "sh.600519" -> 600519 % 3）
-          # 确保无论节点如何重启，同一只股票的所有年份数据绝对落在同一个 Node 上！
-          node_filter = (pl.col("code").str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
-          lf = pl.scan_parquet(path).filter(node_filter)
-          lazy_frames.append(lf)
-            
-        if lazy_frames:
-            logger.info(f"Node {self.node_index}: Streaming {len(lazy_frames)} stock partitions...")
-            try:
-                self.df_daily = pl.concat(lazy_frames).collect(streaming=True)
-                self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-                logger.info(f"Node {self.node_index}: df_daily collected. Shape: {self.df_daily.shape}")
-                # Log a sample of loaded stock codes
-
-            except Exception as e:
-                logger.error(f"Node {self.node_index}: Error collecting df_daily: {e}", exc_info=True)
-        else:
-            logger.warning(f"Node {self.node_index}: No lazy_frames for stock data found.")
-
-        # --- 2. 资金流数据加载与合并 ---
-        money_flow_files = sorted([f for f in all_files if "stock_money_flow_" in f])
-        money_flow_lazy_frames = []
-        for f in money_flow_files:
-            path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
-            lf = pl.scan_parquet(path).filter((pl.col("code").hash() % self.total_nodes) == self.node_index)
-            money_flow_lazy_frames.append(lf)
-        
-        if money_flow_lazy_frames:
-            try:
-                df_money_flow = pl.concat(money_flow_lazy_frames).collect(streaming=True)
-                df_money_flow = df_money_flow.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-                
-                # 合并资金流数据到 df_daily
-                if self.df_daily is not None and not self.df_daily.is_empty():
-                    self.df_daily = self.df_daily.join(df_money_flow, on=["date", "code"], how="left")
-                else:
-                    self.df_daily = df_money_flow
-
-            except Exception as e:
-                logger.error(f"Node {self.node_index}: Error collecting or merging money flow data: {e}", exc_info=True)
-        else:
-            pass
-
-        # --- 3. 板块行情加载 ---
-        sector_files = sorted([f for f in all_files if "sector_kline_" in f])
-        s_dfs = []
-        for f in sector_files:
-            path = hf_hub_download(repo_id=self.repo_id, filename=f, repo_type="dataset", token=self.hf_token, cache_dir="./data_cache")
-            s_dfs.append(pl.read_parquet(path))
-            
-        if s_dfs:
-            self.df_sector_daily = pl.concat(s_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-
-        # --- 3. 股票-板块映射表加载 ---
-        map_file = [f for f in all_files if "sector_constituents" in f]
-        if map_file:
-            path = hf_hub_download(repo_id=self.repo_id, filename=map_file[-1], repo_type="dataset", token=self.hf_token)
-            self.df_mapping = pl.read_parquet(path).select([
-                pl.col("stock_code").alias("code"), 
-                pl.col("sector_code")
-            ])
+            self.df_sector_daily = pl.concat([pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files])
+            self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
 
     def _apply_forward_adjustment(self):
-      """执行前复权处理，增加极强的数据鲁棒性防止价格断崖"""
-      if self.df_daily is None: return
-      if "adjustFactor" not in self.df_daily.columns:
-        logger.warning(f"Node {self.node_index}: adjustFactor missing, skipping forward adjustment.")
-        return
-    
-      logger.info(f"Node {self.node_index}: Applying forward adjustment logic...")
-    
-      # 1. 强制按代码和时间升序排序，这是时间序列计算的基础
-      self.df_daily = self.df_daily.sort(["code", "date"])
-    
-      # 2. 清洗复权因子：将 <=0 的异常值视为 null，并用前后有效值填补，终极兜底为 1.0
-      adj_col = (
-        pl.when(pl.col("adjustFactor") <= 0)
-        .then(None)
-        .otherwise(pl.col("adjustFactor"))
-        .forward_fill()
-        .backward_fill()
-        .fill_null(1.0)
-      )
-    
-      # 3. 稳健地获取每只股票的最新复权因子
-      latest_adj = adj_col.last().over("code")
-    
-      # 4. 计算复权系数 (防止任何可能的除以 0 情况)
-      qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
-    
-      # 5. 应用前复权并严格定义数据类型
-      self.df_daily = self.df_daily.with_columns([
-        (pl.col("open") * qfq_expr).cast(pl.Float32).alias("open"),
-        (pl.col("high") * qfq_expr).cast(pl.Float32).alias("high"),
-        (pl.col("low") * qfq_expr).cast(pl.Float32).alias("low"),
-        (pl.col("close") * qfq_expr).cast(pl.Float32).alias("close"),
-        (pl.col("volume") / qfq_expr).cast(pl.Float64).alias("volume"),
-        # 将清洗后的安全复权因子覆写回去，防止下游引擎被毒害
-        adj_col.cast(pl.Float32).alias("adjustFactor")
-      ])
-    
-      gc.collect()
+        """执行前复权处理"""
+        if self.df_daily is None or "adjustFactor" not in self.df_daily.columns:
+            return
 
-    def _optimize_memory(self, df: pl.DataFrame, name: str):
+        logger.info(f"Node {self.node_index}: Applying price adjustment...")
+        self.df_daily = self.df_daily.sort(["code", "date"])
+
+        # 复权逻辑优化：使用 Over
+        adj_col = pl.col("adjustFactor").fill_null(1.0).forward_fill().over("code")
+        latest_adj = adj_col.last().over("code")
+        qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
+
+        self.df_daily = self.df_daily.with_columns([
+            (pl.col("open") * qfq_expr).cast(pl.Float32),
+            (pl.col("high") * qfq_expr).cast(pl.Float32),
+            (pl.col("low") * qfq_expr).cast(pl.Float32),
+            (pl.col("close") * qfq_expr).cast(pl.Float32),
+            (pl.col("volume") / qfq_expr).cast(pl.Float64)
+        ])
+
+    def _optimize_memory(self, df, name):
         """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
-        if df is None: return
-        
-        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64]
+        if df is None:
+            return
+
+        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
         if f64_cols:
-            optimized_df = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
-            
-            # 写回实例属性
-            if name == "df_daily": self.df_daily = optimized_df
-            elif name == "df_sector_daily": self.df_sector_daily = optimized_df
-            
+            opt = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
+            if name == "df_daily":
+                self.df_daily = opt
+            else:
+                self.df_sector_daily = opt
             logger.info(f"Node {self.node_index}: Optimized {name} ({len(f64_cols)} cols -> Float32)")
 
     def _resample_all(self):
         """基于前复权后的日线数据，生成周线和月线表"""
-        if self.df_daily is None: return
-        
-        # 定义 OHLCV 聚合规则
+        if self.df_daily is None:
+            return
+
         aggs = [
-            pl.col("open").first(), 
-            pl.col("high").max(), 
-            pl.col("low").min(), 
-            pl.col("close").last(), 
-            pl.col("volume").sum(), 
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
             pl.col("amount").sum()
         ]
-        
-        logger.info(f"Node {self.node_index}: Resampling W/M timeframes...")
-        
-        # 个股重采样
-        base_df = self.df_daily.sort("date")
-        self.df_weekly = base_df.group_by_dynamic("date", every="1w", by="code").agg(aggs)
-        self.df_monthly = base_df.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
-        
+
+        base = self.df_daily.sort("date")
+        self.df_weekly = base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+        self.df_monthly = base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+
         # 板块重采样
         if self.df_sector_daily is not None:
-            s_base_df = self.df_sector_daily.sort("date")
-            self.df_sector_weekly = s_base_df.group_by_dynamic("date", every="1w", by="code").agg(aggs)
-            self.df_sector_monthly = s_base_df.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+            s_base = self.df_sector_daily.sort("date")
+            self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+            self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
-    def _evolve_from_db(self):
-        """自进化：从数据库加载高频指标并执行分批挂载，避免内存尖峰"""
-        if not self.postgres_url: return
-        
-        try:
-            conn = psycopg2.connect(self.postgres_url)
-            cur = conn.cursor()
-            # 获取最热的 150 个指标
-            cur.execute("""
-                SELECT metric_key FROM metrics_stats 
-                WHERE metric_key NOT LIKE '%_W' AND metric_key NOT LIKE '%_M'
-                ORDER BY usage_count DESC LIMIT 251
-            """)
-            top_keys = [row[0] for row in cur.fetchall()]
-            cur.close(); conn.close()
-
-            if not top_keys: return
-
-            # 目标数据集清单
-            target_configs = [
-                ('df_daily', self.df_daily), 
-                ('df_weekly', self.df_weekly), 
-                ('df_monthly', self.df_monthly)
-            ]
-            
-            BATCH_SIZE = 25 # 每批计算 25 个指标，降低计算时的临时内存压力
-            
-            for attr_name, df in target_configs:
-                if df is None: continue
-                
-                total_added = 0
-                for i in range(0, len(top_keys), BATCH_SIZE):
-                    batch = top_keys[i : i + BATCH_SIZE]
-                    exprs = []
-                    
-                    for key in batch:
-                        parts = key.split('_')
-                        if len(parts) == 3:
-                            func, field, param = parts[0], parts[1].lower(), int(parts[2])
-                            # 确保基础列存在且指标尚未计算
-                            if field in df.columns and key not in df.columns:
-                                try:
-                                    exprs.append(self.INDICATOR_MAP[func](pl.col(field), param).alias(key))
-                                except: pass
-                    
-                    if exprs:
-                        df = df.with_columns(exprs)
-                        total_added += len(exprs)
-                        gc.collect() # 批次间显式回收
-
-                setattr(self, attr_name, df)
-                logger.info(f"Node {self.node_index}: Evolution complete for {attr_name}, added {total_added} cols.")
-
-        except Exception as e:
-            logger.error(f"Evolution failed: {e}")
 
 data_manager = DataManager()
