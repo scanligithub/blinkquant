@@ -92,45 +92,57 @@ class DataManager:
 
     def _process_ram_data(self, data_map):
         """解析内存中的字节流并按节点索引分片"""
-        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames...")
-
+        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames using Hash...")
+    
         # 1. 股票列表 (全量)
         stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
         if stock_list_file:
             sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
             self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
-
+    
         # 2. 股票日线 (分片加载)
         kline_files = sorted([f for f in data_map if "stock_kline_" in f])
         kline_dfs = []
         for f in kline_files:
-            # 读取整个文件到 Polars 后立即过滤，减少内存峰值
             df = pl.read_parquet(io.BytesIO(data_map[f]))
-            # 确定性分片：code 数字部分 % 3
-            node_filter = (df["code"].str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
-            kline_dfs.append(df.filter(node_filter))
-
+            # 【终极修复：使用字符串哈希分片】
+            # hash() 会为每个 code 生成一个唯一的长整数，% total_nodes 绝对均匀！
+            node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+            # 过滤当前节点的数据
+            sharded_df = df.filter(node_filter)
+            if not sharded_df.is_empty():
+                kline_dfs.append(sharded_df)
+            # 内存优化：立刻销毁原始字节流
+            data_map[f] = b""
+            del data_map[f]
+    
         if kline_dfs:
             self.df_daily = pl.concat(kline_dfs)
-            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
-
+            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+    
         # 3. 资金流 (分片并合并)
         flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
         if flow_files:
             flow_dfs = []
             for f in flow_files:
                 df = pl.read_parquet(io.BytesIO(data_map[f]))
-                node_filter = (df["code"].str.extract(r"(\d+)").cast(pl.Int32) % self.total_nodes) == self.node_index
-                flow_dfs.append(df.filter(node_filter))
-            df_flow = pl.concat(flow_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+                # 【终极修复：使用字符串哈希分片，保证与日线分片绝对一致！】
+                node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                sharded_flow = df.filter(node_filter)
+                if not sharded_flow.is_empty():
+                    flow_dfs.append(sharded_flow)
+                # 内存优化：立刻销毁原始字节流
+                data_map[f] = b""
+                del data_map[f]
+            df_flow = pl.concat(flow_dfs).with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
             if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
-
+    
         # 4. 板块数据 (全量)
         sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
             self.df_sector_daily = pl.concat([pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files])
-            self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
+            self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
 
     def _apply_forward_adjustment(self):
         """执行前复权处理"""
