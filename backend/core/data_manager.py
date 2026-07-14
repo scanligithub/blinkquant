@@ -1,4 +1,7 @@
 import os
+# 【关键修复1】限制 Polars 底层 Rust 线程数，防止吃满 CPU 导致 FastAPI 心跳超时被强杀
+os.environ["POLARS_MAX_THREADS"] = "1"
+
 import gc
 import time
 import asyncio
@@ -25,7 +28,6 @@ class DataManager:
         self.df_monthly = None
         self.code_to_name = {}
         self.df_sector_daily = None
-        # 显式初始化 df_mapping 为 None，防止 AttributeError
         self.df_mapping = None
 
         # 指标计算算子映射
@@ -41,11 +43,10 @@ class DataManager:
         start_time = time.time()
         try:
             logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
-            # 1. 并发下载所有文件内容到内存 (IO密集型，保持 await)
+            # 1. 并发下载所有文件内容到内存
             all_data_map = await self._download_all_to_ram()
             
-            # 2. 核心修复：将后续极其耗时的 CPU 计算转移到独立线程！
-            # 防止阻塞 FastAPI 主线程，从而避免被 HF 判定为死机并不断重启
+            # 2. 将后续极其耗时的 CPU 计算转移到独立线程，防止阻塞事件循环
             await asyncio.to_thread(self._cpu_bound_processing, all_data_map)
             
             logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
@@ -53,39 +54,36 @@ class DataManager:
             logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
 
     def _cpu_bound_processing(self, all_data_map):
-        """专门包裹所有同步的 CPU 密集型任务，供线程池调用"""
+        """专门包裹所有同步的 CPU 密集型任务，包含强制出让 CPU 时间片的逻辑"""
         try:
-            # 从内存字节流解析并分片加载
+            # 1. 解析并分片加载
             self._process_ram_data(all_data_map)
+            time.sleep(0.2) # 【关键修复3】喘口气，让 FastAPI 回复健康检查
             
-            # 数据预处理 (CPU 密集型)
+            # 2. 数据预处理
             if self.df_daily is not None:
                 self._apply_forward_adjustment()
-                self._optimize_memory(self.df_daily, "df_daily")
-                self._optimize_memory(self.df_sector_daily, "df_sector_daily")
+                time.sleep(0.2) # 喘口气
+                
                 self._resample_all()
+                time.sleep(0.2)
         finally:
-            # 最终清理，确保释放所有临时字节流
+            # 最终清理
             all_data_map.clear()
             gc.collect()
-            
-            # 调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
             try:
                 import ctypes
                 ctypes.CDLL('libc.so.6').malloc_trim(0)
-                logger.info(f"Node {self.node_index}: Forced libc malloc_trim successfully.")
-            except Exception as e:
-                logger.warning(f"Node {self.node_index}: malloc_trim failed: {e}")
+            except Exception:
+                pass
 
     async def _download_all_to_ram(self):
         """并发获取所有 Parquet 文件的字节流"""
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         data_files = [f for f in all_files if f.endswith(".parquet")]
 
-        # 构建下载 URL (Hugging Face 官方标准格式)
         base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
         headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
-
         data_map = {}
 
         # 限制并发数为 10，防止被 HF 屏蔽
@@ -98,7 +96,7 @@ class DataManager:
                 response.raise_for_status()
                 return filename, response.content
 
-        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
+        logger.info(f"Node {self.node_index}: Downloading {len(data_files)} files...")
 
         async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
             tasks = [download_file(client, f) for f in data_files]
@@ -109,63 +107,79 @@ class DataManager:
 
         return data_map
 
+    def _downcast_df(self, df):
+        """【关键修复2】内存截断：在读取单表时立刻降级 Float64 为 Float32，防止合并时内存爆炸"""
+        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
+        if f64_cols:
+            return df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
+        return df
+
     def _process_ram_data(self, data_map):
         """解析内存中的字节流并按节点索引分片"""
-        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames using Hash...")
+        logger.info(f"Node {self.node_index}: Parsing DataFrames...")
     
-        # 1. 股票列表 (全量)
+        # 1. 股票列表
         stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
         if stock_list_file:
             sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
             self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
+            del data_map[stock_list_file]
     
-        # 2. 股票日线 (分片加载)
+        # 2. 股票日线
         kline_files = sorted([f for f in data_map if "stock_kline_" in f])
         kline_dfs = []
         for f in kline_files:
             df = pl.read_parquet(io.BytesIO(data_map[f]))
-            # 使用字符串哈希分片
+            df = self._downcast_df(df) # 立刻降级内存
             node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
-            # 过滤当前节点的数据
             sharded_df = df.filter(node_filter)
             if not sharded_df.is_empty():
                 kline_dfs.append(sharded_df)
-            # 内存优化：立刻销毁原始字节流
+            # 立刻销毁原始字节流
             data_map[f] = b""
             del data_map[f]
-    
+            
         if kline_dfs:
-            # 增加 how="diagonal" 处理不一致的列
             self.df_daily = pl.concat(kline_dfs, how="diagonal")
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            del kline_dfs
+            gc.collect() # 合并完立刻收回内存碎片
+            time.sleep(0.1)
     
-        # 3. 资金流 (分片并合并)
+        # 3. 资金流
         flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
         if flow_files:
             flow_dfs = []
             for f in flow_files:
                 df = pl.read_parquet(io.BytesIO(data_map[f]))
+                df = self._downcast_df(df) # 立刻降级内存
                 node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
                 sharded_flow = df.filter(node_filter)
                 if not sharded_flow.is_empty():
                     flow_dfs.append(sharded_flow)
-                # 内存优化：立刻销毁原始字节流
                 data_map[f] = b""
                 del data_map[f]
             
-            # 增加 how="diagonal" 容错资金流的列不一致情况
             df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
             if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
+            del flow_dfs, df_flow
+            gc.collect()
+            time.sleep(0.1)
     
-        # 4. 板块数据 (全量)
+        # 4. 板块数据
         sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
-            self.df_sector_daily = pl.concat(
-                [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
-                how="diagonal"
-            )
+            sector_dfs = []
+            for f in sector_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                sector_dfs.append(self._downcast_df(df))
+                data_map[f] = b""
+                del data_map[f]
+            self.df_sector_daily = pl.concat(sector_dfs, how="diagonal")
             self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            del sector_dfs
+            gc.collect()
 
     def _apply_forward_adjustment(self):
         """执行前复权处理"""
@@ -173,10 +187,8 @@ class DataManager:
             return
     
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
-    
         self.df_daily = self.df_daily.sort(["code", "date"])
-    
-        # 复权逻辑：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
+        
         adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
@@ -189,25 +201,12 @@ class DataManager:
             (pl.col("volume") / qfq_expr).cast(pl.Float64)
         ])
 
-    def _optimize_memory(self, df, name):
-        """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
-        if df is None:
-            return
-
-        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
-        if f64_cols:
-            opt = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
-            if name == "df_daily":
-                self.df_daily = opt
-            else:
-                self.df_sector_daily = opt
-            logger.info(f"Node {self.node_index}: Optimized {name} ({len(f64_cols)} cols -> Float32)")
-
     def _resample_all(self):
         """基于前复权后的日线数据，生成周线和月线表"""
         if self.df_daily is None:
             return
 
+        logger.info(f"Node {self.node_index}: Resampling weekly and monthly data...")
         aggs = [
             pl.col("open").first(),
             pl.col("high").max(),
@@ -219,13 +218,14 @@ class DataManager:
 
         base = self.df_daily.sort("date")
         self.df_weekly = base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+        time.sleep(0.1) # 喘气
+        
         self.df_monthly = base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+        time.sleep(0.1)
 
-        # 板块重采样
         if self.df_sector_daily is not None:
             s_base = self.df_sector_daily.sort("date")
             self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
             self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
-
 
 data_manager = DataManager()
