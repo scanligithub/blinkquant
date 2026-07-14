@@ -6,16 +6,10 @@ import io
 import logging
 import httpx
 import polars as pl
-import psutil
 from huggingface_hub import list_repo_files
 
 logger = logging.getLogger(__name__)
 
-def log_mem(step_name, node_index):
-    """探针：打印当前进程的物理内存占用 (GB)"""
-    process = psutil.Process(os.getpid())
-    mem_gb = process.memory_info().rss / (1024 ** 3)
-    logger.info(f"[NODE {node_index} MEMORY] {step_name} -> {mem_gb:.2f} GB")
 
 class DataManager:
     def __init__(self):
@@ -24,137 +18,188 @@ class DataManager:
         self.hf_token = os.getenv("HF_TOKEN")
         self.postgres_url = os.getenv("POSTGRES_URL")
         self.repo_id = "scanli/stocka-data"
-        
-        self.cache_dir = "/app/data_cache"
-        os.makedirs(self.cache_dir, exist_ok=True)
 
+        # 内存中的数据对象
         self.df_daily = None
         self.df_weekly = None
         self.df_monthly = None
         self.code_to_name = {}
         self.df_sector_daily = None
+        # 显式初始化 df_mapping 为 None，防止 AttributeError
         self.df_mapping = None
 
-    async def async_load_data(self):
-        try:
-            logger.info(f"🚀 [STEP 1] Node {self.node_index}: 开始启动异步加载流程...")
-            log_mem("初始化完成", self.node_index)
-            
-            await self._download_all_to_disk()
-            
-            logger.info(f"🚀 [STEP 3] Node {self.node_index}: 准备将计算送入后台线程...")
-            await asyncio.to_thread(self._cpu_heavy_processing)
-            logger.info(f"✅ [STEP 9] Node {self.node_index}: 所有数据加载和计算大功告成！")
-            
-        except Exception as e:
-            logger.error(f"❌ 致命错误 (async_load_data): {str(e)}", exc_info=True)
+        # 指标计算算子映射
+        self.INDICATOR_MAP = {
+            'MA': lambda col, p: col.rolling_mean(window_size=p).over("code"),
+            'EMA': lambda col, p: col.ewm_mean(span=p, adjust=False).over("code"),
+            'STD': lambda col, p: col.rolling_std(window_size=p).over("code"),
+            'ROC': lambda col, p: ((col / col.shift(p).over("code")) - 1) * 100
+        }
 
-    async def _download_all_to_disk(self):
-        logger.info(f"🚀 [STEP 2] Node {self.node_index}: 获取文件列表...")
+    async def async_load_data(self):
+        """完全基于 RAM 的异步加载主入口"""
+        start_time = time.time()
+        try:
+            logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
+            # 1. 并发下载所有文件内容到内存
+            all_data_map = await self._download_all_to_ram()
+            # 2. 从内存字节流解析并分片加载
+            self._process_ram_data(all_data_map)
+            # 3. 数据预处理 (CPU 密集型)
+            if self.df_daily is not None:
+                self._apply_forward_adjustment()
+                self._optimize_memory(self.df_daily, "df_daily")
+                self._optimize_memory(self.df_sector_daily, "df_sector_daily")
+                self._resample_all()
+            # 最终清理，确保释放所有临时字节流
+            del all_data_map
+            gc.collect()
+            # 新增：调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
+            try:
+                import ctypes
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+                logger.info(f"Node {self.node_index}: Forced libc malloc_trim successfully.")
+            except Exception as e:
+                logger.warning(f"Node {self.node_index}: malloc_trim failed: {e}")
+            logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
+        except Exception as e:
+            logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
+
+    async def _download_all_to_ram(self):
+        """并发获取所有 Parquet 文件的字节流"""
         all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
         data_files = [f for f in all_files if f.endswith(".parquet")]
 
+        # 构建下载 URL (Hugging Face 官方标准格式)
         base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
         headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
+
+        data_map = {}
+
+        # 限制并发数为 10，防止被 HF 屏蔽
         semaphore = asyncio.Semaphore(10)
 
         async def download_file(client, filename):
-            filepath = os.path.join(self.cache_dir, filename)
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 1024:
-                return
             async with semaphore:
-                resp = await client.get(base_url + filename, timeout=60.0)
-                resp.raise_for_status()
-                with open(filepath, 'wb') as f:
-                    f.write(resp.content)
+                url = base_url + filename
+                response = await client.get(url, timeout=60.0)
+                response.raise_for_status()
+                return filename, response.content
 
-        logger.info(f"下载 {len(data_files)} 个文件到磁盘缓存...")
+        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
+
         async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
             tasks = [download_file(client, f) for f in data_files]
-            await asyncio.gather(*tasks)
-        log_mem("所有文件下载完毕", self.node_index)
+            results = await asyncio.gather(*tasks)
 
-    def _cpu_heavy_processing(self):
-        try:
-            log_mem("进入 CPU 计算线程", self.node_index)
-            files_on_disk = os.listdir(self.cache_dir)
-            
-            # 1. 股票列表
-            stock_list_file = next((f for f in files_on_disk if "stock_list.parquet" in f), None)
-            if stock_list_file:
-                logger.info(f"[STEP 4] Node {self.node_index}: 解析股票列表...")
-                sdf = pl.read_parquet(os.path.join(self.cache_dir, stock_list_file))
-                self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
+        for fname, content in results:
+            data_map[fname] = content
 
-            # 2. 股票日线
-            logger.info(f"[STEP 5] Node {self.node_index}: 开始解析股票日线 (stock_kline)...")
-            kline_files = sorted([f for f in files_on_disk if "stock_kline_" in f])
-            kline_dfs = []
-            for i, f in enumerate(kline_files):
-                df = pl.read_parquet(os.path.join(self.cache_dir, f))
-                num_col = df["code"].str.replace_all(r"\D", "").cast(pl.Int64)
-                sharded = df.filter((num_col % self.total_nodes) == self.node_index)
-                if not sharded.is_empty():
-                    kline_dfs.append(sharded)
-                if i % 10 == 0:
-                    logger.info(f"  -> 已处理 {i+1}/{len(kline_files)} 个日线文件")
+        return data_map
 
-            log_mem("日线文件读取完毕，准备 concat", self.node_index)
-            if kline_dfs:
-                self.df_daily = pl.concat(kline_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-            del kline_dfs
-            gc.collect()
-            log_mem("日线 concat 完毕", self.node_index)
-
-            # 3. 资金流
-            logger.info(f"[STEP 6] Node {self.node_index}: 开始解析资金流 (stock_money_flow)...")
-            flow_files = sorted([f for f in files_on_disk if "stock_money_flow_" in f])
+    def _process_ram_data(self, data_map):
+        """解析内存中的字节流并按节点索引分片"""
+        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames using Hash...")
+    
+        # 1. 股票列表 (全量)
+        stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
+        if stock_list_file:
+            sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
+            self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
+    
+        # 2. 股票日线 (分片加载)
+        kline_files = sorted([f for f in data_map if "stock_kline_" in f])
+        kline_dfs = []
+        for f in kline_files:
+            df = pl.read_parquet(io.BytesIO(data_map[f]))
+            # 使用字符串哈希分片
+            node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+            sharded_df = df.filter(node_filter)
+            if not sharded_df.is_empty():
+                kline_dfs.append(sharded_df)
+            # 内存优化：立刻销毁原始字节流
+            data_map[f] = b""
+            del data_map[f]
+    
+        if kline_dfs:
+            # 关键修改：增加 how="diagonal" 处理不一致的列
+            self.df_daily = pl.concat(kline_dfs, how="diagonal")
+            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+    
+        # 3. 资金流 (分片并合并)
+        flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
+        if flow_files:
             flow_dfs = []
-            for i, f in enumerate(flow_files):
-                df = pl.read_parquet(os.path.join(self.cache_dir, f))
-                num_col = df["code"].str.replace_all(r"\D", "").cast(pl.Int64)
-                sharded = df.filter((num_col % self.total_nodes) == self.node_index)
-                if not sharded.is_empty():
-                    flow_dfs.append(sharded)
-                if i % 10 == 0:
-                    logger.info(f"  -> 已处理 {i+1}/{len(flow_files)} 个资金流文件")
+            for f in flow_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                sharded_flow = df.filter(node_filter)
+                if not sharded_flow.is_empty():
+                    flow_dfs.append(sharded_flow)
+                # 内存优化：立刻销毁原始字节流
+                data_map[f] = b""
+                del data_map[f]
             
-            log_mem("资金流读取完毕，准备 concat & join", self.node_index)
-            if flow_dfs and self.df_daily is not None:
-                df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            # 关键修改：增加 how="diagonal" 容错资金流的列不一致情况
+            df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
-            del flow_dfs
-            gc.collect()
-            log_mem("资金流 join 完毕", self.node_index)
-
-            # 4. 板块
-            logger.info(f"[STEP 7] Node {self.node_index}: 开始解析板块 (sector_kline)...")
-            sector_files = sorted([f for f in files_on_disk if "sector_kline_" in f])
-            sector_dfs = []
-            for f in sector_files:
-                df = pl.read_parquet(os.path.join(self.cache_dir, f))
-                sector_dfs.append(df)
-            if sector_dfs:
-                self.df_sector_daily = pl.concat(sector_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-            del sector_dfs
-            gc.collect()
-            log_mem("板块数据解析完毕", self.node_index)
-
-            # 5. 后处理
-            logger.info(f"[STEP 8] Node {self.node_index}: 执行数据预处理与重采样...")
-            self._apply_forward_adjustment()
-            log_mem("前复权计算完毕", self.node_index)
-            
-            self._resample_all()
-            log_mem("重采样计算完毕", self.node_index)
-
-        except Exception as e:
-            logger.error(f"❌ 致命错误 (CPU_Processing): {str(e)}", exc_info=True)
-            raise e
+    
+        # 4. 板块数据 (全量)
+        sector_files = sorted([f for f in data_map if "sector_kline_" in f])
+        if sector_files:
+            # 关键修改：增加 how="diagonal"
+            self.df_sector_daily = pl.concat(
+                [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
+                how="diagonal"
+            )
+            self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
 
     def _apply_forward_adjustment(self):
-        if self.df_daily is None or "adjustFactor" not in self.df_daily.columns: return
+        """执行前复权处理"""
+        if self.df_daily is None or "adjustFactor" not in self.df_daily.columns:
+            return
+    
+        logger.info(f"Node {self.node_index}: Applying price adjustment...")
+    
+        # ======================= BEGIN DIAGNOSTIC PROBE =======================
+        # 在执行任何计算前，打印指定股票在跨年期间最原始的复权因子
+        # 注意：我们使用 2023/2024 年，因为 K 线图上的 '2026' 是前端显示错误
+        try:
+            # 你可以修改这里的代码和日期来调试不同的股票
+            debug_stock_code = "sh.600901"  # 八方股份（向下断层）
+            # debug_stock_code = "sz.002812"  # 恩捷股份（向上断层）
+            start_debug_date = "2023-06-26"
+            end_debug_date = "2023-07-10"
+    
+            # 从 self.df_daily 中过滤出原始数据
+            debug_data = (
+                self.df_daily
+                .filter(
+                    (pl.col("code") == debug_stock_code) &
+                    (pl.col("date") >= pl.lit(start_debug_date).str.to_date()) &
+                    (pl.col("date") <= pl.lit(end_debug_date).str.to_date())
+                )
+                .select(["date", "code", "close", "adjustFactor"])  # 只看我们关心的列
+                .sort("date")
+            )
+    
+            # 在日志中清晰地打印出来
+            logger.info("=" * 25 + " RAW DATA VERIFICATION " + "=" * 25)
+            logger.info(f"Checking raw factors for {debug_stock_code} from {start_debug_date} to {end_debug_date}:")
+            if debug_data.is_empty():
+                logger.warning(f"DIAGNOSTIC: No data found for {debug_stock_code} in the specified date range.")
+            else:
+                # Polars 的默认打印格式非常适合日志查看
+                logger.info("\n" + str(debug_data))
+            logger.info("=" * 28 + " END VERIFICATION " + "=" * 28)
+        except Exception as e:
+            logger.error(f"DIAGNOSTIC PROBE FAILED: {e}", exc_info=True)
+        # ======================== END DIAGNOSTIC PROBE ========================
+    
         self.df_daily = self.df_daily.sort(["code", "date"])
+    
+        # 复权逻辑修复：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
         adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
@@ -167,20 +212,43 @@ class DataManager:
             (pl.col("volume") / qfq_expr).cast(pl.Float64)
         ])
 
+    def _optimize_memory(self, df, name):
+        """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
+        if df is None:
+            return
+
+        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
+        if f64_cols:
+            opt = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
+            if name == "df_daily":
+                self.df_daily = opt
+            else:
+                self.df_sector_daily = opt
+            logger.info(f"Node {self.node_index}: Optimized {name} ({len(f64_cols)} cols -> Float32)")
+
     def _resample_all(self):
-        if self.df_daily is None: return
+        """基于前复权后的日线数据，生成周线和月线表"""
+        if self.df_daily is None:
+            return
+
         aggs = [
-            pl.col("open").first(), pl.col("high").max(),
-            pl.col("low").min(), pl.col("close").last(),
-            pl.col("volume").sum(), pl.col("amount").sum()
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
+            pl.col("amount").sum()
         ]
+
         base = self.df_daily.sort("date")
         self.df_weekly = base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
         self.df_monthly = base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
+        # 板块重采样
         if self.df_sector_daily is not None:
             s_base = self.df_sector_daily.sort("date")
             self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
             self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
+
 
 data_manager = DataManager()
