@@ -161,9 +161,7 @@ class DataManager:
             return
     
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
-        
-        # 移除了冗长的 DIAGNOSTIC PROBE 调试打印代码
-        
+    
         self.df_daily = self.df_daily.sort(["code", "date"])
     
         # 复权逻辑：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
