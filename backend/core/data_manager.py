@@ -33,117 +33,130 @@ class DataManager:
         }
 
     def _downcast_df(self, df):
-        """立刻降级内存"""
+        """内存降级，防止拼接时 OOM"""
         f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
         if f64_cols:
             return df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
         return df
 
     async def async_load_data(self):
-        """流式异步加载：边下边解析，彻底杜绝 OOM 和阻塞"""
         start_time = time.time()
         try:
-            logger.info(f"🚀 Node {self.node_index}: Starting Streaming RAM load...")
+            logger.info(f"🚀 Node {self.node_index}: Starting memory-safe async load...")
             
-            # 获取文件列表
-            all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
+            # 1. 在主线程异步下载所有文件数据 (网络 I/O 密集，不会卡死服务器)
+            all_data_map = await self._download_all_to_ram()
             
-            stock_list_file = [f for f in all_files if "stock_list.parquet" in f]
-            kline_files = sorted([f for f in all_files if "stock_kline_" in f])
-            flow_files = sorted([f for f in all_files if "stock_money_flow_" in f])
-            sector_files = sorted([f for f in all_files if "sector_kline_" in f])
+            # 2. 将高压力的 CPU 解析与合并，送到独立的后台线程池执行
+            await asyncio.to_thread(self._cpu_heavy_processing, all_data_map)
 
-            base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
-            headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
-            
-            async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-                # 1. 股票列表
-                if stock_list_file:
-                    content = await self._download_single(client, base_url + stock_list_file[0])
-                    sdf = pl.read_parquet(io.BytesIO(content))
-                    self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
-                    del content, sdf
-
-                # 2. 日线 (流式处理，防 OOM)
-                kline_dfs = []
-                for f in kline_files:
-                    content = await self._download_single(client, base_url + f)
-                    df = pl.read_parquet(io.BytesIO(content))
-                    df = self._downcast_df(df)
-                    
-                    # 稳定且均匀的 Hash 分片
-                    sharded = df.filter((pl.col("code").hash(42) % self.total_nodes) == self.node_index)
-                    if not sharded.is_empty():
-                        kline_dfs.append(sharded)
-                    
-                    del content, df, sharded
-                    await asyncio.sleep(0.01) # 关键：每处理完一个文件，必须出让控制权给服务器心跳！
-                
-                if kline_dfs:
-                    self.df_daily = pl.concat(kline_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-                del kline_dfs
-                gc.collect()
-
-                # 3. 资金流 (流式处理)
-                flow_dfs = []
-                for f in flow_files:
-                    content = await self._download_single(client, base_url + f)
-                    df = pl.read_parquet(io.BytesIO(content))
-                    df = self._downcast_df(df)
-                    
-                    sharded = df.filter((pl.col("code").hash(42) % self.total_nodes) == self.node_index)
-                    if not sharded.is_empty():
-                        flow_dfs.append(sharded)
-                        
-                    del content, df, sharded
-                    await asyncio.sleep(0.01)
-                    
-                if flow_dfs and self.df_daily is not None:
-                    df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-                    self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
-                del flow_dfs
-                gc.collect()
-
-                # 4. 板块 (流式处理)
-                sector_dfs = []
-                for f in sector_files:
-                    content = await self._download_single(client, base_url + f)
-                    df = pl.read_parquet(io.BytesIO(content))
-                    sector_dfs.append(self._downcast_df(df))
-                    
-                    del content, df
-                    await asyncio.sleep(0.01)
-                    
-                if sector_dfs:
-                    self.df_sector_daily = pl.concat(sector_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-                del sector_dfs
-                gc.collect()
-
-            # 5. 后处理计算 (送入线程池，防止卡死主线程)
-            if self.df_daily is not None:
-                await asyncio.to_thread(self._cpu_heavy_processing)
-
-            logger.info(f"✅ Node {self.node_index}: Load Complete. Time: {time.time() - start_time:.2f}s")
+            logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
         except Exception as e:
             logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
 
-    async def _download_single(self, client, url):
-        """带重试机制的单文件下载"""
-        for attempt in range(3):
-            try:
-                resp = await client.get(url, timeout=30.0)
-                resp.raise_for_status()
-                return resp.content
-            except Exception as e:
-                if attempt == 2: raise
-                await asyncio.sleep(1)
+    async def _download_all_to_ram(self):
+        all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
+        data_files = [f for f in all_files if f.endswith(".parquet")]
 
-    def _cpu_heavy_processing(self):
-        """耗时 CPU 计算"""
+        base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
+        headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
+        data_map = {}
+        semaphore = asyncio.Semaphore(15) 
+
+        async def download_file(client, filename):
+            async with semaphore:
+                for attempt in range(3):
+                    try:
+                        resp = await client.get(base_url + filename, timeout=60.0)
+                        resp.raise_for_status()
+                        return filename, resp.content
+                    except Exception:
+                        if attempt == 2: raise
+                        await asyncio.sleep(1)
+
+        logger.info(f"Node {self.node_index}: Downloading {len(data_files)} files...")
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            tasks = [download_file(client, f) for f in data_files]
+            results = await asyncio.gather(*tasks)
+
+        for fname, content in results:
+            data_map[fname] = content
+        return data_map
+
+    def _cpu_heavy_processing(self, data_map):
+        """所有 CPU 密集型任务统一在子线程执行，彻底保护 FastAPI 主事件循环"""
         try:
+            logger.info(f"Node {self.node_index}: Parsing and sharding data...")
+            
+            # --- 股票列表 ---
+            stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
+            if stock_list_file:
+                sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
+                self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
+                del data_map[stock_list_file]
+
+            # --- 股票日线 ---
+            kline_files = sorted([f for f in data_map if "stock_kline_" in f])
+            kline_dfs = []
+            for f in kline_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                df = self._downcast_df(df)
+                # 使用成熟的 hash 分片
+                node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                sharded = df.filter(node_filter)
+                if not sharded.is_empty():
+                    kline_dfs.append(sharded)
+                data_map[f] = b""
+                del data_map[f]
+            
+            if kline_dfs:
+                self.df_daily = pl.concat(kline_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            del kline_dfs
+            gc.collect()
+            time.sleep(0.1) # 线程级防饿死休眠
+
+            # --- 资金流 ---
+            flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
+            flow_dfs = []
+            for f in flow_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                df = self._downcast_df(df)
+                node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                sharded = df.filter(node_filter)
+                if not sharded.is_empty():
+                    flow_dfs.append(sharded)
+                data_map[f] = b""
+                del data_map[f]
+
+            if flow_dfs and self.df_daily is not None:
+                df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+                self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
+            del flow_dfs
+            gc.collect()
+            time.sleep(0.1)
+
+            # --- 板块 ---
+            sector_files = sorted([f for f in data_map if "sector_kline_" in f])
+            sector_dfs = []
+            for f in sector_files:
+                df = pl.read_parquet(io.BytesIO(data_map[f]))
+                sector_dfs.append(self._downcast_df(df))
+                data_map[f] = b""
+                del data_map[f]
+
+            if sector_dfs:
+                self.df_sector_daily = pl.concat(sector_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+            del sector_dfs
+            gc.collect()
+            time.sleep(0.1)
+
+            # --- 数据预处理 ---
             self._apply_forward_adjustment()
             self._resample_all()
+            
         finally:
+            # 无论如何，最终清空内存池并释放碎片
+            data_map.clear()
             gc.collect()
             try:
                 import ctypes
