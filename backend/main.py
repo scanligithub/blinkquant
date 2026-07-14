@@ -1,9 +1,4 @@
 import os
-# 【极其关键】：必须在所有代码（特别是 import polars）的最前面设置！
-# 限制底层线程，留出一个核心专门给 FastAPI 响应心跳，防死机
-os.environ["POLARS_MAX_THREADS"] = "1"
-os.environ["MALLOC_TRIM_THRESHOLD_"] = "65536"
-
 import time
 import logging
 import asyncio
@@ -25,10 +20,8 @@ logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     node_idx = os.getenv('NODE_INDEX', 'unknown')
     logger.info(f"Checking environment: NODE_INDEX={node_idx}")
-
     # 异步触发加载
     asyncio.create_task(data_manager.async_load_data())
-
     yield
     logger.info("Shutting down node...")
 
