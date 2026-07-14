@@ -112,8 +112,9 @@ class DataManager:
         kline_dfs = []
         for f in kline_files:
             df = pl.read_parquet(io.BytesIO(data_map[f]))
-            # 使用字符串哈希分片
+            # 【使用字符串哈希分片】
             node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+            # 过滤当前节点的数据
             sharded_df = df.filter(node_filter)
             if not sharded_df.is_empty():
                 kline_dfs.append(sharded_df)
@@ -122,7 +123,6 @@ class DataManager:
             del data_map[f]
     
         if kline_dfs:
-            # 关键修改：增加 how="diagonal" 处理不一致的列
             self.df_daily = pl.concat(kline_dfs, how="diagonal")
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
     
@@ -139,8 +139,6 @@ class DataManager:
                 # 内存优化：立刻销毁原始字节流
                 data_map[f] = b""
                 del data_map[f]
-            
-            # 关键修改：增加 how="diagonal" 容错资金流的列不一致情况
             df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
             if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
@@ -148,11 +146,7 @@ class DataManager:
         # 4. 板块数据 (全量)
         sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
-            # 关键修改：增加 how="diagonal"
-            self.df_sector_daily = pl.concat(
-                [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
-                how="diagonal"
-            )
+            self.df_sector_daily = pl.concat([pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], how="diagonal")
             self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
 
     def _apply_forward_adjustment(self):
