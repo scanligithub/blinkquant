@@ -7,20 +7,17 @@ from contextlib import asynccontextmanager
 from api.routes import router as api_router
 from core.data_manager import data_manager
 
-# 配置标准日志输出
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+# 全面放开日志，加上时间戳方便对齐
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 logger = logging.getLogger(__name__)
-
-# 屏蔽第三方库刷屏
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     node_idx = os.getenv('NODE_INDEX', 'unknown')
-    logger.info(f"Checking environment: NODE_INDEX={node_idx}")
-    # 异步触发加载
+    logger.info(f"====== STARTING NODE {node_idx} LIFESPAN ======")
     asyncio.create_task(data_manager.async_load_data())
     yield
     logger.info("Shutting down node...")
