@@ -1,4 +1,9 @@
 import os
+# 【极其关键】：必须在所有代码（特别是 import polars）的最前面设置！
+# 限制底层线程，留出一个核心专门给 FastAPI 响应心跳，防死机
+os.environ["POLARS_MAX_THREADS"] = "1"
+os.environ["MALLOC_TRIM_THRESHOLD_"] = "65536"
+
 import time
 import logging
 import asyncio
@@ -7,14 +12,11 @@ from contextlib import asynccontextmanager
 from api.routes import router as api_router
 from core.data_manager import data_manager
 
-# 1. 配置标准日志输出
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s:%(name)s:%(message)s"
-)
+# 配置标准日志输出
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
-# 2. 关键修改：降低第三方网络库的日志级别，防止 116 个文件下载时刷屏
+# 屏蔽第三方库刷屏
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
