@@ -41,29 +41,41 @@ class DataManager:
         start_time = time.time()
         try:
             logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
-            # 1. 并发下载所有文件内容到内存
+            # 1. 并发下载所有文件内容到内存 (IO密集型，保持 await)
             all_data_map = await self._download_all_to_ram()
-            # 2. 从内存字节流解析并分片加载
+            
+            # 2. 核心修复：将后续极其耗时的 CPU 计算转移到独立线程！
+            # 防止阻塞 FastAPI 主线程，从而避免被 HF 判定为死机并不断重启
+            await asyncio.to_thread(self._cpu_bound_processing, all_data_map)
+            
+            logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
+        except Exception as e:
+            logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
+
+    def _cpu_bound_processing(self, all_data_map):
+        """专门包裹所有同步的 CPU 密集型任务，供线程池调用"""
+        try:
+            # 从内存字节流解析并分片加载
             self._process_ram_data(all_data_map)
-            # 3. 数据预处理 (CPU 密集型)
+            
+            # 数据预处理 (CPU 密集型)
             if self.df_daily is not None:
                 self._apply_forward_adjustment()
                 self._optimize_memory(self.df_daily, "df_daily")
                 self._optimize_memory(self.df_sector_daily, "df_sector_daily")
                 self._resample_all()
+        finally:
             # 最终清理，确保释放所有临时字节流
-            del all_data_map
+            all_data_map.clear()
             gc.collect()
-            # 新增：调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
+            
+            # 调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
             try:
                 import ctypes
                 ctypes.CDLL('libc.so.6').malloc_trim(0)
                 logger.info(f"Node {self.node_index}: Forced libc malloc_trim successfully.")
             except Exception as e:
                 logger.warning(f"Node {self.node_index}: malloc_trim failed: {e}")
-            logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
-        except Exception as e:
-            logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
 
     async def _download_all_to_ram(self):
         """并发获取所有 Parquet 文件的字节流"""
@@ -112,7 +124,7 @@ class DataManager:
         kline_dfs = []
         for f in kline_files:
             df = pl.read_parquet(io.BytesIO(data_map[f]))
-            # 【使用字符串哈希分片】
+            # 使用字符串哈希分片
             node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
             # 过滤当前节点的数据
             sharded_df = df.filter(node_filter)
@@ -123,6 +135,7 @@ class DataManager:
             del data_map[f]
     
         if kline_dfs:
+            # 增加 how="diagonal" 处理不一致的列
             self.df_daily = pl.concat(kline_dfs, how="diagonal")
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
     
@@ -139,6 +152,8 @@ class DataManager:
                 # 内存优化：立刻销毁原始字节流
                 data_map[f] = b""
                 del data_map[f]
+            
+            # 增加 how="diagonal" 容错资金流的列不一致情况
             df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
             if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
@@ -146,7 +161,10 @@ class DataManager:
         # 4. 板块数据 (全量)
         sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
-            self.df_sector_daily = pl.concat([pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], how="diagonal")
+            self.df_sector_daily = pl.concat(
+                [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
+                how="diagonal"
+            )
             self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
 
     def _apply_forward_adjustment(self):
