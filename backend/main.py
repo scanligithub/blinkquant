@@ -1,32 +1,36 @@
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
-from api.routes import router as api_router
-from core.data_manager import data_manager
 import os
 import time
 import logging
 import asyncio
-from contextlib import asynccontextmanager as asynccontextmanager
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from api.routes import router as api_router
+from core.data_manager import data_manager
 
-# 配置标准日志输出到控制台
-logging.basicConfig(level=logging.INFO)
+# 1. 配置标准日志输出
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# 2. 关键修改：降低第三方网络库的日志级别，防止 116 个文件下载时刷屏
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     node_idx = os.getenv('NODE_INDEX', 'unknown')
     logger.info(f"Checking environment: NODE_INDEX={node_idx}")
 
-    # --- 核心修改：异步触发加载，不阻塞 lifespan ---
-    # 创建后台任务，不使用 await
+    # 异步触发加载
     asyncio.create_task(data_manager.async_load_data())
 
     yield
-    # --- 停止逻辑 (可选) ---
     logger.info("Shutting down node...")
 
 app = FastAPI(title="BlinkQuant Node", lifespan=lifespan)
-
 app.include_router(api_router)
 
 @app.get("/")
