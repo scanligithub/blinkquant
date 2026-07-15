@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware  # 新增导入
 from contextlib import asynccontextmanager
 from api.routes import router as api_router
 from core.data_manager import data_manager
@@ -7,6 +6,7 @@ import os
 import time
 import logging
 import asyncio
+# 删除了这行重复的 import：from contextlib import asynccontextmanager as asynccontextmanager
 
 # 配置标准日志输出到控制台
 logging.basicConfig(level=logging.INFO)
@@ -26,15 +26,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down node...")
 
 app = FastAPI(title="BlinkQuant Node", lifespan=lifespan)
-
-# ---- 核心修改：添加 CORS 跨域配置 ----
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 允许所有域名访问，如果安全性要求高可填入你 Vercel 前端的具体域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 app.include_router(api_router)
 
