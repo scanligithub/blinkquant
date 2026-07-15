@@ -184,7 +184,8 @@ def get_node_status():
 @router.get("/health")
 def health_check():
     # 只要 Uvicorn 跑起来就回 200，防止 HF 杀掉进程
-    # 但返回具体状态让前端感知
+    # 增加 build_id 返回以进行高可用的版本比对，防止滚动更新假阳性
+    b_id = getattr(data_manager, "build_id", "unknown")
     if data_manager.df_daily is not None:
-        return {"status": "healthy"}
-    return {"status": "initializing"}
+        return {"status": "healthy", "build_id": b_id}
+    return {"status": "initializing", "build_id": b_id}
