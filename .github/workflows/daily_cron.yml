@@ -41,25 +41,36 @@ jobs:
             echo "Attempt $ATTEMPTS/$MAX_ATTEMPTS: Monitoring Node ${{ matrix.node }}..."
             echo "=========================================================="
             
-            # 轮询检测：最多检测 12 次，每次间隔 20 秒 (共 4 分钟)
+            # 轮询检测：最多检测 5 次，每次温和地间隔 60 秒 (共 5 分钟)
             POLL_COUNT=1
-            MAX_POLLS=12
-            POLL_INTERVAL=20
+            MAX_POLLS=5
+            POLL_INTERVAL=60
             
             while [ $POLL_COUNT -le $MAX_POLLS ]; do
               echo "Polling health check ($POLL_COUNT/$MAX_POLLS) for Node ${{ matrix.node }}..."
               
               # 请求健康检查接口，限时 10 秒超时
-              RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || true)
-              echo "Response: $RESPONSE"
+              RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || echo "")
               
-              # 只有当接口确切返回 "healthy"（代表数据全部加载完毕）才视为成功
-              if [[ "$RESPONSE" == *"healthy"* ]]; then
-                echo "✅ Success! Node ${{ matrix.node }} is healthy."
+              # ---- 核心修复：使用 jq 严格解析 JSON 结构中的 status 字段，拒绝 HTML 页面干扰 ----
+              STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null || echo "")
+              echo "Parsed Status: '$STATUS'"
+              
+              # 只有当接口确切返回真正的健康状态时才放行
+              if [ "$STATUS" = "healthy" ]; then
+                echo "✅ Success! Node ${{ matrix.node }} is healthy and fully loaded."
                 HEALTHY=true
-                break 2 # 成功跳出两层循环
+                break 2 # 成功启动，直接跳出两层循环
               fi
               
+              # 友好日志提示
+              if [ "$STATUS" = "initializing" ]; then
+                echo "⏳ Node is initializing (loading data)..."
+              else
+                echo "💤 Node is offline, building, or returning non-JSON response."
+              fi
+              
+              echo "Sleeping for $POLL_INTERVAL seconds..."
               sleep $POLL_INTERVAL
               POLL_COUNT=$((POLL_COUNT+1))
             done
@@ -67,7 +78,7 @@ jobs:
             # 如果本次 Attempt 结束仍不健康，且未达到上限，则发起下一次重新部署
             if [ "$HEALTHY" = false ]; then
               if [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; then
-                echo "⚠️ Node ${{ matrix.node }} failed to start healthy within 4 minutes."
+                echo "⚠️ Node ${{ matrix.node }} failed to start healthy within 5 minutes."
                 echo "Triggering redeploy for Node ${{ matrix.node }} (empty commit force-push)..."
                 
                 # 产生一个新的空提交以触发 HF 重构
