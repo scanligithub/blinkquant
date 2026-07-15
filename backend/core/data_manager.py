@@ -13,11 +13,22 @@ logger = logging.getLogger(__name__)
 
 class DataManager:
     def __init__(self):
-        self.node_index = int(os.getenv("NODE_INDEX", "0"))
         self.total_nodes = 3
         self.hf_token = os.getenv("HF_TOKEN")
         self.postgres_url = os.getenv("POSTGRES_URL")
         self.repo_id = "scanli/stocka-data"
+
+        # 健壮解析 NODE_INDEX，防范 HF Space UI 配置中的空格或非数字字符
+        node_idx_env = os.getenv("NODE_INDEX", "0").strip()
+        try:
+            digits = "".join(filter(str.isdigit, node_idx_env))
+            self.node_index = int(digits) if digits else 0
+        except Exception:
+            self.node_index = 0
+            
+        if self.node_index >= self.total_nodes or self.node_index < 0:
+            logger.warning(f"Invalid NODE_INDEX {self.node_index} (out of bounds), resetting to 0")
+            self.node_index = 0
 
         # 内存中的数据对象
         self.df_daily = None
@@ -25,7 +36,6 @@ class DataManager:
         self.df_monthly = None
         self.code_to_name = {}
         self.df_sector_daily = None
-        # 显式初始化 df_mapping 为 None，防止 AttributeError
         self.df_mapping = None
 
         # 指标计算算子映射
@@ -37,129 +47,118 @@ class DataManager:
         }
 
     async def async_load_data(self):
-        """完全基于 RAM 的异步加载主入口"""
+        """流式、低内存占用的异步加载主入口（串行下载和解析，规避并发 OOM 与连接死锁）"""
         start_time = time.time()
         try:
-            logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
-            # 1. 并发下载所有文件内容到内存
-            all_data_map = await self._download_all_to_ram()
+            logger.info(f"🚀 Node {self.node_index}: Starting streamlined memory-safe data load...")
             
-            # 容错检查
-            if all_data_map is None:
-                raise ValueError("Downloaded data map is None. Check download logic.")
+            # 1. 获取文件列表 (使用线程执行同步网络请求，防止阻塞事件循环)
+            all_files = await asyncio.to_thread(
+                list_repo_files, repo_id=self.repo_id, repo_type="dataset", token=self.hf_token
+            )
+            data_files = sorted([f for f in all_files if f.endswith(".parquet")])
+            
+            base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
+            headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
+            
+            kline_dfs = []
+            flow_dfs = []
+            sector_dfs = []
+            
+            # 2. 串行流式下载和解析，严格控制单次内存开销
+            # 串行下载还能彻底规避 HF 对并发请求的 429 限制
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=60.0) as client:
+                for fname in data_files:
+                    logger.info(f"Node {self.node_index}: Loading {fname}...")
+                    url = base_url + fname
+                    
+                    try:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                        content = response.content
+                    except Exception as download_err:
+                        logger.error(f"Node {self.node_index}: Failed to download {fname}: {download_err}")
+                        continue
+                    
+                    bio = io.BytesIO(content)
+                    
+                    # 根据文件名类型分类解析，并在处理完成后立即 del 释放内存
+                    if "stock_list.parquet" in fname:
+                        sdf = pl.read_parquet(bio)
+                        self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
+                        del sdf
+                    
+                    elif "stock_kline_" in fname:
+                        df = pl.read_parquet(bio)
+                        node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                        sharded_df = df.filter(node_filter)
+                        if not sharded_df.is_empty():
+                            kline_dfs.append(sharded_df)
+                        del df
+                        
+                    elif "stock_money_flow_" in fname:
+                        df = pl.read_parquet(bio)
+                        node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
+                        sharded_flow = df.filter(node_filter)
+                        if not sharded_flow.is_empty():
+                            flow_dfs.append(sharded_flow)
+                        del df
+                        
+                    elif "sector_kline_" in fname:
+                        sdf = pl.read_parquet(bio)
+                        sector_dfs.append(sdf)
+                    
+                    # 强力垃圾回收，防止字节流在堆中残留
+                    del content
+                    del bio
+                    gc.collect()
 
-            # 2. 从内存字节流解析并分片加载
-            self._process_ram_data(all_data_map)
-            # 3. 数据预处理 (CPU 密集型)
+            logger.info(f"Node {self.node_index}: All files downloaded. Integrating DataFrames...")
+
+            # 3. 合并并解析日线数据
+            if kline_dfs:
+                self.df_daily = pl.concat(kline_dfs, how="diagonal")
+                self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+                del kline_dfs
+                gc.collect()
+                
+            # 4. 合并资金流并与日线关联
+            if flow_dfs:
+                df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+                if self.df_daily is not None:
+                    self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
+                del df_flow
+                del flow_dfs
+                gc.collect()
+
+            # 5. 合并板块数据
+            if sector_dfs:
+                self.df_sector_daily = pl.concat(sector_dfs, how="diagonal")
+                self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+                del sector_dfs
+                gc.collect()
+
+            # 6. 数据前复权与重采样
             if self.df_daily is not None:
                 self._apply_forward_adjustment()
                 self._optimize_memory(self.df_daily, "df_daily")
                 self._optimize_memory(self.df_sector_daily, "df_sector_daily")
                 self._resample_all()
-            # 最终清理，确保释放所有临时字节流
-            del all_data_map
+                
             gc.collect()
-            # 强制 Linux 归还幽灵内存给操作系统
+            
+            # 7. 强制 Linux 归还幽灵内存
             try:
                 import ctypes
                 ctypes.CDLL('libc.so.6').malloc_trim(0)
                 logger.info(f"Node {self.node_index}: Forced libc malloc_trim successfully.")
             except Exception as e:
                 logger.warning(f"Node {self.node_index}: malloc_trim failed: {e}")
+                
             logger.info(f"✅ Node {self.node_index}: RAM Load Complete. Total time: {time.time() - start_time:.2f}s")
+            
         except Exception as e:
             logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
-
-    async def _download_all_to_ram(self):
-        """并发获取所有 Parquet 文件的字节流"""
-        # 1. 使用 asyncio.to_thread 包装，确保此同步 IO 请求不会阻塞 FastAPI 的事件循环
-        all_files = await asyncio.to_thread(
-            list_repo_files, repo_id=self.repo_id, repo_type="dataset", token=self.hf_token
-        )
-        data_files = [f for f in all_files if f.endswith(".parquet")]
-
-        # 构建下载 URL (Hugging Face 官方标准格式)
-        base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
-        headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
-
-        data_map = {}
-
-        # 限制并发数为 10，防止被 HF 屏蔽
-        semaphore = asyncio.Semaphore(10)
-
-        async def download_file(client, filename):
-            async with semaphore:
-                url = base_url + filename
-                response = await client.get(url, timeout=60.0)
-                response.raise_for_status()
-                return filename, response.content
-
-        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
-
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-            tasks = [download_file(client, f) for f in data_files]
-            results = await asyncio.gather(*tasks)
-
-        for fname, content in results:
-            data_map[fname] = content
-
-        # 确保显式返回数据字典
-        return data_map
-
-    def _process_ram_data(self, data_map):
-        """解析内存中的字节流并按节点索引分片"""
-        logger.info(f"Node {self.node_index}: Parsing and sharding DataFrames using Hash...")
-    
-        # 1. 股票列表 (全量)
-        stock_list_file = next((f for f in data_map if "stock_list.parquet" in f), None)
-        if stock_list_file:
-            sdf = pl.read_parquet(io.BytesIO(data_map[stock_list_file]))
-            self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
-    
-        # 2. 股票日线 (分片加载)
-        kline_files = sorted([f for f in data_map if "stock_kline_" in f])
-        kline_dfs = []
-        for f in kline_files:
-            df = pl.read_parquet(io.BytesIO(data_map[f]))
-            # 使用字符串哈希分片
-            node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
-            sharded_df = df.filter(node_filter)
-            if not sharded_df.is_empty():
-                kline_dfs.append(sharded_df)
-            # 内存优化：立刻销毁原始字节流
-            data_map[f] = b""
-            del data_map[f]
-    
-        if kline_dfs:
-            self.df_daily = pl.concat(kline_dfs, how="diagonal")
-            self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-    
-        # 3. 资金流 (分片并合并)
-        flow_files = sorted([f for f in data_map if "stock_money_flow_" in f])
-        if flow_files:
-            flow_dfs = []
-            for f in flow_files:
-                df = pl.read_parquet(io.BytesIO(data_map[f]))
-                node_filter = (df["code"].hash() % self.total_nodes) == self.node_index
-                sharded_flow = df.filter(node_filter)
-                if not sharded_flow.is_empty():
-                    flow_dfs.append(sharded_flow)
-                # 内存优化：立刻销毁原始字节流
-                data_map[f] = b""
-                del data_map[f]
-            
-            df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-            if self.df_daily is not None:
-                self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
-    
-        # 4. 板块数据 (全量)
-        sector_files = sorted([f for f in data_map if "sector_kline_" in f])
-        if sector_files:
-            self.df_sector_daily = pl.concat(
-                [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
-                how="diagonal"
-            )
-            self.df_sector_daily = self.df_sector_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
 
     def _apply_forward_adjustment(self):
         """执行前复权处理"""
@@ -169,7 +168,6 @@ class DataManager:
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
         self.df_daily = self.df_daily.sort(["code", "date"])
     
-        # 复权逻辑：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
         adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
@@ -183,7 +181,7 @@ class DataManager:
         ])
 
     def _optimize_memory(self, df, name):
-        """将 Float64 降级为 Float32，降低内存消耗"""
+        """将 Float64 降级为 Float32，降低 50% 内存消耗"""
         if df is None:
             return
 
