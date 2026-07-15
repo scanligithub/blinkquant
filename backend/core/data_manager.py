@@ -67,35 +67,19 @@ class DataManager:
 
     async def _download_all_to_ram(self):
         """并发获取所有 Parquet 文件的字节流"""
-        all_files = list_repo_files(repo_id=self.repo_id, repo_type="dataset", token=self.hf_token)
+        
+        # --- 核心修改：将同步网络请求放入线程池，防止阻塞 Uvicorn 主事件循环 ---
+        all_files = await asyncio.to_thread(
+            list_repo_files, repo_id=self.repo_id, repo_type="dataset", token=self.hf_token
+        )
+        
         data_files = [f for f in all_files if f.endswith(".parquet")]
 
         # 构建下载 URL (Hugging Face 官方标准格式)
         base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
         headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
-
-        data_map = {}
-
-        # 限制并发数为 10，防止被 HF 屏蔽
-        semaphore = asyncio.Semaphore(10)
-
-        async def download_file(client, filename):
-            async with semaphore:
-                url = base_url + filename
-                response = await client.get(url, timeout=60.0)
-                response.raise_for_status()
-                return filename, response.content
-
-        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
-
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-            tasks = [download_file(client, f) for f in data_files]
-            results = await asyncio.gather(*tasks)
-
-        for fname, content in results:
-            data_map[fname] = content
-
-        return data_map
+        
+        # ... 后续代码保持不变 ...
 
     def _process_ram_data(self, data_map):
         """解析内存中的字节流并按节点索引分片"""
