@@ -43,6 +43,11 @@ class DataManager:
             logger.info(f"🚀 Node {self.node_index}: Starting RAM-only data load...")
             # 1. 并发下载所有文件内容到内存
             all_data_map = await self._download_all_to_ram()
+            
+            # 容错检查
+            if all_data_map is None:
+                raise ValueError("Downloaded data map is None. Check download logic.")
+
             # 2. 从内存字节流解析并分片加载
             self._process_ram_data(all_data_map)
             # 3. 数据预处理 (CPU 密集型)
@@ -54,7 +59,7 @@ class DataManager:
             # 最终清理，确保释放所有临时字节流
             del all_data_map
             gc.collect()
-            # 新增：调用 C 语言底层库，强制 Linux 归还幽灵内存给操作系统
+            # 强制 Linux 归还幽灵内存给操作系统
             try:
                 import ctypes
                 ctypes.CDLL('libc.so.6').malloc_trim(0)
@@ -67,19 +72,39 @@ class DataManager:
 
     async def _download_all_to_ram(self):
         """并发获取所有 Parquet 文件的字节流"""
-        
-        # --- 核心修改：将同步网络请求放入线程池，防止阻塞 Uvicorn 主事件循环 ---
+        # 1. 使用 asyncio.to_thread 包装，确保此同步 IO 请求不会阻塞 FastAPI 的事件循环
         all_files = await asyncio.to_thread(
             list_repo_files, repo_id=self.repo_id, repo_type="dataset", token=self.hf_token
         )
-        
         data_files = [f for f in all_files if f.endswith(".parquet")]
 
         # 构建下载 URL (Hugging Face 官方标准格式)
         base_url = f"https://huggingface.co/datasets/{self.repo_id}/resolve/main/"
         headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
-        
-        # ... 后续代码保持不变 ...
+
+        data_map = {}
+
+        # 限制并发数为 10，防止被 HF 屏蔽
+        semaphore = asyncio.Semaphore(10)
+
+        async def download_file(client, filename):
+            async with semaphore:
+                url = base_url + filename
+                response = await client.get(url, timeout=60.0)
+                response.raise_for_status()
+                return filename, response.content
+
+        logger.info(f"Downloading {len(data_files)} files (approx < 1GB) into RAM...")
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            tasks = [download_file(client, f) for f in data_files]
+            results = await asyncio.gather(*tasks)
+
+        for fname, content in results:
+            data_map[fname] = content
+
+        # 确保显式返回数据字典
+        return data_map
 
     def _process_ram_data(self, data_map):
         """解析内存中的字节流并按节点索引分片"""
@@ -106,7 +131,6 @@ class DataManager:
             del data_map[f]
     
         if kline_dfs:
-            # 关键修改：增加 how="diagonal" 处理不一致的列
             self.df_daily = pl.concat(kline_dfs, how="diagonal")
             self.df_daily = self.df_daily.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
     
@@ -124,7 +148,6 @@ class DataManager:
                 data_map[f] = b""
                 del data_map[f]
             
-            # 关键修改：增加 how="diagonal" 容错资金流的列不一致情况
             df_flow = pl.concat(flow_dfs, how="diagonal").with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
             if self.df_daily is not None:
                 self.df_daily = self.df_daily.join(df_flow, on=["date", "code"], how="left")
@@ -132,7 +155,6 @@ class DataManager:
         # 4. 板块数据 (全量)
         sector_files = sorted([f for f in data_map if "sector_kline_" in f])
         if sector_files:
-            # 关键修改：增加 how="diagonal"
             self.df_sector_daily = pl.concat(
                 [pl.read_parquet(io.BytesIO(data_map[f])) for f in sector_files], 
                 how="diagonal"
@@ -145,45 +167,9 @@ class DataManager:
             return
     
         logger.info(f"Node {self.node_index}: Applying price adjustment...")
-    
-        # ======================= BEGIN DIAGNOSTIC PROBE =======================
-        # 在执行任何计算前，打印指定股票在跨年期间最原始的复权因子
-        # 注意：我们使用 2023/2024 年，因为 K 线图上的 '2026' 是前端显示错误
-        try:
-            # 你可以修改这里的代码和日期来调试不同的股票
-            debug_stock_code = "sh.600901"  # 八方股份（向下断层）
-            # debug_stock_code = "sz.002812"  # 恩捷股份（向上断层）
-            start_debug_date = "2023-06-26"
-            end_debug_date = "2023-07-10"
-    
-            # 从 self.df_daily 中过滤出原始数据
-            debug_data = (
-                self.df_daily
-                .filter(
-                    (pl.col("code") == debug_stock_code) &
-                    (pl.col("date") >= pl.lit(start_debug_date).str.to_date()) &
-                    (pl.col("date") <= pl.lit(end_debug_date).str.to_date())
-                )
-                .select(["date", "code", "close", "adjustFactor"])  # 只看我们关心的列
-                .sort("date")
-            )
-    
-            # 在日志中清晰地打印出来
-            logger.info("=" * 25 + " RAW DATA VERIFICATION " + "=" * 25)
-            logger.info(f"Checking raw factors for {debug_stock_code} from {start_debug_date} to {end_debug_date}:")
-            if debug_data.is_empty():
-                logger.warning(f"DIAGNOSTIC: No data found for {debug_stock_code} in the specified date range.")
-            else:
-                # Polars 的默认打印格式非常适合日志查看
-                logger.info("\n" + str(debug_data))
-            logger.info("=" * 28 + " END VERIFICATION " + "=" * 28)
-        except Exception as e:
-            logger.error(f"DIAGNOSTIC PROBE FAILED: {e}", exc_info=True)
-        # ======================== END DIAGNOSTIC PROBE ========================
-    
         self.df_daily = self.df_daily.sort(["code", "date"])
     
-        # 复权逻辑修复：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
+        # 复权逻辑：先 forward_fill 让历史因子向后传递，最后再用 fill_null(1.0) 兜底
         adj_col = pl.col("adjustFactor").forward_fill().fill_null(1.0).over("code")
         latest_adj = adj_col.last().over("code")
         qfq_expr = pl.when(latest_adj > 0).then(adj_col / latest_adj).otherwise(1.0)
@@ -197,7 +183,7 @@ class DataManager:
         ])
 
     def _optimize_memory(self, df, name):
-        """强制将 Float64 降级为 Float32，降低 50% 内存消耗"""
+        """将 Float64 降级为 Float32，降低内存消耗"""
         if df is None:
             return
 
