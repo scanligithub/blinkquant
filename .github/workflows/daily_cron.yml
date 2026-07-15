@@ -17,6 +17,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ---- 核心修改：分时错峰启动控制 ----
+      - name: Staggered Delay (Avoid Concurrent HF Build Limits)
+        run: |
+          # 节点 1 延迟 0 秒，节点 2 延迟 120 秒，节点 3 延迟 240 秒
+          # 120 秒的时间足够让上一个节点完成 Docker 镜像的编译并进入部署状态，从而彻底绕过并发限制
+          DELAY=$(( (${{ matrix.node }} - 1) * 120 ))
+          if [ $DELAY -gt 0 ]; then
+            echo "=========================================================="
+            echo "Staggering deployment: Node ${{ matrix.node }} will sleep for $DELAY seconds..."
+            echo "=========================================================="
+            sleep $DELAY
+          fi
+
       - name: Force Push and Monitor Deploy Node ${{ matrix.node }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -46,7 +59,7 @@ jobs:
           # ==========================================
           DEPLOY_SUCCESS=false
           BUILD_ATTEMPTS=1
-          MAX_BUILD_POLLS=15 # 最多等待 7.5 分钟 (15 * 30秒)
+          MAX_BUILD_POLLS=30 # 最多等待 15 分钟 (30 * 30秒)
           
           while [ $BUILD_ATTEMPTS -le $MAX_BUILD_POLLS ]; do
             echo "Checking Hugging Face Space Status ($BUILD_ATTEMPTS/$MAX_BUILD_POLLS)..."
