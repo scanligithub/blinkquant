@@ -27,5 +27,60 @@ jobs:
           git config user.email "github-actions@github.com"
           git add .
           git commit -m "Daily Auto-Restart: $(date)"
-          # 强制推送将触发 HF Space 的重新构建与容器重启
+          
+          # 1. 触发首次强推部署
           git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main
+          
+          # 2. 初始化重试循环机制
+          ATTEMPTS=1
+          MAX_ATTEMPTS=3
+          HEALTHY=false
+          
+          while [ $ATTEMPTS -le $MAX_ATTEMPTS ]; do
+            echo "=========================================================="
+            echo "Attempt $ATTEMPTS/$MAX_ATTEMPTS: Monitoring Node ${{ matrix.node }}..."
+            echo "=========================================================="
+            
+            # 轮询检测：最多检测 12 次，每次间隔 20 秒 (共 4 分钟)
+            POLL_COUNT=1
+            MAX_POLLS=12
+            POLL_INTERVAL=20
+            
+            while [ $POLL_COUNT -le $MAX_POLLS ]; do
+              echo "Polling health check ($POLL_COUNT/$MAX_POLLS) for Node ${{ matrix.node }}..."
+              
+              # 请求健康检查接口，限时 10 秒超时
+              RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || true)
+              echo "Response: $RESPONSE"
+              
+              # 只有当接口确切返回 "healthy"（代表数据全部加载完毕）才视为成功
+              if [[ "$RESPONSE" == *"healthy"* ]]; then
+                echo "✅ Success! Node ${{ matrix.node }} is healthy."
+                HEALTHY=true
+                break 2 # 成功跳出两层循环
+              fi
+              
+              sleep $POLL_INTERVAL
+              POLL_COUNT=$((POLL_COUNT+1))
+            done
+            
+            # 如果本次 Attempt 结束仍不健康，且未达到上限，则发起下一次重新部署
+            if [ "$HEALTHY" = false ]; then
+              if [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; then
+                echo "⚠️ Node ${{ matrix.node }} failed to start healthy within 4 minutes."
+                echo "Triggering redeploy for Node ${{ matrix.node }} (empty commit force-push)..."
+                
+                # 产生一个新的空提交以触发 HF 重构
+                git commit --allow-empty -m "Auto-Redeploy Attempt $((ATTEMPTS+1)): $(date)"
+                git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main
+              fi
+            fi
+            
+            ATTEMPTS=$((ATTEMPTS+1))
+          done
+          
+          # 3. 最终结果断言
+          if [ "$HEALTHY" = false ]; then
+            echo "❌ Error: Node ${{ matrix.node }} failed to start healthy after $MAX_ATTEMPTS redeployment attempts."
+            exit 1
+          fi
