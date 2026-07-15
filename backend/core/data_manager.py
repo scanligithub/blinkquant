@@ -30,6 +30,15 @@ class DataManager:
             logger.warning(f"Invalid NODE_INDEX {self.node_index} (out of bounds), resetting to 0")
             self.node_index = 0
 
+        # ---- 核心修改：读取本次容器唯一的 build_id.txt (用于部署版本校验) ----
+        self.build_id = "unknown"
+        try:
+            if os.path.exists("build_id.txt"):
+                with open("build_id.txt", "r") as f:
+                    self.build_id = f.read().strip()
+        except Exception:
+            pass
+
         # 内存中的数据对象
         self.df_daily = None
         self.df_weekly = None
