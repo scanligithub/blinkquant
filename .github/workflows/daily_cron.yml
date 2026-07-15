@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Force Push to HF Space Node ${{ matrix.node }}
+      - name: Force Push and Monitor Deploy Node ${{ matrix.node }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -26,72 +26,87 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add .
+          
+          # 生成带时间戳的唯一 commit，保证 SHA 唯一性
           git commit -m "Daily Auto-Restart: $(date)"
           
-          # 1. 触发首次强推部署
+          # 记录本地最新的 commit SHA 
+          LOCAL_SHA=$(git rev-parse HEAD)
+          echo "Local Commit SHA to deploy: $LOCAL_SHA"
+          
+          # 1. 触发强推部署
           git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main
           
-          # 2. 初始化重试循环机制
-          ATTEMPTS=1
-          MAX_ATTEMPTS=3
-          HEALTHY=false
+          # 2. 等待 15 秒，让 Hugging Face 接收并登记本次推送，开始构建任务
+          echo "Waiting 15 seconds for Hugging Face to register the push..."
+          sleep 15
           
-          while [ $ATTEMPTS -le $MAX_ATTEMPTS ]; do
-            echo "=========================================================="
-            echo "Attempt $ATTEMPTS/$MAX_ATTEMPTS: Monitoring Node ${{ matrix.node }}..."
-            echo "=========================================================="
+          # ==========================================
+          # 阶段一：监控 Hugging Face 平台级的构建进度
+          # ==========================================
+          DEPLOY_SUCCESS=false
+          BUILD_ATTEMPTS=1
+          MAX_BUILD_POLLS=15 # 最多等待 7.5 分钟 (15 * 30秒)
+          
+          while [ $BUILD_ATTEMPTS -le $MAX_BUILD_POLLS ]; do
+            echo "Checking Hugging Face Space Status ($BUILD_ATTEMPTS/$MAX_BUILD_POLLS)..."
             
-            # 轮询检测：最多检测 5 次，每次温和地间隔 60 秒 (共 5 分钟)
-            POLL_COUNT=1
-            MAX_POLLS=5
-            POLL_INTERVAL=60
+            # 访问 HF 官方 API 获取空间元数据
+            SPACE_INFO=$(curl -s "https://huggingface.co/api/spaces/scanli/blinkquant-node${{ matrix.node }}")
             
-            while [ $POLL_COUNT -le $MAX_POLLS ]; do
-              echo "Polling health check ($POLL_COUNT/$MAX_POLLS) for Node ${{ matrix.node }}..."
-              
-              # 请求健康检查接口，限时 10 秒超时
-              RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || echo "")
-              
-              # ---- 核心修复：使用 jq 严格解析 JSON 结构中的 status 字段，拒绝 HTML 页面干扰 ----
-              STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null || echo "")
-              echo "Parsed Status: '$STATUS'"
-              
-              # 只有当接口确切返回真正的健康状态时才放行
-              if [ "$STATUS" = "healthy" ]; then
-                echo "✅ Success! Node ${{ matrix.node }} is healthy and fully loaded."
-                HEALTHY=true
-                break 2 # 成功启动，直接跳出两层循环
-              fi
-              
-              # 友好日志提示
-              if [ "$STATUS" = "initializing" ]; then
-                echo "⏳ Node is initializing (loading data)..."
-              else
-                echo "💤 Node is offline, building, or returning non-JSON response."
-              fi
-              
-              echo "Sleeping for $POLL_INTERVAL seconds..."
-              sleep $POLL_INTERVAL
-              POLL_COUNT=$((POLL_COUNT+1))
-            done
+            # 使用 jq 解析空间当前的 Stage 和 部署的 Git SHA
+            CURRENT_STAGE=$(echo "$SPACE_INFO" | jq -r '.runtime.stage' 2>/dev/null || echo "")
+            CURRENT_SHA=$(echo "$SPACE_INFO" | jq -r '.sha' 2>/dev/null || echo "")
             
-            # 如果本次 Attempt 结束仍不健康，且未达到上限，则发起下一次重新部署
-            if [ "$HEALTHY" = false ]; then
-              if [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; then
-                echo "⚠️ Node ${{ matrix.node }} failed to start healthy within 5 minutes."
-                echo "Triggering redeploy for Node ${{ matrix.node }} (empty commit force-push)..."
-                
-                # 产生一个新的空提交以触发 HF 重构
-                git commit --allow-empty -m "Auto-Redeploy Attempt $((ATTEMPTS+1)): $(date)"
-                git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main
-              fi
+            echo "Space Stage: '$CURRENT_STAGE', Active SHA on Cloud: '${CURRENT_SHA:0:7}'"
+            
+            # 如果检测到编译报错或崩溃，直接宣告失败，省去等待时间
+            if [ "$CURRENT_STAGE" = "BUILD_ERROR" ] || [ "$CURRENT_STAGE" = "CRASHED" ]; then
+              echo "❌ Error: HF Space reported build error or crash!"
+              exit 1
             fi
             
-            ATTEMPTS=$((ATTEMPTS+1))
+            # 只有当 Stage 恢复为 RUNNING，且空间上的 SHA 匹配我们本地推送的 LOCAL_SHA 时，才代表新版容器完全就绪
+            if [ "$CURRENT_STAGE" = "RUNNING" ] && [ "$CURRENT_SHA" = "$LOCAL_SHA" ]; then
+              echo "🎉 New container build is fully compiled and deployed!"
+              DEPLOY_SUCCESS=true
+              break
+            fi
+            
+            sleep 30
+            BUILD_ATTEMPTS=$((BUILD_ATTEMPTS+1))
           done
           
-          # 3. 最终结果断言
+          if [ "$DEPLOY_SUCCESS" = false ]; then
+            echo "❌ Error: Timeout waiting for HF Space to finish building."
+            exit 1
+          fi
+          
+          # ==========================================
+          # 阶段二：新版本就绪后，等待其内部 Polars 数据加载完毕
+          # ==========================================
+          HEALTHY=false
+          POLL_COUNT=1
+          MAX_POLLS=8 # 最多等待 4 分钟 (8 * 30秒)
+          
+          while [ $POLL_COUNT -le $MAX_POLLS ]; do
+            echo "Polling app internal health check ($POLL_COUNT/$MAX_POLLS)..."
+            
+            RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || echo "")
+            STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null || echo "")
+            echo "App Status: '$STATUS'"
+            
+            if [ "$STATUS" = "healthy" ]; then
+              echo "✅ Success! Node ${{ matrix.node }} is healthy and ready to accept queries!"
+              HEALTHY=true
+              break
+            fi
+            
+            sleep 30
+            POLL_COUNT=$((POLL_COUNT+1))
+          done
+          
           if [ "$HEALTHY" = false ]; then
-            echo "❌ Error: Node ${{ matrix.node }} failed to start healthy after $MAX_ATTEMPTS redeployment attempts."
+            echo "❌ Error: New container started, but Polars failed to load data in time."
             exit 1
           fi
