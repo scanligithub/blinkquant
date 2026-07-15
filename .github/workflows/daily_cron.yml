@@ -17,11 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ---- 核心修改：分时错峰启动控制 ----
+      # ---- 阶段 0：分时错峰启动，防止并发限制与 LFS 带宽冲突 ----
       - name: Staggered Delay (Avoid Concurrent HF Build Limits)
         run: |
           # 节点 1 延迟 0 秒，节点 2 延迟 120 秒，节点 3 延迟 240 秒
-          # 120 秒的时间足够让上一个节点完成 Docker 镜像的编译并进入部署状态，从而彻底绕过并发限制
+          # 120 秒的时间足够让前一个节点完成 Docker 镜像的编译并开始启动，从而彻底绕过并发限制
           DELAY=$(( (${{ matrix.node }} - 1) * 120 ))
           if [ $DELAY -gt 0 ]; then
             echo "=========================================================="
@@ -30,6 +30,7 @@ jobs:
             sleep $DELAY
           fi
 
+      # ---- 核心步骤：推送到云端并进行两阶段健壮性监控 ----
       - name: Force Push and Monitor Deploy Node ${{ matrix.node }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -40,7 +41,7 @@ jobs:
           git config user.email "github-actions@github.com"
           git add .
           
-          # 生成带时间戳的唯一 commit，保证 SHA 唯一性
+          # 生成带时间戳的唯一 commit，保证 SHA 唯一性，便于版本比对
           git commit -m "Daily Auto-Restart: $(date)"
           
           # 记录本地最新的 commit SHA 
@@ -54,9 +55,9 @@ jobs:
           echo "Waiting 15 seconds for Hugging Face to register the push..."
           sleep 15
           
-          # ==========================================
-          # 阶段一：监控 Hugging Face 平台级的构建进度
-          # ==========================================
+          # ==========================================================
+          # 阶段一：监控 Hugging Face 平台级的构建进度 (15 分钟保底上限)
+          # ==========================================================
           DEPLOY_SUCCESS=false
           BUILD_ATTEMPTS=1
           MAX_BUILD_POLLS=30 # 最多等待 15 分钟 (30 * 30秒)
@@ -79,9 +80,9 @@ jobs:
               exit 1
             fi
             
-            # 只有当 Stage 恢复为 RUNNING，且空间上的 SHA 匹配我们本地推送的 LOCAL_SHA 时，才代表新版容器完全就绪
-            if [ "$CURRENT_STAGE" = "RUNNING" ] && [ "$CURRENT_SHA" = "$LOCAL_SHA" ]; then
-              echo "🎉 New container build is fully compiled and deployed!"
+            # 核心优化：允许 RUNNING 或 RUNNING_APP_STARTING 状态放行，节约 3 分钟等待
+            if [[ "$CURRENT_STAGE" == "RUNNING" || "$CURRENT_STAGE" == "RUNNING_APP_STARTING" ]] && [ "$CURRENT_SHA" = "$LOCAL_SHA" ]; then
+              echo "🎉 New container is active on Hugging Face (Stage: $CURRENT_STAGE)!"
               DEPLOY_SUCCESS=true
               break
             fi
@@ -95,9 +96,9 @@ jobs:
             exit 1
           fi
           
-          # ==========================================
-          # 阶段二：新版本就绪后，等待其内部 Polars 数据加载完毕
-          # ==========================================
+          # ==========================================================
+          # 阶段二：新版本就绪后，等待其内部 Polars 数据加载完毕 (4 分钟上限)
+          # ==========================================================
           HEALTHY=false
           POLL_COUNT=1
           MAX_POLLS=8 # 最多等待 4 分钟 (8 * 30秒)
