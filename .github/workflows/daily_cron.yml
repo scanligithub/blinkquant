@@ -20,8 +20,6 @@ jobs:
       # ---- 阶段 0：分时错峰启动，防止并发限制与 LFS 带宽冲突 ----
       - name: Staggered Delay (Avoid Concurrent HF Build Limits)
         run: |
-          # 节点 1 延迟 0 秒，节点 2 延迟 120 秒，节点 3 延迟 240 秒
-          # 120 秒的时间足够让前一个节点完成 Docker 镜像的编译并开始启动，从而彻底绕过并发限制
           DELAY=$(( (${{ matrix.node }} - 1) * 120 ))
           if [ $DELAY -gt 0 ]; then
             echo "=========================================================="
@@ -39,9 +37,12 @@ jobs:
           git init
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add .
           
-          # 生成带时间戳的唯一 commit，保证 SHA 唯一性，便于版本比对
+          # ---- 核心修改：生成唯一的 BUILD_ID，写入文件并提交，用来唯一标识本次启动的容器 ----
+          BUILD_ID=$(date +%s%N)
+          echo "$BUILD_ID" > build_id.txt
+          
+          git add .
           git commit -m "Daily Auto-Restart: $(date)"
           
           # 记录本地最新的 commit SHA 
@@ -80,7 +81,7 @@ jobs:
               exit 1
             fi
             
-            # 核心优化：允许 RUNNING 或 RUNNING_APP_STARTING 状态放行，节约 3 分钟等待
+            # 允许 RUNNING 或 RUNNING_APP_STARTING 状态放行，节约 3 分钟等待
             if [[ "$CURRENT_STAGE" == "RUNNING" || "$CURRENT_STAGE" == "RUNNING_APP_STARTING" ]] && [ "$CURRENT_SHA" = "$LOCAL_SHA" ]; then
               echo "🎉 New container is active on Hugging Face (Stage: $CURRENT_STAGE)!"
               DEPLOY_SUCCESS=true
@@ -98,6 +99,7 @@ jobs:
           
           # ==========================================================
           # 阶段二：新版本就绪后，等待其内部 Polars 数据加载完毕 (4 分钟上限)
+          # 并严格比对 BUILD_ID，防止因为滚动更新请求被路由到旧容器
           # ==========================================================
           HEALTHY=false
           POLL_COUNT=1
@@ -108,12 +110,24 @@ jobs:
             
             RESPONSE=$(curl -s -m 10 "https://scanli-blinkquant-node${{ matrix.node }}.hf.space/api/v1/health" || echo "")
             STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null || echo "")
-            echo "App Status: '$STATUS'"
+            RUNNING_BUILD_ID=$(echo "$RESPONSE" | jq -r '.build_id' 2>/dev/null || echo "")
             
-            if [ "$STATUS" = "healthy" ]; then
-              echo "✅ Success! Node ${{ matrix.node }} is healthy and ready to accept queries!"
+            echo "App Status: '$STATUS', Running Build ID: '$RUNNING_BUILD_ID', Expected Build ID: '$BUILD_ID'"
+            
+            # 必须满足：状态为 healthy 且运行的 Build ID 匹配我们刚刚生成的 BUILD_ID 
+            if [ "$STATUS" = "healthy" ] && [ "$RUNNING_BUILD_ID" = "$BUILD_ID" ]; then
+              echo "✅ Success! Node ${{ matrix.node }} is healthy, updated, and ready!"
               HEALTHY=true
               break
+            fi
+            
+            # 辅助日志诊断
+            if [ "$RUNNING_BUILD_ID" != "$BUILD_ID" ] && [ -n "$RUNNING_BUILD_ID" ]; then
+              echo "⏳ Still hitting the OLD container (Build ID mismatched). Waiting for HF router swap..."
+            elif [ "$STATUS" = "initializing" ]; then
+              echo "⏳ New container is initializing (loading data)..."
+            else
+              echo "💤 New container is booting up..."
             fi
             
             sleep 30
@@ -121,6 +135,6 @@ jobs:
           done
           
           if [ "$HEALTHY" = false ]; then
-            echo "❌ Error: New container started, but Polars failed to load data in time."
+            echo "❌ Error: New container failed to become healthy, or router did not swap in time."
             exit 1
           fi
