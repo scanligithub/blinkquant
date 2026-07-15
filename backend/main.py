@@ -6,7 +6,7 @@ import os
 import time
 import logging
 import asyncio
-from contextlib import asynccontextmanager as asynccontextmanager
+# 删除了这行重复的 import：from contextlib import asynccontextmanager as asynccontextmanager
 
 # 配置标准日志输出到控制台
 logging.basicConfig(level=logging.INFO)
