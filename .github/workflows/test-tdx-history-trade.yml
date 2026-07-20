@@ -1,0 +1,388 @@
+name: Test injoyai tdx Historical Trade Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "交易日期，例如 20260717"
+        required: true
+        default: "20260717"
+
+      stock_codes:
+        description: "股票代码，逗号分隔，例如 sh600745,sz000001"
+        required: true
+        default: "sh600745,sz000001,sh600519"
+
+      tdx_server:
+        description: "通达信服务器，例如 119.147.212.81:7709"
+        required: true
+        default: "119.147.212.81:7709"
+
+jobs:
+  test-history-trade:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Create test project
+        shell: bash
+        run: |
+          mkdir -p tdx_test
+          cd tdx_test
+
+          cat > go.mod <<'EOF'
+          module tdx-test
+
+          go 1.24
+
+          require github.com/injoyai/tdx v0.0.84
+          EOF
+
+          go mod tidy
+
+      - name: Write test program
+        shell: bash
+        env:
+          TRADE_DATE: ${{ inputs.trade_date }}
+          STOCK_CODES: ${{ inputs.stock_codes }}
+          TDX_SERVER: ${{ inputs.tdx_server }}
+        run: |
+          cd tdx_test
+
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+              "encoding/csv"
+              "encoding/json"
+              "fmt"
+              "os"
+              "strconv"
+              "strings"
+              "time"
+
+              "github.com/injoyai/tdx"
+              "github.com/injoyai/tdx/protocol"
+          )
+
+          type OutputTrade struct {
+              Index      int    `json:"index"`
+              Time       string `json:"time"`
+              Price      string `json:"price"`
+              PriceRaw   uint32 `json:"price_raw"`
+              Volume     int    `json:"volume"`
+              Status     int    `json:"status"`
+              StatusName string `json:"status_name"`
+              Number     int    `json:"number"`
+          }
+
+          func statusName(status int) string {
+              switch status {
+              case 0:
+                  return "BUY"
+              case 1:
+                  return "SELL"
+              case 2:
+                  return "NEUTRAL"
+              default:
+                  return "UNKNOWN"
+              }
+          }
+
+          func main() {
+              date := os.Getenv("TRADE_DATE")
+              codesRaw := os.Getenv("STOCK_CODES")
+              server := os.Getenv("TDX_SERVER")
+
+              if date == "" {
+                  date = "20260717"
+              }
+
+              if codesRaw == "" {
+                  codesRaw = "sh600745,sz000001,sh600519"
+              }
+
+              if server == "" {
+                  server = "119.147.212.81:7709"
+              }
+
+              fmt.Println("============================================================")
+              fmt.Println("injoyai/tdx 历史逐笔成交数据测试")
+              fmt.Println("============================================================")
+              fmt.Printf("交易日期: %s\n", date)
+              fmt.Printf("测试股票: %s\n", codesRaw)
+              fmt.Printf("服务器:   %s\n", server)
+              fmt.Println()
+
+              // 连接指定服务器
+              c, err := tdx.Dial(server)
+              if err != nil {
+                  panic(fmt.Errorf("连接 TDX 服务器失败: %w", err))
+              }
+              defer c.Close()
+
+              fmt.Println("✅ TDX 服务器连接成功")
+
+              codes := strings.Split(codesRaw, ",")
+
+              os.MkdirAll("../output", 0755)
+
+              for _, code := range codes {
+                  code = strings.TrimSpace(code)
+                  if code == "" {
+                      continue
+                  }
+
+                  fmt.Println()
+                  fmt.Println("============================================================")
+                  fmt.Printf("开始测试: %s\n", code)
+                  fmt.Println("============================================================")
+
+                  resp, err := c.GetHistoryTradeDay(date, code)
+                  if err != nil {
+                      fmt.Printf("❌ 获取失败: %v\n", err)
+                      continue
+                  }
+
+                  if resp == nil {
+                      fmt.Println("❌ 返回结果为空")
+                      continue
+                  }
+
+                  fmt.Printf("返回对象类型: %T\n", resp)
+                  fmt.Printf("逐笔记录数量: %d\n", len(resp.List))
+
+                  if len(resp.List) == 0 {
+                      fmt.Println("⚠️ 没有返回任何数据")
+                      continue
+                  }
+
+                  // 统计 Status
+                  statusCount := map[int]int{}
+                  totalVolume := 0
+
+                  output := make([]OutputTrade, 0, len(resp.List))
+
+                  for i, trade := range resp.List {
+                      statusCount[trade.Status]++
+                      totalVolume += trade.Volume
+
+                      item := OutputTrade{
+                          Index:      i + 1,
+                          Time:       trade.Time.Format("15:04:05"),
+                          Price:      fmt.Sprintf("%.3f", trade.Price.Float64()),
+                          PriceRaw:   uint32(trade.Price),
+                          Volume:     trade.Volume,
+                          Status:     trade.Status,
+                          StatusName: statusName(trade.Status),
+                          Number:     trade.Number,
+                      }
+
+                      output = append(output, item)
+                  }
+
+                  fmt.Println()
+                  fmt.Println("--------------- 字段结构样本 ---------------")
+
+                  sample := resp.List[0]
+
+                  fmt.Printf("Time   = %v\n", sample.Time)
+                  fmt.Printf("Price  = %v\n", sample.Price)
+                  fmt.Printf("Price  = %.3f 元\n", sample.Price.Float64())
+                  fmt.Printf("Volume = %d 手\n", sample.Volume)
+                  fmt.Printf("Status = %d (%s)\n",
+                      sample.Status,
+                      statusName(sample.Status),
+                  )
+                  fmt.Printf("Number = %d\n", sample.Number)
+
+                  fmt.Println()
+                  fmt.Println("--------------- Status 分布 ---------------")
+
+                  for status, count := range statusCount {
+                      fmt.Printf(
+                          "Status=%d (%s): %d 条\n",
+                          status,
+                          statusName(status),
+                          count,
+                      )
+                  }
+
+                  fmt.Println()
+                  fmt.Println("--------------- 数据统计 ---------------")
+
+                  fmt.Printf("总记录数: %d\n", len(resp.List))
+                  fmt.Printf("总成交量: %d 手\n", totalVolume)
+
+                  buyCount := statusCount[0]
+                  sellCount := statusCount[1]
+                  neutralCount := statusCount[2]
+
+                  fmt.Printf("买方向记录: %d\n", buyCount)
+                  fmt.Printf("卖方向记录: %d\n", sellCount)
+                  fmt.Printf("中性记录:   %d\n", neutralCount)
+
+                  fmt.Println()
+                  fmt.Println("--------------- 前20条 ---------------")
+
+                  limit := 20
+                  if len(output) < limit {
+                      limit = len(output)
+                  }
+
+                  for i := 0; i < limit; i++ {
+                      x := output[i]
+
+                      fmt.Printf(
+                          "%4d | %s | %8s | %8d手 | %-8s | Number=%d\n",
+                          x.Index,
+                          x.Time,
+                          x.Price,
+                          x.Volume,
+                          x.StatusName,
+                          x.Number,
+                      )
+                  }
+
+                  fmt.Println()
+                  fmt.Println("--------------- 后20条 ---------------")
+
+                  start := len(output) - 20
+                  if start < 0 {
+                      start = 0
+                  }
+
+                  for i := start; i < len(output); i++ {
+                      x := output[i]
+
+                      fmt.Printf(
+                          "%4d | %s | %8s | %8d手 | %-8s | Number=%d\n",
+                          x.Index,
+                          x.Time,
+                          x.Price,
+                          x.Volume,
+                          x.StatusName,
+                          x.Number,
+                      )
+                  }
+
+                  // JSON
+                  jsonPath := fmt.Sprintf(
+                      "../output/%s_%s_trade.json",
+                      code,
+                      date,
+                  )
+
+                  jsonData, err := json.MarshalIndent(
+                      output,
+                      "",
+                      "  ",
+                  )
+
+                  if err != nil {
+                      fmt.Printf("JSON 序列化失败: %v\n", err)
+                  } else {
+                      os.WriteFile(
+                          jsonPath,
+                          jsonData,
+                          0644,
+                      )
+                      fmt.Printf("✅ JSON 已保存: %s\n", jsonPath)
+                  }
+
+                  // CSV
+                  csvPath := fmt.Sprintf(
+                      "../output/%s_%s_trade.csv",
+                      code,
+                      date,
+                  )
+
+                  f, err := os.Create(csvPath)
+                  if err != nil {
+                      fmt.Printf("CSV 创建失败: %v\n", err)
+                      continue
+                  }
+
+                  writer := csv.NewWriter(f)
+
+                  writer.Write([]string{
+                      "index",
+                      "time",
+                      "price",
+                      "price_raw",
+                      "volume",
+                      "status",
+                      "status_name",
+                      "number",
+                  })
+
+                  for _, x := range output {
+                      writer.Write([]string{
+                          strconv.Itoa(x.Index),
+                          x.Time,
+                          x.Price,
+                          strconv.FormatUint(uint64(x.PriceRaw), 10),
+                          strconv.Itoa(x.Volume),
+                          strconv.Itoa(x.Status),
+                          x.StatusName,
+                          strconv.Itoa(x.Number),
+                      })
+                  }
+
+                  writer.Flush()
+                  f.Close()
+
+                  fmt.Printf("✅ CSV 已保存: %s\n", csvPath)
+
+                  time.Sleep(500 * time.Millisecond)
+              }
+
+              fmt.Println()
+              fmt.Println("============================================================")
+              fmt.Println("测试完成")
+              fmt.Println("============================================================")
+
+              // 特别提醒
+              fmt.Println()
+              fmt.Println("重要结论:")
+              fmt.Println("1. 当前测试的是普通 A 股历史分时成交接口")
+              fmt.Println("2. 重点检查 Time / Price / Volume / Status / Number")
+              fmt.Println("3. 如果没有 Bid1 / Ask1 字段，则不是逐笔盘口快照")
+              fmt.Println("4. Status=BUY/SELL 是库解析出的方向字段")
+              fmt.Println("5. 需要进一步确认 Status 的底层协议含义")
+          }
+          EOF
+
+      - name: Run test
+        env:
+          TRADE_DATE: ${{ inputs.trade_date }}
+          STOCK_CODES: ${{ inputs.stock_codes }}
+          TDX_SERVER: ${{ inputs.tdx_server }}
+        run: |
+          cd tdx_test
+
+          echo "开始执行测试..."
+          go run main.go
+
+      - name: Show generated files
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "生成的文件"
+          echo "============================================================"
+          find output -type f -maxdepth 1 -print -exec ls -lh {} \; || true
+
+      - name: Upload trade data artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tdx-history-trade-test-${{ inputs.trade_date }}
+          path: output/
+          retention-days: 7
