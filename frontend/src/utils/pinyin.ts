@@ -8,12 +8,18 @@ import { pinyin } from 'pinyin-pro';
  */
 export function getPinyinInitials(text: string): string {
   if (!text) return '';
+  // 分离市场前缀（sh./sz./bj.）与主体，前缀不影响拼音转换
+  const parts = text.split('.');
+  let target = text;
+  if (parts.length === 2 && (parts[0] === 'sh' || parts[0] === 'sz' || parts[0] === 'bj')) {
+    target = parts[1];
+  }
   // 检测是否包含中文字符（Unicode 区间）
-  const hasChinese = /[\u4e00-\u9fff]/.test(text);
+  const hasChinese = /[\u4e00-\u9fff]/.test(target);
   if (!hasChinese) return text.toLowerCase();
 
   // pinyin‑pro 使用 pattern: 'first' 获取每个字的首字母
-  const initials = pinyin(text, { pattern: 'first', toneType: 'none', type: 'array' })
+  const initials = pinyin(target, { pattern: 'first', toneType: 'none', type: 'array' })
     .join('')
     .toLowerCase();
   // 只保留字母字符，移除所有非字母字符（如空格、括号、数字等）

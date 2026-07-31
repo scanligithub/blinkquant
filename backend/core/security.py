@@ -21,6 +21,18 @@ class BlinkParser:
             'HIGH': pl.col('high'), 'LOW': pl.col('low'),
             'VOL': pl.col('volume'), 'AMOUNT': pl.col('amount'),
             'PCT_CHG': pl.col('pctChg'), 'S_CLOSE': pl.col('s_close'),
+            # ★ 新增：基本面/事件因子（数值型）
+            'PE_TTM': pl.col('peTTM'),
+            'PB_MRQ': pl.col('pbMRQ'),
+            'FORECAST_YOY': pl.col('forecast_yoy'),
+            'IS_FORECAST_GOOD': pl.col('is_forecast_good'),
+            'IS_FORECAST_BAD': pl.col('is_forecast_bad'),
+            # ★ 新增：股本市值因子（数值型）
+            'TOTAL_SHARES': pl.col('total_shares'),
+            'FLOAT_SHARES': pl.col('float_shares'),
+            'TOTAL_MV': pl.col('total_mv'),
+            'FLOAT_MV': pl.col('float_mv'),
+            'TURN': pl.col('turn'),
         }
         # 当前解析上下文
         self.current_df = None
