@@ -80,7 +80,7 @@ def get_kline(code: str, timeframe: str = "D"):
     stock_df = df.filter(pl.col("code") == code).sort("date")
 
     # 动态选择存在的列，防止请求周/月线时崩溃
-    target_cols = ["date", "code", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ", "isST", "adjustFactor", "net_amount", "main_net", "super_net", "large_net", "medium_net", "small_net"]
+    target_cols = ["date", "code", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ", "isST", "adjustFactor", "net_amount", "main_net", "super_net", "large_net", "medium_net", "small_net", "total_shares", "float_shares", "total_mv", "float_mv", "product_ratios", "forecast_type", "forecast_yoy", "is_forecast_good", "is_forecast_bad"]
     available_cols = [col for col in target_cols if col in stock_df.columns]
     stock_df = stock_df.select(available_cols)
 

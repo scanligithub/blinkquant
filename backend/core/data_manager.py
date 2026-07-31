@@ -46,6 +46,7 @@ class DataManager:
         self.code_to_name = {}
         self.df_sector_daily = None
         self.df_mapping = None
+        self.df_sector_list = None
 
         # 指标计算算子映射
         self.INDICATOR_MAP = {
@@ -73,6 +74,7 @@ class DataManager:
             kline_dfs = []
             flow_dfs = []
             sector_dfs = []
+            sector_constituents_dfs = []
             
             # 2. 串行流式下载和解析，严格控制单次内存开销
             # 引入指数退避重试，防止由于 CDN 闪断导致节点初始化失败
@@ -106,8 +108,18 @@ class DataManager:
                     # 根据文件名类型分类解析，并在处理完成后立即 del 释放内存
                     if "stock_list.parquet" in fname:
                         sdf = pl.read_parquet(bio)
+                        # 规范化股票代码为带市场前缀标准格式（纯数字补前缀，已带前缀原样保留）
+                        sdf = sdf.with_columns(self._normalize_code_expr(pl.col("code")))
                         self.code_to_name = {row[0]: row[1] for row in sdf.select(["code", "code_name"]).iter_rows()}
                         del sdf
+                    
+                    elif "sector_list.parquet" in fname:
+                        # ★ 新增：板块元数据主表（code, name, type）
+                        self.df_sector_list = pl.read_parquet(bio)
+                    
+                    elif "sector_constituents_" in fname:
+                        # ★ 新增：自愈板块成分股关系映射表（sector_code, stock_code, sector_name, date）
+                        sector_constituents_dfs.append(pl.read_parquet(bio))
                     
                     elif "stock_kline_" in fname:
                         df = pl.read_parquet(bio)
@@ -159,6 +171,12 @@ class DataManager:
                 del sector_dfs
                 gc.collect()
 
+            # 5.1 ★ 新增：构建 1-to-1 板块映射（行业优先，兜底概念板块）
+            if sector_constituents_dfs:
+                self._build_sector_mapping(sector_constituents_dfs)
+                del sector_constituents_dfs
+                gc.collect()
+
             # 6. 数据前复权与重采样
             if self.df_daily is not None:
                 self._apply_forward_adjustment()
@@ -180,6 +198,97 @@ class DataManager:
             
         except Exception as e:
             logger.error(f"❌ RAM Load Error: {e}", exc_info=True)
+
+    @staticmethod
+    def _normalize_code_expr(code_col):
+        """
+        返回将纯数字股票代码补全为带市场前缀标准码的 Polars 表达式：
+        - 6 开头 → sh.
+        - 0 / 3 开头 → sz.
+        - 4 / 8 / 9 开头 → bj.
+        已带前缀（sh./sz./bj.）的代码原样返回。
+        使用纯向量化 when/then，避免 map_elements 的版本兼容问题。
+        """
+        return (
+            pl.when(code_col.str.starts_with("sh.") | code_col.str.starts_with("sz.") | code_col.str.starts_with("bj."))
+              .then(code_col)
+              .when(code_col.str.starts_with("6"))
+              .then(pl.lit("sh.") + code_col)
+              .when(code_col.str.starts_with("0") | code_col.str.starts_with("3"))
+              .then(pl.lit("sz.") + code_col)
+              .when(code_col.str.starts_with("4") | code_col.str.starts_with("8") | code_col.str.starts_with("9"))
+              .then(pl.lit("bj.") + code_col)
+              .otherwise(code_col)
+        )
+
+    def _build_sector_mapping(self, sector_constituents_dfs):
+        """
+        ★ 新增：构建 1-to-1 板块映射 df_mapping
+        规则：
+        1. 将 sector_constituents 与 sector_list 按 sector_code Inner Join，获取板块 type
+        2. 行业优先：仅保留 type == '行业板块' 的映射
+        3. 兜底逻辑：无行业板块的股票，取第一个概念板块充当映射
+        4. 去重保证：unique(subset=["code"], keep="first") 强制每个股票唯一
+        """
+        try:
+            constituents = pl.concat(sector_constituents_dfs, how="diagonal")
+            
+            if constituents.is_empty():
+                logger.warning(f"Node {self.node_index}: sector_constituents is empty, df_mapping disabled")
+                return
+                
+            # 字段检查与代码规范化
+            if "sector_code" not in constituents.columns or "stock_code" not in constituents.columns:
+                logger.warning(f"Node {self.node_index}: sector_constituents missing required columns, df_mapping disabled")
+                return
+            
+            # stock_code 补全前缀（600000 → sh.600000）
+            constituents = constituents.with_columns(
+                self._normalize_code_expr(pl.col("stock_code")).alias("code")
+            )
+            
+            # 关联 sector_list 获取板块 type（若存在）
+            if self.df_sector_list is not None and "code" in self.df_sector_list.columns and "type" in self.df_sector_list.columns:
+                mapped = constituents.join(
+                    self.df_sector_list.select(["code", "type"]),
+                    left_on="sector_code", right_on="code", how="inner"
+                )
+            else:
+                # sector_list 缺失时降级：全部按概念板块处理
+                logger.warning(f"Node {self.node_index}: sector_list not loaded, falling back to concept sectors")
+                mapped = constituents.with_columns(pl.lit("概念板块").alias("type"))
+            
+            # 行业优先：1-to-1 主映射
+            industry = mapped.filter(pl.col("type") == "行业板块")
+            concept = mapped.filter(pl.col("type") == "概念板块")
+
+            if not industry.is_empty():
+                # 兜底：对没有行业板块的个股，用其第一个概念板块补位
+                industry_codes = set(industry["code"].to_list())
+                concept_fallback = concept.filter(~pl.col("code").is_in(industry_codes))
+                if not concept_fallback.is_empty():
+                    combined = pl.concat([industry, concept_fallback])
+                else:
+                    combined = industry
+            elif not concept.is_empty():
+                # 极端兜底：无任何行业板块时，全部用概念板块
+                combined = concept
+            else:
+                combined = None
+
+            # 强制 1-to-1：每个股票代码只保留一行
+            if combined is not None:
+                self.df_mapping = combined.unique(subset=["code"], keep="first").select([
+                    pl.col("code"),
+                    pl.col("sector_code")
+                ])
+                logger.info(f"Node {self.node_index}: df_mapping built: {len(self.df_mapping)} rows (industry-first 1-to-1)")
+            else:
+                self.df_mapping = None
+                logger.warning(f"Node {self.node_index}: no sector mapping available, df_mapping disabled")
+        except Exception as e:
+            logger.error(f"Node {self.node_index}: Failed to build sector mapping: {e}", exc_info=True)
+            self.df_mapping = None
 
     def _apply_forward_adjustment(self):
         """执行前复权处理"""
@@ -206,7 +315,12 @@ class DataManager:
         if df is None:
             return
 
-        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in ["volume", "amount"]]
+        # 必须保留 Float64 的大整数字段（防止万亿级市值/股本溢出）
+        keep_f64 = {
+            "volume", "amount",
+            "total_shares", "float_shares", "total_mv", "float_mv", "forecast_yoy"
+        }
+        f64_cols = [c for c, t in df.schema.items() if t == pl.Float64 and c not in keep_f64]
         if f64_cols:
             opt = df.with_columns([pl.col(c).cast(pl.Float32) for c in f64_cols])
             if name == "df_daily":

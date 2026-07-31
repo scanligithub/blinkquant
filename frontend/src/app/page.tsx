@@ -18,14 +18,6 @@ const TIMEFRAMES = [
   { label: '月', value: 'M' },
 ];
 
-function formatStockCode(code: string): string {
-  const numericCode = code.replace(/[^0-9]/g, '');
-  if (numericCode.startsWith('6')) return `sh.${numericCode}`;
-  else if (numericCode.startsWith('0') || numericCode.startsWith('3')) return `sz.${numericCode}`;
-  else if (numericCode.startsWith('4') || numericCode.startsWith('8') || numericCode.startsWith('9')) return `bj.${numericCode}`;
-  return code;
-}
-
 export default function Home() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [timeframe, setTimeframe] = useState('D');
@@ -162,14 +154,16 @@ export default function Home() {
 
         const nameClean = name.trim().toLowerCase();
         const codeClean = code.trim().toLowerCase();
+        // 去市场前缀后的纯数字代码（sh.600000 → 600000），兼容用户直接输入数字
+        const codeNum = codeClean.replace(/^(sh|sz|bj)\./, '');
         const namePinyin = getPinyinInitials(name);
         let score = 0;
 
-        if (codeClean === qLower || nameClean === qLower) score += 1000;
-        if (codeClean.startsWith(qLower)) score += 100;
+        if (codeClean === qLower || codeNum === qLower || nameClean === qLower) score += 1000;
+        if (codeClean.startsWith(qLower) || codeNum.startsWith(qLower)) score += 100;
         if (namePinyin.startsWith(qPinyin)) score += 80;
         if (nameClean.startsWith(qLower)) score += 80;
-        if (codeClean.includes(qLower)) score += 10;
+        if (codeClean.includes(qLower) || codeNum.includes(qLower)) score += 10;
         if (namePinyin.includes(qPinyin)) score += 5;
         if (nameClean.includes(qLower)) score += 5;
 
@@ -341,7 +335,12 @@ export default function Home() {
                       setSearchQuery(''); setSearchResults([]);
                     } else {
                       const isNumeric = /^[0-9]+$/.test(searchQuery.trim());
-                      if (isNumeric) { viewStock(formatStockCode(searchQuery)); setSearchQuery(''); } 
+                      if (isNumeric) {
+                        // code 已带市场前缀，从 stockList 反查匹配的数字代码
+                        const qNumeric = searchQuery.trim();
+                        let found = stockList.find(s => s.code.replace(/^(sh|sz|bj)\./, '') === qNumeric);
+                        if (found) { viewStock(found.code); setSearchQuery(''); }
+                      }
                       else {
                         const qL = searchQuery.toLowerCase();
                         let found = stockList.find(s => s.code.toLowerCase().startsWith(qL) || s.name.toLowerCase().startsWith(qL));
