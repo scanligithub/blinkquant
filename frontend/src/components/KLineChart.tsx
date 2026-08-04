@@ -166,6 +166,8 @@ export default function KLineChart({
     [key: string]: any 
   }>({});
 
+  const formattedDataRef = useRef<any[]>([]);
+
   const [tooltip, setTooltip] = useState<any>(null);
   const [macdIndicators, setMacdIndicators] = useState<any>(null);
   const [mfIndicators, setMfIndicators] = useState<any>(null);
@@ -466,6 +468,7 @@ export default function KLineChart({
     });
 
     candlestickSeries.setData(formattedData);
+    formattedDataRef.current = formattedData;
             volumeSeries.setData(volumeData);
             // 根据初始 mainChartType 设置对应的指标数据
             if (mainChartType === 'MA') {
@@ -626,7 +629,18 @@ export default function KLineChart({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
           open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
           volume: (volData as any)?.value || 0,
-          changePercent: (((cdData.close as number) - (cdData.open as number)) / (cdData.open as number)) * 100,
+          changePercent: (() => {
+            let pct = 0;
+            const currentTime = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
+            const currentIndex = formattedDataRef.current.findIndex(d => d.time === currentTime);
+            if (currentIndex > 0) {
+              const prevClose = formattedDataRef.current[currentIndex - 1].close;
+              pct = ((cdData.close - prevClose) / prevClose) * 100;
+            } else if (currentIndex === 0) {
+              pct = ((cdData.close - cdData.open) / cdData.open) * 100;
+            }
+            return pct;
+          })(),
           position: param.point.x < (chartContainerRef.current?.clientWidth || 0) / 2 ? 'right' : 'left',
         });
 
