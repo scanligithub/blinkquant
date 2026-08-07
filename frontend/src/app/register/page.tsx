@@ -12,16 +12,21 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [requireInvite, setRequireInvite] = useState(false);
+  const [metaLoaded, setMetaLoaded] = useState(false);
 
   useEffect(() => {
     let active = true;
     fetch('/api/auth/meta')
       .then((r) => r.json())
       .then((json) => {
-        if (active) setRequireInvite(Boolean(json?.requireInvite));
+        if (active) {
+          setRequireInvite(Boolean(json?.requireInvite));
+          setMetaLoaded(true);
+        }
       })
       .catch(() => {
         // 接口异常时按不要求邀请码处理，注册不阻塞
+        if (active) setMetaLoaded(true);
       });
     return () => {
       active = false;
@@ -116,7 +121,7 @@ export default function RegisterPage() {
           )}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !metaLoaded}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60"
           >
             {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : '注册'}
