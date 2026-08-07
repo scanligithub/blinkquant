@@ -5,3 +5,4 @@ __pycache__/
 node_modules/
 .next/
 backend/data_cache/
+tsconfig.tsbuildinfo

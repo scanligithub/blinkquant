@@ -68,6 +68,13 @@ GitHub Actions (每日 03:00 CST) 下载 GBBQ.zip，Go TDX Engine 19 并行分�
 - API 重写：next.config.js 代理到 3 个 HF 节点
 - 无构建依赖：node_modules 不提交，构建时 npm install
 
+### 用户体系 (v2.1)
+- 认证全部在前端 Next.js API 层，用户数据存 Vercel Postgres（`POSTGRES_URL`）
+- JWT HS256 存 HttpOnly Cookie `__auth_token`（httpOnly + secure + sameSite=lax，7 天）
+- 密码 bcryptjs (cost 10)；`AUTH_SECRET` 为 JWT 密钥，生产必须配置
+- 管理员引导：`AUTH_ADMIN_EMAIL`/`AUTH_ADMIN_PASSWORD` 环境变量，首次登录幂等创建
+- 后端 3 节点保持无状态，不感知用户体系
+
 ---
 
 ## 核心模块职责

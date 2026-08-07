@@ -14,6 +14,10 @@
     "module": "esnext",
     "moduleResolution": "node",
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "isolatedModules": true,
     "jsx": "preserve",
     "plugins": [

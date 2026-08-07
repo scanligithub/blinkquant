@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
+import { requireAuth } from '@/lib/auth';
 
 export const runtime = 'edge';
 
@@ -9,6 +10,11 @@ const NODES = [
 ];
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.user) {
+    return new NextResponse(JSON.stringify({ error: '未登录' }), { status: auth.status, headers: { 'Content-Type': 'application/json' } });
+  }
+
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code');
   const timeframe = searchParams.get('timeframe') || 'D';

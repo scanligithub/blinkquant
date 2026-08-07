@@ -85,6 +85,7 @@ DELETE /api/admin/users/:id              → 级联删除
 - Cookie httpOnly/secure/sameSite=lax
 - 邮箱格式 + 密码长度（≥8）校验；注册限流（每 IP 每 5 分钟 5 次，内存计数）
 - 统一错误格式 `{ error }`：400/401/403/404/409/500
+- 实现注意：项目 `strict: false`（strictNullChecks 关闭）导致判别联合收窄失效，`AuthResult` 统一携带 `user`/`status` 字段（`{ user: SessionUser|null, status }`）而非判别联合
 
 ## 8. 测试
 

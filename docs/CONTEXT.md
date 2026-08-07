@@ -1,7 +1,7 @@
 # BlinkQuant 会话交接说明
 
 > 用途：跨会话保持连续性。新会话开始前先读本文件 + `docs/v2.0-data-migration-plan.md` + `docs/Parquet文件规格说明书.txt`。
-> 最后更新：v2.0 全部完成并部署，main @ `b38402e`，tag `v2.0`。
+> 最后更新：v2.1 用户管理功能开发完成（代码已实现，数据库初始化与部署待执行），main @ `b38402e` 前的用户管理改动尚未合并。
 
 ## 1. 项目架构（现状）
 
@@ -40,8 +40,45 @@
 - `gh` CLI 未安装，GitHub 操作用 git 命令 + webfetch/API。
 - GitHub 网络间歇 `Connection was reset`，大操作需重试或加大超时（120-180s）。
 
-## 6. 可能的后继工作（未做，需用户确认）
+## 6. 用户管理功能 (v2.1，新增)
+
+### 架构要点
+- **认证归属前端**：所有用户数据存 Vercel Postgres（`@vercel/postgres`，env `POSTGRES_URL`），后端 3 节点零改动。
+- **会话**：JWT HS256 存 HttpOnly Cookie `__auth_token`（7 天）。`AUTH_SECRET` 为密钥，生产必须配置（缺失则启动抛错）。
+- **密码**：bcryptjs (cost 10)。登录统一返回「邮箱或密码错误」防枚举。
+- **管理员引导**：`AUTH_ADMIN_EMAIL`/`AUTH_ADMIN_PASSWORD` 环境变量，首次调用登录接口时幂等创建 admin。
+
+### 已完成的文件
+| 路径 | 说明 |
+|---|---|
+| `frontend/src/lib/auth.ts` | 守卫 requireAuth/requireAdmin + JWT 签发校验 + ensureAdmin + Cookie 助手 |
+| `frontend/src/lib/db.ts` | `@vercel/postgres` sql/db 封装 |
+| `frontend/src/app/api/auth/{register,login,logout,session}/route.ts` | 认证 4 接口 |
+| `frontend/src/app/api/watchlist/route.ts` | 自选股 GET/POST/DELETE |
+| `frontend/src/app/api/strategies/route.ts` + `[id]/route.ts` | 策略 CRUD（归属校验） |
+| `frontend/src/app/api/admin/users/route.ts` + `[id]/route.ts` | 管理员用户管理（requireAdmin） |
+| `frontend/src/app/{login,register,admin}/page.tsx` | 登录/注册/管理后台页面 |
+| `frontend/src/components/{Watchlist,StrategyList}.tsx` | 自选股/策略组件 |
+| `frontend/src/app/page.tsx` | 会话守卫 + 用户菜单 + 加自选 + 保存策略 |
+| `frontend/scripts/init_db.sql` | 建表 SQL（users/watchlist/strategies） |
+| `frontend/tests/auth.test.mjs` | 11 个 node --test 单测 |
+
+### 待完成（部署步骤）
+1. Vercel 环境变量新增：`AUTH_SECRET`、`AUTH_ADMIN_EMAIL`、`AUTH_ADMIN_PASSWORD`（`POSTGRES_URL` 已有）。
+2. 在 Vercel Postgres 控制台或 psql 执行一次 `frontend/scripts/init_db.sql`。
+3. 推送 main 触发前端部署（后端无需重新部署）。
+4. 手动验收：注册→登录→选股→加自选→保存策略→登出→禁用账号登录被拒→admin 管理。
+
+### 注意事项
+- 现有 `select`/`kline`/`search`/`stock-list` 前端 API 已加登录守卫；`status` 与后端 `/api/v1/health` 保持公开。
+- 测试命令：`cd frontend && node --test tests/auth.test.mjs`；类型检查 `npx tsc --noEmit`。
+- jose `setExpirationTime` 传秒数必须 `Math.floor(Date.now()/1000) + TTL`（jose 按 epoch 秒解释数字），已在实现中正确处理。
+- 项目 `strict: false`（strictNullChecks 关闭），AuthResult 设计为始终携带 user/status 字段，避免判别联合收窄失效。
+
+## 7. 可能的后继工作（未做，需用户确认）
 
 - 搜索逻辑补充：代码前缀归一化后，是否还要处理不带前缀用户输入的其他映射（bj 前缀反查等）。
 - 前端本地完整类型检查需 `npm install`（仓库未提交 node_modules）。
 - 若后续数据规模增长超单节点内存，需评估更大 Space 或换分片策略（**需重新设计，勿擅自改分片键**）。
+- 注册限流为内存计数（每实例），生产多实例下建议换集中式限流。
+- 用户可自行修改密码/邮箱的功能未实现（本次范围外）。

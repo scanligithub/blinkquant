@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth';
 
 // 启用 Edge Runtime 以获得最低延迟和最高并发性能
 export const runtime = 'edge';
@@ -11,6 +12,11 @@ const NODES = [
 ];
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.user) {
+    return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  }
+
   try {
     const body = await req.json();
     const { formula, timeframe } = body;

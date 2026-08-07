@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireAuth } from '@/lib/auth';
 
 export const runtime = 'edge';
 
@@ -8,7 +9,12 @@ const NODES = [
   'https://scanli-blinkquant-node3.hf.space/api/v1/stock-list'
 ];
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.user) {
+    return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  }
+
   try {
     // 并发请求所有节点，使用 Promise.any 获取最快响应
     const result = await Promise.any(

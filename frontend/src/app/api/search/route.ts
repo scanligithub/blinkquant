@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
+import { requireAuth } from '@/lib/auth';
 
 const NODE_COUNT = 3; // As per whitepaper, 3 backend nodes
 
@@ -10,6 +11,11 @@ const HF_NODE_URLS = [
 ];
 
 export async function GET(request: Request) {
+  const auth = await requireAuth(request as NextRequest);
+  if (!auth.user) {
+    return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  }
+
   console.log('API Search Route: Request received');
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');

@@ -1,11 +1,16 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">加载图表引擎...</div>
 });
+
+const Watchlist = dynamic(() => import('../components/Watchlist'), { ssr: false });
+const StrategyList = dynamic(() => import('../components/StrategyList'), { ssr: false });
 
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
@@ -19,6 +24,14 @@ const TIMEFRAMES = [
 ];
 
 export default function Home() {
+  const router = useRouter();
+  const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [showWatchlist, setShowWatchlist] = useState(false);
+  const [showStrategies, setShowStrategies] = useState(false);
+  const [saveStrategyOpen, setSaveStrategyOpen] = useState(false);
+  const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [timeframe, setTimeframe] = useState('D');
   const [chartTimeframe, setChartTimeframe] = useState('D');
@@ -76,6 +89,27 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    const checkSession = async () => {
+      try {
+        const res = await fetch('/api/auth/session', { cache: 'no-store' });
+        const json = await res.json();
+        if (!mounted) return;
+        if (json.user) {
+          setUser(json.user);
+          setAuthLoading(false);
+        } else {
+          router.replace('/login');
+        }
+      } catch (e) {
+        if (mounted) router.replace('/login');
+      }
+    };
+    checkSession();
+    return () => { mounted = false; };
+  }, [router]);
+
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
@@ -88,6 +122,7 @@ export default function Home() {
   
   const [stockList, setStockList] = useState<Array<{code: string; name: string}>>([]);
   const [clusterStatus, setClusterStatus] = useState<any>(null);
+  const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
 
   const fetchStatus = async () => {
     try {
@@ -133,6 +168,76 @@ export default function Home() {
       }
     };
     loadStockList();
+  }, []);
+
+  const refreshWatchlist = useCallback(async () => {
+    try {
+      const res = await fetch('/api/watchlist', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        setWatchlistCodes(json.codes || []);
+      }
+    } catch (e) {
+      console.error('Failed to load watchlist', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) refreshWatchlist();
+  }, [user, refreshWatchlist]);
+
+  const toggleWatchlist = useCallback(async (code: string) => {
+    const exists = watchlistCodes.includes(code);
+    try {
+      if (exists) {
+        await fetch(`/api/watchlist?code=${encodeURIComponent(code)}`, { method: 'DELETE' });
+        setWatchlistCodes((prev) => prev.filter((c) => c !== code));
+      } else {
+        await fetch('/api/watchlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        setWatchlistCodes((prev) => [...prev, code]);
+      }
+    } catch (e) {
+      console.error('Failed to toggle watchlist', e);
+    }
+  }, [watchlistCodes]);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      console.error('Logout failed', e);
+    }
+    router.replace('/login');
+  }, [router]);
+
+  const handleSaveStrategy = useCallback(async () => {
+    if (!strategyName.trim()) return;
+    try {
+      const res = await fetch('/api/strategies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: strategyName.trim(), formula, timeframe }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || '保存失败');
+        return;
+      }
+      setStrategyName('');
+      setSaveStrategyOpen(false);
+    } catch (e) {
+      alert('保存失败');
+    }
+  }, [strategyName, formula, timeframe]);
+
+  const handleApplyStrategy = useCallback((strategyFormula: string, strategyTimeframe: string) => {
+    setFormula(strategyFormula);
+    setTimeframe(strategyTimeframe);
+    setShowStrategies(false);
   }, []);
 
   useEffect(() => {
@@ -263,6 +368,14 @@ export default function Home() {
     finally { setChartLoading(false); }
   }, [chartTimeframe, stockList, resampleData]);
 
+  if (authLoading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900 font-sans">
+        <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen p-4 md:p-8 font-sans bg-slate-50 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -273,6 +386,30 @@ export default function Home() {
               <h1 className="text-2xl md:text-3xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">BlinkQuant</h1>
               <p className="text-slate-500 text-xs md:text-sm mt-1">分布式计算集群</p>
             </div>
+            {user && (
+              <div className="relative z-40">
+                <button
+                  onClick={() => setUserMenuOpen((o) => !o)}
+                  className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  <span className="text-sm font-medium text-slate-700 max-w-[160px] truncate">{user.email}</span>
+                  {user.role === 'admin' && (
+                    <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">管理员</span>
+                  )}
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                    <button onClick={() => { setUserMenuOpen(false); setShowWatchlist(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">自选股</button>
+                    <button onClick={() => { setUserMenuOpen(false); setShowStrategies(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">我的策略</button>
+                    {user.role === 'admin' && (
+                      <Link href="/admin" onClick={() => setUserMenuOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">管理后台</Link>
+                    )}
+                    <button onClick={handleLogout} className="w-full text-left px-4 py-2.5 text-sm text-red-600 border-t border-slate-100 hover:bg-red-50">退出登录</button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-3">
             <div className="flex justify-center">
@@ -376,6 +513,13 @@ export default function Home() {
               <button onClick={handleSelect} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
                 {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : '运行选股'}
               </button>
+              <button
+                onClick={() => setSaveStrategyOpen(true)}
+                disabled={loading}
+                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-xl font-bold"
+              >
+                保存为策略
+              </button>
             </div>
           </div>
         </section>
@@ -385,9 +529,33 @@ export default function Home() {
           <aside className="lg:col-span-1 order-1 lg:order-1">
             <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm">
               <div className="p-4 border-b flex justify-between items-center bg-slate-50/50">
-                <h2 className="font-bold text-slate-700">结果</h2>
-                <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono">{results.length}</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setShowWatchlist(false)}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg ${!showWatchlist ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                  >
+                    结果
+                  </button>
+                  <button
+                    onClick={() => setShowWatchlist(true)}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg ${showWatchlist ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                  >
+                    自选
+                  </button>
+                </div>
+                {!showWatchlist && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono">{results.length}</span>}
               </div>
+              {showWatchlist ? (
+                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+                  <Watchlist
+                    codes={watchlistCodes}
+                    selectedCode={selectedStock?.code}
+                    onSelect={(code) => viewStock(code)}
+                    onRemove={(code) => toggleWatchlist(code)}
+                    stockList={stockList}
+                  />
+                </div>
+              ) : (
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                 {results.map(code => {
                   const name = stockList.find(s => s.code === code)?.name || code;
@@ -399,6 +567,7 @@ export default function Home() {
                   );
                 })}
               </div>
+              )}
             </div>
           </aside>
 
@@ -412,6 +581,14 @@ export default function Home() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {selectedStock && (
+                      <button
+                        onClick={() => toggleWatchlist(selectedStock.code)}
+                        className="px-3 py-1 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md mr-2 hover:bg-amber-100 transition-colors"
+                      >
+                        {watchlistCodes.includes(selectedStock.code) ? '★ 已自选' : '☆ 加自选'}
+                      </button>
+                    )}
                   <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
                       <button
                         onClick={async () => {
@@ -489,6 +666,38 @@ export default function Home() {
           </section>
         </div>
       </div>
+
+      {showStrategies && (
+        <StrategyList
+          onApply={handleApplyStrategy}
+          onClose={() => setShowStrategies(false)}
+        />
+      )}
+
+      {saveStrategyOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setSaveStrategyOpen(false)}>
+          <div
+            className="bg-white rounded-2xl w-full max-w-md shadow-xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-bold text-slate-700 mb-4">保存为策略</h2>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">策略名称</label>
+            <input
+              value={strategyName}
+              onChange={(e) => setStrategyName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveStrategy()}
+              className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              placeholder="例如：突破20日均线"
+              autoFocus
+            />
+            <div className="mt-4 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-mono break-all">{formula}</div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setSaveStrategyOpen(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">取消</button>
+              <button onClick={handleSaveStrategy} disabled={!strategyName.trim()} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold disabled:opacity-50">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

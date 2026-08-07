@@ -1,10 +1,33 @@
 # BlinkQuant API Contract
 
-版本: v1.0 | 更新: 2026-08-04
+版本: v2.1 | 更新: 2026-08-07
 
 ---
 
-## 接口清单
+## 认证说明
+
+自 v2.1 起，除 `/api/status` 与 `/api/v1/health` 外，前端 API 全部需要登录（HttpOnly Cookie `__auth_token`，JWT HS256，有效期 7 天）。未登录返回 401。
+
+## 前端 API 路由 (Next.js, Vercel Postgres)
+
+| 方法 | 路径 | 说明 | 权限 |
+|------|------|------|------|
+| POST | /api/auth/register | 注册（邮箱+密码，密码≥8位） | 公开 |
+| POST | /api/auth/login | 登录，签发 JWT Cookie | 公开 |
+| POST | /api/auth/logout | 退出，清除 Cookie | 登录 |
+| GET | /api/auth/session | 当前用户 { user } \| null | 公开 |
+| GET | /api/watchlist | 自选股列表 | 登录 |
+| POST | /api/watchlist | 添加自选股 { code } | 登录 |
+| DELETE | /api/watchlist?code=xxx | 删除自选股 | 登录 |
+| GET | /api/strategies | 我的策略列表 | 登录 |
+| POST | /api/strategies | 保存策略 { name, formula, timeframe } | 登录 |
+| PUT | /api/strategies/:id | 更新策略 | 登录（归属校验） |
+| DELETE | /api/strategies/:id | 删除策略 | 登录（归属校验） |
+| GET | /api/admin/users | 用户列表（keyword/status/page 分页） | admin |
+| PATCH | /api/admin/users/:id | 修改角色/状态 { role?, status? } | admin |
+| DELETE | /api/admin/users/:id | 删除用户（级联删自选股/策略） | admin |
+
+## 后端节点 API (HF Spaces, 经前端代理)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
