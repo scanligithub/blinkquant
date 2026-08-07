@@ -1,6 +1,7 @@
 // frontend/tests/export.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { zipSync, unzipSync } from 'fflate';
 
 // 与 src/lib/export.ts 保持一致（复制实现以绕过 TS import）
 function toCSV(headers, rows) {
@@ -48,6 +49,19 @@ function sanitizeFilename(email, ext) {
   const date = new Date().toISOString().slice(0, 10);
   const name = email.replace(/[^a-z0-9]/gi, '_');
   return `${name}_${date}.${ext}`;
+}
+
+// 与 src/lib/export.ts 保持一致（复制实现以绕过 TS import）
+function buildUserExports(users, watchlistByUser, strategiesByUser) {
+  const out = [];
+  for (const u of users) {
+    const watchlist = watchlistByUser.get(u.id) || [];
+    const strategies = strategiesByUser.get(u.id) || [];
+    const content = JSON.stringify(buildUserExport(u, watchlist, strategies), null, 2);
+    const filename = sanitizeFilename(u.email, 'json');
+    out.push({ filename, content });
+  }
+  return out;
 }
 
 test('toCSV: 基本行输出', () => {
@@ -109,4 +123,50 @@ test('sanitizeFilename: 非法字符替换并带日期', () => {
   assert.ok(/\d{4}-\d{2}-\d{2}/.test(out));
   assert.ok(!out.includes('@'));
   assert.equal(out, 'foo_bar_com_' + new Date().toISOString().slice(0, 10) + '.json');
+});
+
+test('buildUserExports: 按 user_id 分组并输出每用户文件', () => {
+  const users = [
+    { id: 'u1', email: 'a@b.c', role: 'user', status: 'active', created_at: '2026-01-01', last_login_at: null },
+    { id: 'u2', email: 'x@y.z', role: 'admin', status: 'active', created_at: '2026-02-01', last_login_at: '2026-03-01' },
+  ];
+  const wlByUser = new Map([
+    ['u1', [{ code: 'sh.600000', created_at: '2026-01-02' }]],
+    ['u2', [{ code: 'sz.000001', created_at: '2026-02-02' }]],
+  ]);
+  const stByUser = new Map([
+    ['u2', [{ name: 's2', formula: 'close>5', timeframe: 'D', created_at: '2026-02-03', updated_at: '2026-02-04' }]],
+  ]);
+  const files = buildUserExports(users, wlByUser, stByUser);
+  assert.equal(files.length, 2);
+  assert.equal(files[0].filename, 'a_b_c_' + new Date().toISOString().slice(0, 10) + '.json');
+  assert.equal(files[1].filename, 'x_y_z_' + new Date().toISOString().slice(0, 10) + '.json');
+  const u2 = JSON.parse(files[1].content);
+  assert.equal(u2.user.id, 'u2');
+  assert.equal(u2.watchlist.length, 1);
+  assert.equal(u2.watchlist[0].code, 'sz.000001');
+  assert.equal(u2.strategies.length, 1);
+  assert.equal(u2.strategies[0].name, 's2');
+});
+
+test('buildUserExports: 无 watchlist/strategies 的用户输出空数组且不含 password_hash', () => {
+  const users = [{ id: 'u1', email: 'a@b.c', role: 'user', status: 'active', created_at: '2026-01-01', last_login_at: null, password_hash: 'SECRET' }];
+  const files = buildUserExports(users, new Map(), new Map());
+  const parsed = JSON.parse(files[0].content);
+  assert.deepEqual(parsed.watchlist, []);
+  assert.deepEqual(parsed.strategies, []);
+  assert.ok(!('password_hash' in parsed.user));
+  assert.ok(!files[0].content.includes('SECRET'));
+});
+
+test('buildUserExports: zip 打包往返验证', () => {
+  const users = [{ id: 'u1', email: 'a@b.c', role: 'user', status: 'active', created_at: '2026-01-01', last_login_at: null }];
+  const files = buildUserExports(users, new Map(), new Map());
+  const zipped = zipSync(Object.fromEntries(files.map((f) => [f.filename, new TextEncoder().encode(f.content)])));
+  const unzipped = unzipSync(zipped);
+  const names = Object.keys(unzipped);
+  assert.equal(names.length, 1);
+  const filename = files[0].filename;
+  assert.ok(names.includes(filename));
+  assert.equal(new TextDecoder().decode(unzipped[filename]), files[0].content);
 });

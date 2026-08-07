@@ -44,3 +44,19 @@ export function sanitizeFilename(email: string, ext: string): string {
   const name = email.replace(/[^a-z0-9]/gi, '_');
   return `${name}_${date}.${ext}`;
 }
+
+export function buildUserExports(
+  users: any[],
+  watchlistByUser: Map<string, any[]>,
+  strategiesByUser: Map<string, any[]>,
+): Array<{ filename: string; content: string }> {
+  const out: Array<{ filename: string; content: string }> = [];
+  for (const u of users) {
+    const watchlist = watchlistByUser.get(u.id) || [];
+    const strategies = strategiesByUser.get(u.id) || [];
+    const content = JSON.stringify(buildUserExport(u, watchlist, strategies), null, 2);
+    const filename = sanitizeFilename(u.email, 'json');
+    out.push({ filename, content });
+  }
+  return out;
+}

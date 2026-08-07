@@ -12,6 +12,7 @@
     "@vercel/postgres": "^0.7.2",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.0.0",
+    "fflate": "^0.8.3",
     "hyparquet": "^1.17.1",
     "hyparquet-compressors": "^1.1.1",
     "jose": "^6.2.8",
