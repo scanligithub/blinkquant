@@ -55,7 +55,7 @@ export function buildUserExports(
     const watchlist = watchlistByUser.get(u.id) || [];
     const strategies = strategiesByUser.get(u.id) || [];
     const content = JSON.stringify(buildUserExport(u, watchlist, strategies), null, 2);
-    const filename = sanitizeFilename(u.email, 'json');
+    const filename = sanitizeFilename(`${u.id}_${u.email}`, 'json');
     out.push({ filename, content });
   }
   return out;

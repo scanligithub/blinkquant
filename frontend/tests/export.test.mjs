@@ -58,7 +58,7 @@ function buildUserExports(users, watchlistByUser, strategiesByUser) {
     const watchlist = watchlistByUser.get(u.id) || [];
     const strategies = strategiesByUser.get(u.id) || [];
     const content = JSON.stringify(buildUserExport(u, watchlist, strategies), null, 2);
-    const filename = sanitizeFilename(u.email, 'json');
+    const filename = sanitizeFilename(`${u.id}_${u.email}`, 'json');
     out.push({ filename, content });
   }
   return out;
@@ -139,8 +139,8 @@ test('buildUserExports: 按 user_id 分组并输出每用户文件', () => {
   ]);
   const files = buildUserExports(users, wlByUser, stByUser);
   assert.equal(files.length, 2);
-  assert.equal(files[0].filename, 'a_b_c_' + new Date().toISOString().slice(0, 10) + '.json');
-  assert.equal(files[1].filename, 'x_y_z_' + new Date().toISOString().slice(0, 10) + '.json');
+  assert.equal(files[0].filename, 'u1_a_b_c_' + new Date().toISOString().slice(0, 10) + '.json');
+  assert.equal(files[1].filename, 'u2_x_y_z_' + new Date().toISOString().slice(0, 10) + '.json');
   const u2 = JSON.parse(files[1].content);
   assert.equal(u2.user.id, 'u2');
   assert.equal(u2.watchlist.length, 1);
@@ -169,4 +169,19 @@ test('buildUserExports: zip 打包往返验证', () => {
   const filename = files[0].filename;
   assert.ok(names.includes(filename));
   assert.equal(new TextDecoder().decode(unzipped[filename]), files[0].content);
+});
+
+test('buildUserExports: 相似 email 清洗后不碰撞', () => {
+  const users = [
+    { id: 'id-a', email: 'a.b@c.com', role: 'user', status: 'active', created_at: '2026-01-01', last_login_at: null },
+    { id: 'id-b', email: 'ab@c.com', role: 'user', status: 'active', created_at: '2026-01-02', last_login_at: null },
+  ];
+  const files = buildUserExports(users, new Map(), new Map());
+  const names = new Set(files.map((f) => f.filename));
+  assert.equal(files.length, 2);
+  assert.equal(names.size, 2);
+  const contentA = JSON.parse(files.find((f) => f.filename.startsWith('id_a_')).content);
+  const contentB = JSON.parse(files.find((f) => f.filename.startsWith('id_b_')).content);
+  assert.equal(contentA.user.id, 'id-a');
+  assert.equal(contentB.user.id, 'id-b');
 });
