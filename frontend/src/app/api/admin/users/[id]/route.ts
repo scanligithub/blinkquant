@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ user: updated.rows[0] });
   } catch (e) {
     console.error('[admin/users/:id] error:', e);
-    return NextResponse.json({ error: String((e as Error)?.message || e) }, { status: 500 });
+    return NextResponse.json({ error: '操作失败' }, { status: 500 });
   }
 }
 

@@ -43,6 +43,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (e) {
     console.error('[admin/users] error:', e);
-    return NextResponse.json({ error: String((e as Error)?.message || e) }, { status: 500 });
+    return NextResponse.json({ error: '加载用户失败' }, { status: 500 });
   }
 }
