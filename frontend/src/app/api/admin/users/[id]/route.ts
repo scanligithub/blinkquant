@@ -31,17 +31,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: '不能降级自己的管理员角色' }, { status: 400 });
   }
 
-  const updated = await sql`
-    UPDATE users
-    SET role = COALESCE(${role ?? null}, role),
-        status = COALESCE(${status ?? null}, status)
-    WHERE id = ${params.id}
-    RETURNING id, email, role, status, created_at, last_login_at
-  `;
-  if (updated.rows.length === 0) {
-    return NextResponse.json({ error: '用户不存在' }, { status: 404 });
+  try {
+    const updated = await sql`
+      UPDATE users
+      SET role = COALESCE(${role ?? null}, role),
+          status = COALESCE(${status ?? null}, status)
+      WHERE id = ${params.id}
+      RETURNING id, email, role, status, created_at, last_login_at
+    `;
+    if (updated.rows.length === 0) {
+      return NextResponse.json({ error: '用户不存在' }, { status: 404 });
+    }
+    return NextResponse.json({ user: updated.rows[0] });
+  } catch (e) {
+    console.error('[admin/users/:id] error:', e);
+    return NextResponse.json({ error: String((e as Error)?.message || e) }, { status: 500 });
   }
-  return NextResponse.json({ user: updated.rows[0] });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

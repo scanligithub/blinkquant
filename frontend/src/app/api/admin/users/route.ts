@@ -20,24 +20,29 @@ export async function GET(req: NextRequest) {
   const kw = keyword ? `%${keyword.toLowerCase()}%` : '%';
   const st = statusFilter === 'active' || statusFilter === 'disabled' ? statusFilter : null;
 
-  const list = await sql`
-    SELECT id, email, role, status, created_at, last_login_at
-    FROM users
-    WHERE LOWER(email) LIKE ${kw}
-      AND (${st} IS NULL OR status = ${st})
-    ORDER BY created_at DESC
-    LIMIT ${pageSize} OFFSET ${offset}
-  `;
-  const count = await sql`
-    SELECT COUNT(*)::int AS total FROM users
-    WHERE LOWER(email) LIKE ${kw}
-      AND (${st} IS NULL OR status = ${st})
-  `;
+  try {
+    const list = await sql`
+      SELECT id, email, role, status, created_at, last_login_at
+      FROM users
+      WHERE LOWER(email) LIKE ${kw}
+        AND (${st} IS NULL OR status = ${st})
+      ORDER BY created_at DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+    const count = await sql`
+      SELECT COUNT(*)::int AS total FROM users
+      WHERE LOWER(email) LIKE ${kw}
+        AND (${st} IS NULL OR status = ${st})
+    `;
 
-  return NextResponse.json({
-    users: list.rows,
-    total: count.rows[0]?.total ?? 0,
-    page,
-    pageSize,
-  });
+    return NextResponse.json({
+      users: list.rows,
+      total: count.rows[0]?.total ?? 0,
+      page,
+      pageSize,
+    });
+  } catch (e) {
+    console.error('[admin/users] error:', e);
+    return NextResponse.json({ error: String((e as Error)?.message || e) }, { status: 500 });
+  }
 }
