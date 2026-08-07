@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { downloadFromResponse } from '@/lib/download';
 
 interface AdminUser {
   id: string;
@@ -78,7 +79,7 @@ export default function AdminPage() {
   };
 
   const deleteUser = async (id: string, email: string) => {
-    if (!confirm(`确定删除用户 ${email}？该用户的自选股和策略将一并删除。`)) return;
+    if (!confirm(`确定删除用户 ${email}？该用户的自选股和策略将一并删除。如需备份请先导出。`)) return;
     try {
       const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
       const json = await res.json();
@@ -135,6 +136,12 @@ export default function AdminPage() {
             <option value="active">启用</option>
             <option value="disabled">禁用</option>
           </select>
+          <button
+            onClick={() => downloadFromResponse('/api/admin/users/export')}
+            className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 whitespace-nowrap"
+          >
+            导出用户列表
+          </button>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -178,6 +185,12 @@ export default function AdminPage() {
                   <td className="px-4 py-3 text-slate-500">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
                   <td className="px-4 py-3 text-slate-500">{u.last_login_at ? new Date(u.last_login_at).toLocaleString() : '-'}</td>
                   <td className="px-4 py-3">
+                    <button
+                      onClick={() => downloadFromResponse(`/api/admin/users/${u.id}/export`)}
+                      className="text-xs text-blue-500 border border-blue-200 hover:bg-blue-50 rounded-lg px-2.5 py-1 mr-2"
+                    >
+                      导出
+                    </button>
                     <button
                       onClick={() => deleteUser(u.id, u.email)}
                       className="text-xs text-red-500 border border-red-200 hover:bg-red-50 rounded-lg px-2.5 py-1"
