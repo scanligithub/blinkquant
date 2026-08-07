@@ -68,12 +68,15 @@
 2. 在 Vercel Postgres 控制台或 psql 执行一次 `frontend/scripts/init_db.sql`。
 3. 推送 main 触发前端部署（后端无需重新部署）。
 4. 手动验收：注册→登录→选股→加自选→保存策略→登出→禁用账号登录被拒→admin 管理。
+5. （可选）`AUTH_INVITE_CODE`：邀请码列表，逗号分隔。配置后注册必须提交匹配邀请码；留空则不要求。
 
 ### 注意事项
 - 现有 `select`/`kline`/`search`/`stock-list` 前端 API 已加登录守卫；`status` 与后端 `/api/v1/health` 保持公开。
 - 测试命令：`cd frontend && node --test tests/auth.test.mjs`；类型检查 `npx tsc --noEmit`。
 - jose `setExpirationTime` 传秒数必须 `Math.floor(Date.now()/1000) + TTL`（jose 按 epoch 秒解释数字），已在实现中正确处理。
 - 项目 `strict: false`（strictNullChecks 关闭），AuthResult 设计为始终携带 user/status 字段，避免判别联合收窄失效。
+- 邀请码校验逻辑在 `frontend/src/lib/invite.ts`（纯函数，`frontend/tests/invite.test.mjs` 单测）；注册页通过 `GET /api/auth/meta` 按需显示邀请码输入框。
+- 注册页在 `GET /api/auth/meta` 返回前禁用提交按钮，避免 meta 竞态导致误报「邀请码无效」。
 
 ## 7. 可能的后继工作（未做，需用户确认）
 

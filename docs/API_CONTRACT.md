@@ -12,7 +12,8 @@
 
 | 方法 | 路径 | 说明 | 权限 |
 |------|------|------|------|
-| POST | /api/auth/register | 注册（邮箱+密码，密码≥8位） | 公开 |
+| POST | /api/auth/register | 注册（邮箱+密码，密码≥8位；AUTH_INVITE_CODE 启用时需 inviteCode） | 公开 |
+| GET | /api/auth/meta | 注册元信息 { requireInvite } | 公开 |
 | POST | /api/auth/login | 登录，签发 JWT Cookie | 公开 |
 | POST | /api/auth/logout | 退出，清除 Cookie | 登录 |
 | GET | /api/auth/session | 当前用户 { user } \| null | 公开 |
