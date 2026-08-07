@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=60'
+        'Cache-Control': 'no-store'
       }
     });
 
