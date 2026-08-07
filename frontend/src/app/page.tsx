@@ -16,6 +16,7 @@ import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import { getPinyinInitials } from '../utils/pinyin';
 import { cleanSearchInput } from '../utils/cleanInput';
+import { downloadFromResponse } from '@/lib/download';
 
 const TIMEFRAMES = [
   { label: '日', value: 'D' },
@@ -402,6 +403,7 @@ export default function Home() {
                   <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
                     <button onClick={() => { setUserMenuOpen(false); setShowWatchlist(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">自选股</button>
                     <button onClick={() => { setUserMenuOpen(false); setShowStrategies(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">我的策略</button>
+                    <button onClick={() => { setUserMenuOpen(false); downloadFromResponse('/api/me/export'); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">导出我的数据</button>
                     {user.role === 'admin' && (
                       <Link href="/admin" onClick={() => setUserMenuOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">管理后台</Link>
                     )}
