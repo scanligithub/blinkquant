@@ -28,6 +28,7 @@
 | PATCH | /api/admin/users/:id | 修改角色/状态 { role?, status? } | admin |
 | DELETE | /api/admin/users/:id | 删除用户（级联删自选股/策略） | admin |
 | GET | /api/admin/users/export | 导出全量用户 CSV（附件） | admin |
+| GET | /api/admin/users/export-zip | 导出全部用户 JSON（zip，每用户一文件含自选股/策略） | 管理员 |
 | GET | /api/admin/users/:id/export | 导出单用户 JSON（附件，含自选股/策略） | admin |
 | GET | /api/me/export | 导出当前用户 JSON（附件） | 登录 |
 

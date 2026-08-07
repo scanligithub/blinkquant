@@ -78,6 +78,7 @@
 - 邀请码校验逻辑在 `frontend/src/lib/invite.ts`（纯函数，`frontend/tests/invite.test.mjs` 单测）；注册页通过 `GET /api/auth/meta` 按需显示邀请码输入框。
 - 注册页在 `GET /api/auth/meta` 返回前禁用提交按钮，避免 meta 竞态导致误报「邀请码无效」。
 - 用户数据导出：`GET /api/admin/users/export`（全量 CSV）、`/api/admin/users/:id/export`（单用户 JSON）、`/api/me/export`（本人 JSON）；导出逻辑在 `frontend/src/lib/export.ts`（纯函数，`frontend/tests/export.test.mjs` 单测），所有导出均不含 password_hash。
+- 全量 ZIP 导出：`GET /api/admin/users/export-zip` 返回 zip，每用户一个 JSON 文件（基本信息+自选股+策略），用 `fflate` 打包（edge 兼容）。
 
 ## 7. 可能的后继工作（未做，需用户确认）
 
