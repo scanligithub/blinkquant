@@ -142,6 +142,12 @@ export default function AdminPage() {
           >
             导出用户列表
           </button>
+          <button
+            onClick={() => downloadFromResponse('/api/admin/users/export-zip')}
+            className="bg-indigo-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-indigo-700 whitespace-nowrap"
+          >
+            导出全量数据
+          </button>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
