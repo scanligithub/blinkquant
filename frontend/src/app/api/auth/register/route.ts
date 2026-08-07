@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { signToken, setAuthCookie, isValidEmail, isValidPassword } from '@/lib/auth';
+import { parseInviteCodes, isValidInviteCode } from '@/lib/invite';
 
 export const runtime = 'edge';
 
@@ -15,6 +16,11 @@ export async function POST(req: NextRequest) {
     }
     if (!isValidPassword(password)) {
       return NextResponse.json({ error: '密码长度至少 8 位' }, { status: 400 });
+    }
+
+    const inviteCodes = parseInviteCodes(process.env.AUTH_INVITE_CODE);
+    if (!isValidInviteCode(inviteCodes, body?.inviteCode)) {
+      return NextResponse.json({ error: '邀请码无效' }, { status: 403 });
     }
 
     const bcrypt = (await import('bcryptjs')).default;
