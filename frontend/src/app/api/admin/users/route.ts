@@ -25,14 +25,14 @@ export async function GET(req: NextRequest) {
       SELECT id, email, role, status, created_at, last_login_at
       FROM users
       WHERE LOWER(email) LIKE ${kw}
-        AND (${st} IS NULL OR status = ${st})
+        AND (${st}::text IS NULL OR status = ${st}::text)
       ORDER BY created_at DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
     const count = await sql`
       SELECT COUNT(*)::int AS total FROM users
       WHERE LOWER(email) LIKE ${kw}
-        AND (${st} IS NULL OR status = ${st})
+        AND (${st}::text IS NULL OR status = ${st}::text)
     `;
 
     return NextResponse.json({
