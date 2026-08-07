@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -10,6 +10,23 @@ export default function RegisterPage() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [inviteCode, setInviteCode] = useState('');
+  const [requireInvite, setRequireInvite] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/auth/meta')
+      .then((r) => r.json())
+      .then((json) => {
+        if (active) setRequireInvite(Boolean(json?.requireInvite));
+      })
+      .catch(() => {
+        // 接口异常时按不要求邀请码处理，注册不阻塞
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +44,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, inviteCode }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -84,6 +101,19 @@ export default function RegisterPage() {
               placeholder="••••••••"
             />
           </div>
+          {requireInvite && (
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">邀请码</label>
+              <input
+                type="text"
+                required
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                placeholder="请输入邀请码"
+              />
+            </div>
+          )}
           <button
             type="submit"
             disabled={loading}
