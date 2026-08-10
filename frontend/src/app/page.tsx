@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -17,6 +17,7 @@ import { compressors } from 'hyparquet-compressors';
 import { getPinyinInitials } from '../utils/pinyin';
 import { cleanSearchInput } from '../utils/cleanInput';
 import { downloadFromResponse } from '@/lib/download';
+import { applyAdjust, ADJUST_LABELS, ADJUST_OPTIONS } from '../utils/applyAdjust';
 
 const TIMEFRAMES = [
   { label: '日', value: 'D' },
@@ -42,6 +43,30 @@ export default function Home() {
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [showRotateHint, setShowRotateHint] = useState(false);
   const chartWrapperRef = useRef<HTMLDivElement>(null);
+const [adjustMode, setAdjustMode] = useState<'none'|'qfq'|'hfq'>('none');
+const [adjustMenuOpen, setAdjustMenuOpen] = useState(false);
+const adjustMenuRef = useRef<HTMLDivElement>(null);
+
+// Load saved adjust mode from localStorage on mount
+useEffect(() => {
+  const saved = localStorage.getItem('klineAdjustMode');
+  if (saved === 'none' || saved === 'qfq' || saved === 'hfq') {
+    setAdjustMode(saved as any);
+  }
+}, []);
+
+// Close adjust dropdown when clicking outside
+useEffect(() => {
+  const handleClickOutside = (e: MouseEvent) => {
+    if (adjustMenuOpen && adjustMenuRef.current && !adjustMenuRef.current.contains(e.target as Node)) {
+      setAdjustMenuOpen(false);
+    }
+  };
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => document.removeEventListener('mousedown', handleClickOutside);
+}, [adjustMenuOpen]);
+
+
   
   // 检测是否为iOS设备
   const isIOS = () => {
@@ -115,7 +140,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
-  const [dailyDataCache, setDailyDataCache] = useState<any[]>([]); 
+  const [dailyDataCache, setDailyDataCache] = useState<any[]>([]);
+
+  const adjustedDaily = useMemo(() => applyAdjust(dailyDataCache, adjustMode), [dailyDataCache, adjustMode]); 
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<{code: string; name: string}[]>([]);
@@ -358,16 +385,18 @@ export default function Home() {
           close: record.close,
           volume: record.volume,
           main_net: record.main_net || 0, // 提取主力资金流入数据
+          adjustFactor: record.adjustFactor,
         };
       });
 
-      setDailyDataCache(dailyData);
-      const resampledData = resampleData(dailyData, chartTimeframe);
-      const stock = stockList.find(s => s.code === code);
-      setSelectedStock({ code, name: stock?.name || code, data: resampledData });
+setDailyDataCache(dailyData);
+       const adjusted = applyAdjust(dailyData, adjustMode);
+       const resampledData = resampleData(adjusted, chartTimeframe);
+       const stock = stockList.find(s => s.code === code);
+       setSelectedStock({ code, name: stock?.name || code, data: resampledData });
     } catch (err: any) { alert(`Failed: ${err.message}`); } 
     finally { setChartLoading(false); }
-  }, [chartTimeframe, stockList, resampleData]);
+  }, [chartTimeframe, stockList, resampleData, adjustMode]);
 
   if (authLoading) {
     return (
@@ -592,6 +621,36 @@ export default function Home() {
                       </button>
                     )}
                   <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
+  {/* 复权按钮 */}
+  <div className="relative" ref={adjustMenuRef}>
+    <button
+      onClick={() => setAdjustMenuOpen(o => !o)}
+      className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
+    >
+      {ADJUST_LABELS[adjustMode]} ▼
+    </button>
+    {adjustMenuOpen && (
+      <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[120px]">
+        {ADJUST_OPTIONS.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => {
+              setAdjustMode(opt.value);
+              localStorage.setItem('klineAdjustMode', opt.value);
+              setAdjustMenuOpen(false);
+              if (dailyDataCache.length > 0) {
+                const adjusted = applyAdjust(dailyDataCache, opt.value);
+                setSelectedStock(prev => prev ? { ...prev, data: resampleData(adjusted, chartTimeframe) } : prev);
+              }
+            }}
+            className={`w-full text-left px-3 py-1 text-xs ${adjustMode === opt.value ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
                       <button
                         onClick={async () => {
                           if (!document.fullscreenElement) {
@@ -637,7 +696,7 @@ export default function Home() {
                       {TIMEFRAMES.map((tf) => (
                         <button key={tf.value} onClick={() => {
                             setChartTimeframe(tf.value);
-                            if (dailyDataCache.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(dailyDataCache, tf.value) });
+                            if (adjustedDaily && adjustedDaily.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, tf.value) });
                           }}
                           className={`px-3 py-1 text-xs font-bold rounded-md ${chartTimeframe === tf.value ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200/50'}`}
                         >
