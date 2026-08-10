@@ -26,6 +26,15 @@ const TIMEFRAMES = [
   { label: '月', value: 'M' },
 ];
 
+// 板块分组显示配置：行业常驻，概念/地域超过阈值折叠
+const SECTOR_GROUP_ORDER = ['行业板块', '概念板块', '地域板块'];
+const SECTOR_GROUP_LABELS: Record<string, string> = {
+  '行业板块': '行业',
+  '概念板块': '概念',
+  '地域板块': '地域',
+};
+const SECTOR_MAX_SHOWN = 3;
+
 export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
@@ -144,6 +153,7 @@ useEffect(() => {
   const [dailyDataCache, setDailyDataCache] = useState<any[]>([]);
   const [sectorDataCache, setSectorDataCache] = useState<any[]>([]);
   const [sectors, setSectors] = useState<{ code: string; name: string; type: string }[]>([]);
+  const [expandedSectors, setExpandedSectors] = useState<Record<string, boolean>>({});
   const lastStockRef = useRef<{ code: string; name: string } | null>(null);
 
   const adjustedDaily = useMemo(() => applyAdjust(dailyDataCache, adjustMode), [dailyDataCache, adjustMode]); 
@@ -389,6 +399,7 @@ setDailyDataCache(dailyData);
          if (sectorRes.ok) {
            const sectorJson = await sectorRes.json();
            setSectors(sectorJson.sectors || []);
+           setExpandedSectors({});
          } else {
            setSectors([]);
          }
@@ -634,21 +645,45 @@ setDailyDataCache(dailyData);
                       <span className="text-xl font-bold">{selectedStock.code}</span>
                       <span className="ml-2 text-base font-medium text-slate-500 truncate">{selectedStock.name}</span>
                     </div>
-                    <div className="w-full mt-1 flex flex-wrap gap-1">
-                      {selectedStock.kind === 'stock' && sectors.map((s) => (
-                        <button
-                          key={s.code}
-                          onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
-                          className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                            s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                            : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                            : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                          }`}
-                        >
-                          {s.name}
-                        </button>
-                      ))}
-                    </div>
+                    {selectedStock.kind === 'stock' && (
+                      <div className="w-full mt-1 flex flex-col gap-0.5">
+                        {SECTOR_GROUP_ORDER.map((type) => {
+                          const group = sectors.filter((s) => s.type === type);
+                          if (group.length === 0) return null;
+                          const expanded = !!expandedSectors[type];
+                          const shown = expanded ? group : group.slice(0, SECTOR_MAX_SHOWN);
+                          const hidden = group.length - shown.length;
+                          return (
+                            <div key={type} className="flex flex-wrap items-center gap-1">
+                              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-none shrink-0">
+                                {SECTOR_GROUP_LABELS[type] || type}
+                              </span>
+                              {shown.map((s) => (
+                                <button
+                                  key={s.code}
+                                  onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
+                                  className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                                    s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                    : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                                    : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                  }`}
+                                >
+                                  {s.name}
+                                </button>
+                              ))}
+                              {hidden > 0 && (
+                                <button
+                                  onClick={() => setExpandedSectors((prev) => ({ ...prev, [type]: !prev[type] }))}
+                                  className="text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
+                                >
+                                  {expanded ? '收起' : `+${hidden}`}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
