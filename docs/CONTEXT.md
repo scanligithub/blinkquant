@@ -79,6 +79,7 @@
 - 注册页在 `GET /api/auth/meta` 返回前禁用提交按钮，避免 meta 竞态导致误报「邀请码无效」。
 - 用户数据导出：`GET /api/admin/users/export`（全量 CSV）、`/api/admin/users/:id/export`（单用户 JSON）、`/api/me/export`（本人 JSON）；导出逻辑在 `frontend/src/lib/export.ts`（纯函数，`frontend/tests/export.test.mjs` 单测），所有导出均不含 password_hash。
 - 全量 ZIP 导出：`GET /api/admin/users/export-zip` 返回 zip，每用户一个 JSON 文件（基本信息+自选股+策略），用 `fflate` 打包（edge 兼容）。
+- 空闲自动登出：前端 `IdleTimeoutProvider` 监听交互事件，30 分钟无操作自动调用 `/api/auth/logout` 并跳转 `/login`；组件在 `frontend/src/components/IdleTimeoutProvider.tsx`，全局生效。
 
 ## 7. 可能的后继工作（未做，需用户确认）
 
