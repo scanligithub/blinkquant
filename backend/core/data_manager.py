@@ -47,6 +47,7 @@ class DataManager:
         self.df_sector_daily = None
         self.df_mapping = None
         self.df_sector_list = None
+        self.stock_sectors = {}
 
         # 指标计算算子映射
         self.INDICATOR_MAP = {
@@ -257,7 +258,24 @@ class DataManager:
                 # sector_list 缺失时降级：全部按概念板块处理
                 logger.warning(f"Node {self.node_index}: sector_list not loaded, falling back to concept sectors")
                 mapped = constituents.with_columns(pl.lit("概念板块").alias("type"))
-            
+
+            # 构建 1-to-N 全量股票→板块映射（行业+概念+地域），供 K 线图板块标签使用
+            try:
+                all_map = mapped.unique(subset=["code", "sector_code"]).select([
+                    pl.col("code"),
+                    pl.col("sector_code"),
+                    pl.col("sector_name"),
+                    pl.col("type"),
+                ])
+                sectors_by_code: dict = {}
+                for row in all_map.iter_rows():
+                    sectors_by_code.setdefault(row[0], []).append((row[1], row[2], row[3]))
+                self.stock_sectors = sectors_by_code
+                logger.info(f"Node {self.node_index}: stock_sectors built: {len(self.stock_sectors)} stocks mapped")
+            except Exception as e:
+                logger.error(f"Node {self.node_index}: Failed to build stock_sectors: {e}", exc_info=True)
+                self.stock_sectors = {}
+
             # 行业优先：1-to-1 主映射
             industry = mapped.filter(pl.col("type") == "行业板块")
             concept = mapped.filter(pl.col("type") == "概念板块")

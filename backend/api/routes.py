@@ -98,6 +98,31 @@ def get_kline(code: str, timeframe: str = "D"):
     # 以二进制响应的形式返回 Parquet 数据
     return Response(content=buffer.getvalue(), media_type="application/octet-stream")
 
+@router.get("/sector-kline")
+def get_sector_kline(code: str, timeframe: str = "D"):
+    if timeframe == "W":
+        df = getattr(data_manager, "df_sector_weekly", None)
+    elif timeframe == "M":
+        df = getattr(data_manager, "df_sector_monthly", None)
+    else:
+        df = data_manager.df_sector_daily
+
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not ready")
+
+    sector_df = df.filter(pl.col("code") == code).sort("date")
+    if len(sector_df) == 0:
+        raise HTTPException(status_code=404, detail="Sector not found")
+
+    target_cols = ["date", "code", "name", "type", "open", "high", "low", "close", "volume", "amount"]
+    available_cols = [col for col in target_cols if col in sector_df.columns]
+    sector_df = sector_df.select(available_cols)
+
+    buffer = io.BytesIO()
+    sector_df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0)
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
+
 def _get_pinyin_initials(text: str) -> str:
     """获取中文文本的拼音首字母，并转换为小写"""
     if not text:
@@ -152,6 +177,18 @@ def get_stock_list():
     
     logger.info(f"Total stocks: {len(data_manager.code_to_name)}, Filtered: {len(filtered)}")
     return filtered
+
+@router.get("/stock-sectors")
+def get_stock_sectors(code: str):
+    """返回股票所属的全部板块（行业+概念+地域）"""
+    sectors = data_manager.stock_sectors.get(code, [])
+    return {
+        "code": code,
+        "sectors": [
+            {"code": sc, "name": name, "type": typ}
+            for sc, name, typ in sectors
+        ],
+    }
 
 @router.get("/status")
 def get_node_status():
