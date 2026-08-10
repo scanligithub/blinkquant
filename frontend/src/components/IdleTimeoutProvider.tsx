@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 
 interface IdleTimeoutProviderProps {
   children: React.ReactNode;
@@ -16,7 +15,6 @@ export function IdleTimeoutProvider({
   children,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }: IdleTimeoutProviderProps) {
-  const router = useRouter();
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const logout = useCallback(async () => {
