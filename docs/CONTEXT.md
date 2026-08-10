@@ -88,3 +88,17 @@
 - 若后续数据规模增长超单节点内存，需评估更大 Space 或换分片策略（**需重新设计，勿擅自改分片键**）。
 - 注册限流为内存计数（每实例），生产多实例下建议换集中式限流。
 - 用户可自行修改密码/邮箱的功能未实现（本次范围外）。
+
+## 8. 股票板块功能 (v2.2，已实现)
+
+### 架构要点
+- **数据**：后端 `data_manager.stock_sectors`（dict：股票代码 → `[(sector_code, sector_name, type)]`），在 `_build_sector_mapping` 中于行业/概念过滤前构建，按 `code+sector_code` 去重，覆盖行业/概念/地域全类型。不影响 1-to-1 `df_mapping`。
+- **后端接口**：`GET /api/v1/stock-sectors?code=` 返回 `{code, sectors:[{code,name,type}]}`；`GET /api/v1/sector-kline?code=&timeframe=D` 从 `df_sector_daily/weekly/monthly` 返回 Parquet（`getattr` 兜底未构建分表）。
+- **前端**：Edge 代理 `/api/stock-sectors`、`/api/sector-kline`（Promise.any×3 节点）。`viewStock` 选股后懒加载标签；`viewSector` 切换板块 K 线并记录 `lastStockRef` 提供「返回个股」。板块视图隐藏「加自选」「复权」。
+- **解析工具**：`frontend/src/utils/parquet.ts` 的 `parseParquetRecords` 统一股票/板块 Parquet 解析（`frontend/tests/parquet.test.mjs` 单测）。
+
+### 注意事项
+- 板块类型中文值：行业板块 / 概念板块 / 地域板块（前端 chips 据此配色）。
+- 板块 K 线无 `adjustFactor`/`main_net`，`parseParquetRecords` 兜底为 1.0/0，复权不作用于板块。
+- 需要后端 3 节点重新部署（推 main 触发）后，`stock_sectors` 才会构建。
+
