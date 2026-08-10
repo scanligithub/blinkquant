@@ -31,6 +31,8 @@
 | GET | /api/admin/users/export-zip | 导出全部用户 JSON（zip，每用户一文件含自选股/策略） | 管理员 |
 | GET | /api/admin/users/:id/export | 导出单用户 JSON（附件，含自选股/策略） | admin |
 | GET | /api/me/export | 导出当前用户 JSON（附件） | 登录 |
+| GET | /api/stock-sectors?code=xxx | 股票所属板块列表 { code, sectors:[{code,name,type}] } | 登录 |
+| GET | /api/sector-kline?code=xxx&timeframe=D | 板块 K 线数据（Parquet 二进制） | 登录 |
 
 ## 后端节点 API (HF Spaces, 经前端代理)
 
@@ -38,6 +40,8 @@
 |------|------|------|
 | POST | /api/v1/select | Execute stock selection formula |
 | GET | /api/v1/kline | Get K-line data (Parquet binary) |
+| GET | /api/v1/stock-sectors | Get stock's sectors (行业+概念+地域) |
+| GET | /api/v1/sector-kline | Get sector K-line data (Parquet binary) |
 | GET | /api/v1/search | Search stocks |
 | GET | /api/v1/stock-list | Get all stocks |
 | GET | /api/v1/status | Node health |
