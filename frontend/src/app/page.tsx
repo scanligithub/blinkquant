@@ -18,6 +18,7 @@ import { getPinyinInitials } from '../utils/pinyin';
 import { cleanSearchInput } from '../utils/cleanInput';
 import { downloadFromResponse } from '@/lib/download';
 import { applyAdjust, ADJUST_LABELS, ADJUST_OPTIONS } from '../utils/applyAdjust';
+import { parseParquetRecords } from '../utils/parquet';
 
 const TIMEFRAMES = [
   { label: '日', value: 'D' },
@@ -138,9 +139,12 @@ useEffect(() => {
 
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedStock, setSelectedStock] = useState<{code: string, name?: string, data: any} | null>(null);
+  const [selectedStock, setSelectedStock] = useState<{kind: 'stock' | 'sector'; code: string; name?: string; data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [dailyDataCache, setDailyDataCache] = useState<any[]>([]);
+  const [sectorDataCache, setSectorDataCache] = useState<any[]>([]);
+  const [sectors, setSectors] = useState<{ code: string; name: string; type: string }[]>([]);
+  const lastStockRef = useRef<{ code: string; name: string } | null>(null);
 
   const adjustedDaily = useMemo(() => applyAdjust(dailyDataCache, adjustMode), [dailyDataCache, adjustMode]); 
 
@@ -372,31 +376,50 @@ useEffect(() => {
       const records = await parquetReadObjects({ file: buffer, compressors });
       if (!records || records.length === 0) throw new Error('Empty records');
 
-      const dailyData = records.map((record) => {
-        let timeValue;
-        if (record.date instanceof Date) timeValue = Math.floor(record.date.getTime() / 1000);
-        else throw new Error('Invalid date');
-
-        return {
-          time: timeValue,
-          open: record.open,
-          high: record.high,
-          low: record.low,
-          close: record.close,
-          volume: record.volume,
-          main_net: record.main_net || 0, // 提取主力资金流入数据
-          adjustFactor: record.adjustFactor,
-        };
-      });
+      const dailyData = parseParquetRecords(records);
 
 setDailyDataCache(dailyData);
        const adjusted = applyAdjust(dailyData, adjustMode);
        const resampledData = resampleData(adjusted, chartTimeframe);
        const stock = stockList.find(s => s.code === code);
-       setSelectedStock({ code, name: stock?.name || code, data: resampledData });
+       setSelectedStock({ kind: 'stock', code, name: stock?.name || code, data: resampledData });
+       // 懒加载该股票的板块标签（失败静默）
+       try {
+         const sectorRes = await fetch(`/api/stock-sectors?code=${encodeURIComponent(code)}`);
+         if (sectorRes.ok) {
+           const sectorJson = await sectorRes.json();
+           setSectors(sectorJson.sectors || []);
+         } else {
+           setSectors([]);
+         }
+       } catch (e) {
+         console.warn('Failed to load stock sectors:', e);
+         setSectors([]);
+       }
     } catch (err: any) { alert(`Failed: ${err.message}`); } 
     finally { setChartLoading(false); }
   }, [chartTimeframe, stockList, resampleData, adjustMode]);
+
+  const viewSector = useCallback(async (sectorCode: string, sectorName: string) => {
+    setChartLoading(true);
+    try {
+      const res = await fetch(`/api/sector-kline?code=${encodeURIComponent(sectorCode)}&timeframe=D`);
+      if (!res.ok) throw new Error('Fetch failed');
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength === 0) throw new Error('Empty buffer');
+
+      const records = await parquetReadObjects({ file: buffer, compressors });
+      if (!records || records.length === 0) throw new Error('Empty records');
+
+      const sectorDaily = parseParquetRecords(records);
+      setSectorDataCache(sectorDaily);
+      setSelectedStock({ kind: 'sector', code: sectorCode, name: sectorName, data: resampleData(sectorDaily, chartTimeframe) });
+    } catch (err: any) {
+      alert(`Failed: ${err.message}`);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [chartTimeframe, resampleData]);
 
   if (authLoading) {
     return (
@@ -606,13 +629,42 @@ setDailyDataCache(dailyData);
             <div ref={chartWrapperRef} className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full">
               {selectedStock && (
                 <div className="px-4 py-3 border-b flex flex-wrap justify-between items-center gap-2 bg-white z-10 shrink-0">
-                  <div className="flex items-baseline">
-                    <span className="text-xl font-bold">{selectedStock.code}</span>
-                    <span className="ml-2 text-base font-medium text-slate-500">{selectedStock.name}</span>
+                  <div className="flex flex-col items-start min-w-0">
+                    <div className="flex items-baseline">
+                      <span className="text-xl font-bold">{selectedStock.code}</span>
+                      <span className="ml-2 text-base font-medium text-slate-500 truncate">{selectedStock.name}</span>
+                    </div>
+                    <div className="w-full mt-1 flex flex-wrap gap-1">
+                      {selectedStock.kind === 'stock' && sectors.map((s) => (
+                        <button
+                          key={s.code}
+                          onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
+                          className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                            s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                            : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                            : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {selectedStock && (
+                    {selectedStock?.kind === 'sector' && (
+                      <button
+                        onClick={() => {
+                          const last = lastStockRef.current;
+                          if (!last) return;
+                          setSelectedStock({ kind: 'stock', code: last.code, name: last.name, data: resampleData(adjustedDaily, chartTimeframe) });
+                        }}
+                        className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
+                      >
+                        ← 返回 {lastStockRef.current?.name || '个股'}
+                      </button>
+                    )}
+                    {selectedStock?.kind === 'stock' && (
                       <button
                         onClick={() => toggleWatchlist(selectedStock.code)}
                         className="px-3 py-1 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md mr-2 hover:bg-amber-100 transition-colors"
@@ -622,6 +674,7 @@ setDailyDataCache(dailyData);
                     )}
                   <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
   {/* 复权按钮 */}
+  {selectedStock?.kind === 'stock' && (
   <div className="relative" ref={adjustMenuRef}>
     <button
       onClick={() => setAdjustMenuOpen(o => !o)}
@@ -638,7 +691,7 @@ setDailyDataCache(dailyData);
               setAdjustMode(opt.value);
               localStorage.setItem('klineAdjustMode', opt.value);
               setAdjustMenuOpen(false);
-              if (dailyDataCache.length > 0) {
+              if (selectedStock?.kind === 'stock' && dailyDataCache.length > 0) {
                 const adjusted = applyAdjust(dailyDataCache, opt.value);
                 setSelectedStock(prev => prev ? { ...prev, data: resampleData(adjusted, chartTimeframe) } : prev);
               }
@@ -651,6 +704,7 @@ setDailyDataCache(dailyData);
       </div>
     )}
   </div>
+  )}
                       <button
                         onClick={async () => {
                           if (!document.fullscreenElement) {
@@ -696,7 +750,11 @@ setDailyDataCache(dailyData);
                       {TIMEFRAMES.map((tf) => (
                         <button key={tf.value} onClick={() => {
                             setChartTimeframe(tf.value);
-                            if (adjustedDaily && adjustedDaily.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, tf.value) });
+                            if (selectedStock?.kind === 'sector') {
+                              if (sectorDataCache.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(sectorDataCache, tf.value) });
+                            } else if (adjustedDaily && adjustedDaily.length > 0) {
+                              setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, tf.value) });
+                            }
                           }}
                           className={`px-3 py-1 text-xs font-bold rounded-md ${chartTimeframe === tf.value ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200/50'}`}
                         >
