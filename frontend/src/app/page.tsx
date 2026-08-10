@@ -682,6 +682,14 @@ setDailyDataCache(dailyData);
                             </div>
                           );
                         })}
+                        {Object.values(expandedSectors).some(Boolean) && (
+                          <button
+                            onClick={() => setExpandedSectors({})}
+                            className="self-start text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
+                          >
+                            收起
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
