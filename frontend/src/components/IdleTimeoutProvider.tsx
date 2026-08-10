@@ -4,10 +4,10 @@ import { useEffect, useRef, useCallback } from 'react';
 
 interface IdleTimeoutProviderProps {
   children: React.ReactNode;
-  timeoutMs?: number; // 默认 5 分钟
+  timeoutMs?: number; // 默认 30 分钟
 }
 
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 const EVENTS = ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'] as const;
 
