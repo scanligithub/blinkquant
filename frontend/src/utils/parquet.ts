@@ -11,6 +11,11 @@ export function parseParquetRecords(records: any[]): any[] {
       low: record.low,
       close: record.close,
       volume: record.volume,
+      amount: record.amount,
+      turn: record.turn,
+      peTTM: record.peTTM,
+      total_mv: record.total_mv,
+      float_mv: record.float_mv,
       main_net: record.main_net || 0,
       adjustFactor: record.adjustFactor,
     };
