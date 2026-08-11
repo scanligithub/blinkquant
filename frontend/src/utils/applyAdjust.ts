@@ -66,8 +66,14 @@ export function applyAdjust(bars: any[], mode: AdjustMode): any[] {
       close: bar.close * priceMul,
       volume: bar.volume * volMul,
       main_net: bar.main_net, // 资金流不受复权影响
+      ...(bar.amount !== undefined && { amount: bar.amount }),
+      ...(bar.turn !== undefined && { turn: bar.turn }),
+      ...(bar.peTTM !== undefined && { peTTM: bar.peTTM }),
+      ...(bar.total_mv !== undefined && { total_mv: bar.total_mv }),
+      ...(bar.float_mv !== undefined && { float_mv: bar.float_mv }),
       adjustFactor: bar.adjustFactor,
     };
+
   });
 
   return result;
