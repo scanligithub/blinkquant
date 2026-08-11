@@ -23,6 +23,7 @@ import {
   calculateRollingSum,
 } from '../utils/indicators';
 
+import { formatMoney, formatVolume } from '../utils/format';
 // 内联 Settings 图标组件
 const SettingsIcon = ({ className }: { className?: string }) => (
   <svg
@@ -42,28 +43,9 @@ const SettingsIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-function formatVolume(volume: number): string {
-  if (volume >= 100000000) {
-    return (volume / 100000000).toFixed(2) + '亿';
-  } else if (volume >= 10000) {
-    return (volume / 10000).toFixed(2) + '万';
-  }
-  return volume.toString();
-}
 
-// 【新增】：智能资金单位格式化器
-function formatMoney(value: number): string {
-  if (!value || isNaN(value)) return '0.00';
-  const absVal = Math.abs(value);
 
-  // 假设原始数据单位是 "元"
-  if (absVal >= 100000000) {
-    return (value / 100000000).toFixed(2) + '亿';
-  } else if (absVal >= 10000) {
-    return (value / 10000).toFixed(2) + '万';
-  }
-  return value.toFixed(2);
-}
+
 
 // 主图指标配置
 const MAIN_INDICATORS = {
@@ -624,11 +606,24 @@ export default function KLineChart({
       if (cdData && typeof cdData === 'object' && 'open' in cdData) {
         const timeValue = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
         const date = new Date(timeValue * 1000);
+            const currentTime = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
 
         setTooltip({
           time: date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }),
           open: cdData.open as number, high: cdData.high as number, low: cdData.low as number, close: cdData.close as number,
           volume: (volData as any)?.value || 0,
+          amount: (() => {
+            const cur = data.find((d: any) => d.time === currentTime);
+            return cur?.amount;
+          })(),
+          turn: (() => {
+            const cur = data.find((d: any) => d.time === currentTime);
+            return cur?.turn;
+          })(),
+          peTTM: (() => {
+            const cur = data.find((d: any) => d.time === currentTime);
+            return cur?.peTTM;
+          })(),
           changePercent: (() => {
             let pct = 0;
             const currentTime = typeof param.time === 'number' ? param.time : (param.time as any).businessDay || param.time;
@@ -1170,7 +1165,16 @@ export default function KLineChart({
             <div className="flex justify-between gap-4"><span className="text-slate-500">收盘:</span><span className="font-mono text-slate-900">{tooltip.close.toFixed(2)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">成交量:</span><span className="font-mono text-slate-900">{formatVolume(tooltip.volume)}</span></div>
             <div className="flex justify-between gap-4"><span className="text-slate-500">涨幅:</span><span className={`font-mono ${tooltip.changePercent >= 0 ? 'text-red-600' : 'text-green-600'}`}>{tooltip.changePercent >= 0 ? '+' : ''}{tooltip.changePercent.toFixed(2)}%</span></div>
-          </div>
+            {tooltip.amount != null && (
+              <div className="flex justify-between gap-4"><span className="text-slate-500">成交额:</span><span className="font-mono text-slate-900">{formatMoney(tooltip.amount)}</span></div>
+            )}
+            {tooltip.turn != null && (
+              <div className="flex justify-between gap-4"><span className="text-slate-500">换手率:</span><span className="font-mono text-slate-900">{Number(tooltip.turn).toFixed(2)}%</span></div>
+            )}
+            {tooltip.peTTM != null && (
+              <div className="flex justify-between gap-4"><span className="text-slate-500">市盈率:</span><span className="font-mono text-slate-900">{Number(tooltip.peTTM).toFixed(2)}</span></div>
+            )}
+            </div>
         </div>
       )}
     </div>
