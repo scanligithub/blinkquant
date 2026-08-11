@@ -9,7 +9,10 @@ export function setTheme(t: Theme) {
 
 export function getTheme(): Theme {
   if (typeof document === 'undefined') return 'light';
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  if (document.documentElement.classList.contains('dark')) return 'dark';
+  const stored = localStorage.getItem('bq-theme');
+  if (stored === 'dark') return 'dark';
+  return 'light';
 }
 
 export function toggleTheme() {
