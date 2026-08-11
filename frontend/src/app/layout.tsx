@@ -1,19 +1,15 @@
 import type { Metadata } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
+import '@fontsource/inter/800.css'
+import '@fontsource/inter/900.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
+import '@fontsource/jetbrains-mono/700.css'
 import './globals.css'
 import { IdleTimeoutProvider } from '@/components/IdleTimeoutProvider'
-
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-})
-
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-mono',
-})
 
 export const metadata: Metadata = {
   title: 'BlinkQuant · 分布式量化交易',
@@ -36,7 +32,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN" className={`${inter.variable} ${mono.variable}`}>
+    <html lang="zh-CN">
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
       <body className="font-sans bg-bg text-ink antialiased">
         <IdleTimeoutProvider>
