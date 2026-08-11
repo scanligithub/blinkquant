@@ -19,6 +19,7 @@ import { cleanSearchInput } from '../utils/cleanInput';
 import { downloadFromResponse } from '@/lib/download';
 import { applyAdjust, ADJUST_LABELS, ADJUST_OPTIONS } from '../utils/applyAdjust';
 import { parseParquetRecords } from '../utils/parquet';
+import { formatMoney, formatVolume } from '../utils/format';
 
 const TIMEFRAMES = [
   { label: '日', value: 'D' },
@@ -650,53 +651,76 @@ setDailyDataCache(dailyData);
                       <span className="text-xl font-bold">{selectedStock.code}</span>
                       <span className="ml-2 text-base font-medium text-slate-500 truncate">{selectedStock.name}</span>
                     </div>
-                    {selectedStock.kind === 'stock' && (
-                      <div className="w-full mt-1 flex flex-col gap-0.5">
-                        {SECTOR_GROUP_ORDER.map((type) => {
-                          const group = sectors.filter((s) => s.type === type);
-                          if (group.length === 0) return null;
-                          const expanded = !!expandedSectors[type];
-                          const shown = expanded ? group : group.slice(0, SECTOR_MAX_SHOWN);
-                          const hidden = group.length - shown.length;
-                          return (
-                            <div key={type} className="flex flex-wrap items-center gap-1">
-                              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-none shrink-0">
-                                {SECTOR_GROUP_LABELS[type] || type}
-                              </span>
-                              {shown.map((s) => (
-                                <button
-                                  key={s.code}
-                                  onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
-                                  className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                                    s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                                    : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                                    : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                                  }`}
-                                >
-                                  {s.name}
-                                </button>
-                              ))}
-                              {hidden > 0 && (
-                                <button
-                                  onClick={() => setExpandedSectors((prev) => ({ ...prev, [type]: !prev[type] }))}
-                                  className="text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
-                                >
-                                  {expanded ? '收起' : `+${hidden}`}
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {Object.values(expandedSectors).some(Boolean) && (
-                          <button
-                            onClick={() => setExpandedSectors({})}
-                            className="self-start text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
-                          >
-                            收起
-                          </button>
-                        )}
-                      </div>
-                    )}
+{selectedStock.kind === 'stock' && (
+  <>
+    <div className="w-full mt-1 flex flex-col gap-0.5">
+      {SECTOR_GROUP_ORDER.map((type) => {
+        const group = sectors.filter((s) => s.type === type);
+        if (group.length === 0) return null;
+        const expanded = !!expandedSectors[type];
+        const shown = expanded ? group : group.slice(0, SECTOR_MAX_SHOWN);
+        const hidden = group.length - shown.length;
+        return (
+          <div key={type} className="flex flex-wrap items-center gap-1">
+            <span className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-none shrink-0">
+              {SECTOR_GROUP_LABELS[type] || type}
+            </span>
+            {shown.map((s) => (
+              <button
+                key={s.code}
+                onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
+                className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                  s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                  : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                  : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                }`}
+              >
+                {s.name}
+              </button>
+            ))}
+            {hidden > 0 && (
+              <button
+                onClick={() => setExpandedSectors((prev) => ({ ...prev, [type]: !prev[type] }))}
+                className="text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
+              >
+                {expanded ? '收起' : `+${hidden}`}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {Object.values(expandedSectors).some(Boolean) && (
+        <button
+          onClick={() => setExpandedSectors({})}
+          className="self-start text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
+        >
+          收起
+        </button>
+      )}
+    </div>
+    {(() => {
+      const latest = selectedStock.data[selectedStock.data.length - 1];
+      if (!latest) return null;
+      const items = [
+        { label: 'PE(TTM)', value: latest.peTTM != null ? Number(latest.peTTM).toFixed(2) : '--' },
+        { label: '总市值', value: formatMoney(latest.total_mv) },
+        { label: '流通市值', value: formatMoney(latest.float_mv) },
+        { label: '成交额', value: formatMoney(latest.amount) },
+        { label: '换手率', value: latest.turn != null ? `${Number(latest.turn).toFixed(2)}%` : '--' },
+        { label: '成交量', value: formatVolume(latest.volume) },
+      ];
+      return (
+        <div className="w-full mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          {items.map(it => (
+            <span key={it.label} className="text-[9px] md:text-xs text-slate-500 whitespace-nowrap">
+              {it.label}: <span className="font-mono font-medium text-slate-900">{it.value}</span>
+            </span>
+          ))}
+        </div>
+      );
+    })()}
+  </>
+)}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
