@@ -362,15 +362,20 @@ useEffect(() => {
       const sortedItems = items.sort((a, b) => a.time - b.time);
       const first = sortedItems[0];
       const last = sortedItems[sortedItems.length - 1];
-      resampled.push({
-        time: first.time, 
-        open: first.open,
-        high: Math.max(...sortedItems.map(i => i.high)),
-        low: Math.min(...sortedItems.map(i => i.low)),
-        close: last.close,
-        volume: sortedItems.reduce((sum, i) => sum + i.volume, 0),
-        main_net: sortedItems.reduce((sum, i) => sum + (i.main_net || 0), 0), // 聚合资金流数据
-      });
+resampled.push({
+  time: first.time,
+  open: first.open,
+  high: Math.max(...sortedItems.map(i => i.high)),
+  low: Math.min(...sortedItems.map(i => i.low)),
+  close: last.close,
+  volume: sortedItems.reduce((sum, i) => sum + i.volume, 0),
+  amount: sortedItems.reduce((sum, i) => sum + (i.amount || 0), 0),
+  turn: last.turn,
+  peTTM: last.peTTM,
+  total_mv: last.total_mv,
+  float_mv: last.float_mv,
+  main_net: sortedItems.reduce((sum, i) => sum + (i.main_net || 0), 0), // 聚合资金流数据
+});
     });
     return resampled.sort((a, b) => a.time - b.time);
   }, []);
