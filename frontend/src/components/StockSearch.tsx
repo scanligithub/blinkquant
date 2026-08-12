@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { searchStocks, type StockItem } from '../utils/stockSearch';
 
 interface StockSearchProps {
@@ -22,6 +22,7 @@ export default function StockSearch({ stockList, onSelect }: StockSearchProps) {
       setLoading(false);
       return;
     }
+    setResults([]);
     setLoading(true);
     const handler = setTimeout(() => {
       setResults(searchStocks(stockList, query));
