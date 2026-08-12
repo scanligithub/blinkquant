@@ -112,20 +112,28 @@ export default function StockSearch({ stockList, onSelect }: StockSearchProps) {
           onClick={() => setOverlayOpen(false)}
         >
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="relative">
-              <input
-                autoFocus
-                className={inputClass}
-                placeholder="搜索股票：名称/代码/拼音"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-              />
-              {loading && (
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                  <div className="w-4 h-4 border-2 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
-                </div>
-              )}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  autoFocus
+                  className={inputClass}
+                  placeholder="搜索股票：名称/代码/拼音"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                />
+                {loading && (
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                    <div className="w-4 h-4 border-2 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setOverlayOpen(false)}
+                className="shrink-0 px-3 py-2 text-sm font-bold text-slate-600 border border-slate-200 bg-white rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                关闭
+              </button>
             </div>
             {query.length > 1 && results.length > 0 && (
               <div className="mt-2 max-h-60 overflow-y-auto custom-scrollbar">{renderResults()}</div>
