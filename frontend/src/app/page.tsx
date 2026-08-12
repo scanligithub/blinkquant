@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import StockSearch from '../components/StockSearch';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
@@ -11,8 +12,6 @@ const KLineChart = dynamic(() => import('../components/KLineChart'), {
 
 const Watchlist = dynamic(() => import('../components/Watchlist'), { ssr: false });
 const StrategyList = dynamic(() => import('../components/StrategyList'), { ssr: false });
-
-import StockSearch from '../components/StockSearch';
 
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
