@@ -8,8 +8,9 @@ export interface StockItem {
 }
 
 export function searchStocks(stockList: StockItem[], query: string): StockItem[] {
-  if (query.length < 1 || stockList.length === 0) return [];
+  if (stockList.length === 0) return [];
   const cleanedQuery = cleanSearchInput(query);
+  if (cleanedQuery.length < 1) return [];
   const qLower = cleanedQuery;
   const qPinyin = getPinyinInitials(cleanedQuery);
 

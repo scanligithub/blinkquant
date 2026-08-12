@@ -27,8 +27,9 @@ function cleanSearchInput(text) {
 
 // 与 src/utils/stockSearch.ts 保持一致（复制实现以绕过 TS import）
 function searchStocks(stockList, query) {
-  if (query.length < 1 || stockList.length === 0) return [];
+  if (stockList.length === 0) return [];
   const cleanedQuery = cleanSearchInput(query);
+  if (cleanedQuery.length < 1) return [];
   const qLower = cleanedQuery;
   const qPinyin = getPinyinInitials(cleanedQuery);
 
@@ -62,6 +63,10 @@ function searchStocks(stockList, query) {
 
 test('searchStocks: 空查询返回空数组', () => {
   assert.deepEqual(searchStocks([{ code: 'sh.600000', name: '浦发银行' }], ''), []);
+});
+
+test('searchStocks: 纯空白查询返回空数组', () => {
+  assert.deepEqual(searchStocks([{ code: 'sh.600000', name: '浦发银行' }], '   '), []);
 });
 
 test('searchStocks: 代码精确匹配优先', () => {
