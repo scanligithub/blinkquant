@@ -9,6 +9,7 @@ import psycopg2
 from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
+from core.indicator_registry import nl_meta as build_nl_meta
 import logging
 import io # New import
 
@@ -189,6 +190,11 @@ def get_stock_sectors(code: str):
             for sc, name, typ in sectors
         ],
     }
+
+@router.get("/nl-meta")
+def get_nl_meta():
+    """自然语言选股元数据：字段/指标/单位/示例（公开只读）"""
+    return build_nl_meta()
 
 @router.get("/status")
 def get_node_status():
