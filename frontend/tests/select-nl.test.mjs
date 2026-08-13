@@ -5,10 +5,12 @@ import assert from 'node:assert/strict';
 // ---- 复制自 src/lib/selectNL.ts（保持与实现一致）----
 const META = {
   fields: ['CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'AMOUNT', 'PCT_CHG', 'S_CLOSE', 'PE_TTM', 'PB_MRQ', 'FORECAST_YOY', 'IS_FORECAST_GOOD', 'IS_FORECAST_BAD', 'TOTAL_SHARES', 'FLOAT_SHARES', 'TOTAL_MV', 'FLOAT_MV', 'TURN'],
-  indicators: ['EMA', 'MA', 'REF', 'ROC', 'STD'],
+  indicators: ['ABS', 'BARSLAST', 'COUNT', 'CROSS_DOWN', 'CROSS_UP', 'EMA', 'HHV', 'LLV', 'MA', 'MAX', 'MIN', 'REF', 'ROC', 'STD', 'SUM'],
   timeframes: ['D', 'W', 'M'],
   units: { TOTAL_MV: '元', FLOAT_MV: '元', TOTAL_SHARES: '股', FLOAT_SHARES: '股', AMOUNT: '元', VOL: '股', PE_TTM: '无量纲(倍)', PB_MRQ: '无量纲(倍)', TURN: '百分比(%)', FORECAST_YOY: '百分比(%)', PCT_CHG: '百分比(%)', S_CLOSE: '指数点位' },
-  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10'],
+  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10', 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))', 'SUM(AMOUNT, 5) > 5e9'],
+  signatures: { MA: ['field', 'pos_int'], EMA: ['field', 'pos_int'], STD: ['field', 'pos_int'], ROC: ['field', 'pos_int'], REF: ['field', 'pos_int'], HHV: ['field', 'pos_int'], LLV: ['field', 'pos_int'], SUM: ['field', 'pos_int'], CROSS_UP: ['series', 'series'], CROSS_DOWN: ['series', 'series'], MAX: ['series', 'series'], MIN: ['series', 'series'], ABS: ['series'], COUNT: ['cond', 'pos_int'], BARSLAST: ['cond'] },
+  descriptions: { MA: 'N日简单移动平均', EMA: 'N日指数移动平均', STD: 'N日标准差', ROC: 'N日变动率(%)', REF: 'N日前值', HHV: 'N周期内最高值', LLV: 'N周期内最低值', SUM: 'N周期内求和', CROSS_UP: '上穿（今日A>B且昨日A<=B）', CROSS_DOWN: '下穿（今日A<B且昨日A>=B）', MAX: '取两序列较大值', MIN: '取两序列较小值', ABS: '绝对值', COUNT: 'N周期内条件成立次数', BARSLAST: '距上次条件成立周期数' },
 };
 const MAX_FORMULA_LENGTH = 500;
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
@@ -32,10 +34,12 @@ function parseSelectNLText(raw) {
 
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+const COMPARE_STR = '>=|<=|>|<';
+const POS_INT_MAX = 500;
+
 function validateFormula(meta, formula) {
   if (typeof formula !== 'string' || formula.trim().length === 0) return { ok: false, reason: '公式为空' };
   if (formula.length > MAX_FORMULA_LENGTH) return { ok: false, reason: `公式过长（上限 ${MAX_FORMULA_LENGTH} 字符）` };
-  // 括号配对检查（防嵌套调用/未闭合括号漏到后端 AST）
   let depth = 0;
   for (const ch of formula) {
     if (ch === '(') depth++;
@@ -43,29 +47,30 @@ function validateFormula(meta, formula) {
     if (depth < 0) return { ok: false, reason: '公式括号不配对' };
   }
   if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
+  if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
 
-  // 嵌套调用检查：FUNC( 的参数内不允许再出现括号（防嵌套调用漏到后端 AST）
-  const callStartRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(`, 'g');
-  let cs;
-  while ((cs = callStartRegex.exec(formula)) !== null) {
-    const rest = formula.slice(callStartRegex.lastIndex);
-    const openIdx = rest.indexOf('(');
-    const closeIdx = rest.indexOf(')');
-    if (openIdx !== -1 && openIdx < closeIdx) {
-      return { ok: false, reason: '公式包含嵌套括号（不支持函数嵌套调用）' };
-    }
-  }
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
-  const callRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(([^()]*)\\)`, 'g');
+  const sigs = meta.signatures ?? {};
+
+  // 1. 校验所有函数调用签名（含嵌套，正则全局扫描）
+  const callRegex = /([A-Z_][A-Z0-9_]*)\s*\(/g;
   let m;
   while ((m = callRegex.exec(formula)) !== null) {
     const func = m[1];
-    const args = m[2].split(',').map((s) => s.trim());
-    if (args.length !== 2) return { ok: false, reason: `函数 ${func} 必须恰好 2 个参数` };
-    if (!fields.has(args[0])) return { ok: false, reason: `函数 ${func} 第一参数 ${args[0]} 不在字段白名单` };
-    if (!/^\d+$/.test(args[1]) || Number(args[1]) <= 0) return { ok: false, reason: `函数 ${func} 第二参数必须是正整数` };
+    const sig = sigs[func];
+    if (!sig) return { ok: false, reason: `函数 ${func} 未注册` };
+    const openIdx = m.index + m[0].length - 1;
+    const closeIdx = matchParen(formula, openIdx);
+    if (closeIdx === -1) return { ok: false, reason: '公式括号不配对' };
+    const argStr = formula.slice(openIdx + 1, closeIdx);
+    const args = splitTopLevel(argStr, ',').map((s) => s.trim());
+    const v = validateCallArgs(meta, sig, args, func);
+    if (v.ok === false) return v;
+    callRegex.lastIndex = closeIdx + 1;
   }
+
+  // 2. 其余大写标识符必须 ∈ 白名单
   const tokenRegex = /[A-Z_][A-Z0-9_]*/g;
   let t;
   while ((t = tokenRegex.exec(formula)) !== null) {
@@ -74,8 +79,113 @@ function validateFormula(meta, formula) {
     if (indicators.has(token) || fields.has(token)) continue;
     return { ok: false, reason: `未识别标识符 ${token}` };
   }
-  if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
   return { ok: true };
+}
+
+function matchParen(s, openIdx) {
+  let d = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === '(') d++;
+    else if (s[i] === ')') d--;
+    if (d === 0) return i;
+  }
+  return -1;
+}
+
+function splitTopLevel(s, sep) {
+  const parts = [];
+  let d = 0, cur = '';
+  for (const ch of s) {
+    if (ch === '(') d++;
+    else if (ch === ')') d--;
+    if (ch === sep && d === 0) { parts.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  if (cur.trim() !== '') parts.push(cur);
+  return parts;
+}
+
+function splitBoolTopLevel(s) {
+  const out = [];
+  let d2 = 0, seg = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(') d2++;
+    else if (ch === ')') d2--;
+    if (d2 === 0 && (s.slice(i, i + 3) === 'AND' || s.slice(i, i + 2) === 'OR')) {
+      const word = s.slice(i, i + 3) === 'AND' ? 'AND' : 'OR';
+      const beforeOk = i === 0 || !/[A-Z0-9_]/.test(s[i - 1]);
+      const afterIdx = i + word.length;
+      const afterOk = afterIdx >= s.length || !/[A-Z0-9_]/.test(s[afterIdx]);
+      if (beforeOk && afterOk) {
+        out.push(seg.trim());
+        seg = '';
+        i = afterIdx - 1;
+        continue;
+      }
+    }
+    seg += ch;
+  }
+  if (seg.trim() !== '') out.push(seg.trim());
+  return out.filter((x) => x !== '');
+}
+
+function validateCallArgs(meta, sig, args, func) {
+  if (args.length !== sig.length) {
+    return { ok: false, reason: `函数 ${func} 必须恰好 ${sig.length} 个参数` };
+  }
+  for (let i = 0; i < sig.length; i++) {
+    const kind = sig[i];
+    const arg = args[i];
+    if (kind === 'field') {
+      if (!meta.fields.includes(arg)) {
+        return { ok: false, reason: `函数 ${func} 参数 ${arg} 不在字段白名单` };
+      }
+    } else if (kind === 'pos_int') {
+      if (!/^\d+$/.test(arg) || Number(arg) < 1 || Number(arg) > POS_INT_MAX) {
+        return { ok: false, reason: `函数 ${func} 窗口必须是 1-${POS_INT_MAX} 正整数` };
+      }
+    } else if (kind === 'series') {
+      if (!isSeriesExpr(meta, arg)) {
+        return { ok: false, reason: `函数 ${func} 参数 ${arg} 必须是字段或窗口指标调用` };
+      }
+    } else if (kind === 'cond') {
+      if (!isCondExpr(meta, arg)) {
+        return { ok: false, reason: `函数 ${func} 条件参数不合法` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+function isSeriesExpr(meta, tok) {
+  if (meta.fields.includes(tok)) return true;
+  const mm = /^([A-Z_][A-Z0-9_]*)\s*\(([^()]*)\)$/.exec(tok);
+  if (!mm) return false;
+  const sig = meta.signatures?.[mm[1]];
+  if (!sig || sig.length !== 2 || sig[0] !== 'field' || sig[1] !== 'pos_int') return false;
+  const args = mm[2].split(',').map((s) => s.trim());
+  return validateCallArgs(meta, sig, args, mm[1]).ok === true;
+}
+
+function isCondExpr(meta, tok) {
+  const parts = splitBoolTopLevel(tok);
+  if (parts.length === 0) return false;
+  return parts.every((p) => isCompareExpr(meta, p));
+}
+
+function isCompareExpr(meta, expr) {
+  const m = new RegExp(`^(.*?)\\s*(${COMPARE_STR})\\s*(.*)$`).exec(expr.trim());
+  if (!m) return false;
+  const left = m[1].trim();
+  const right = m[3].trim();
+  if (!isSeriesExpr(meta, left)) return false;
+  if (!isSeriesExpr(meta, right) && !isNumber(right)) return false;
+  return true;
+}
+
+function isNumber(s) {
+  return /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(s);
 }
 
 function buildSystemPrompt(meta) {
@@ -92,7 +202,11 @@ function buildSystemPrompt(meta) {
     '单位换算规则（重要）：',
     '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"应表达为 TOTAL_MV > 1e10。',
     '',
-    '可选指标函数（只能使用，参数形态 FUNC(字段, 正整数窗口)：' + meta.indicators.join('、') + '。',
+    '可选算子（函数名(参数形态)：含义）：',
+    ...Object.entries(meta.descriptions ?? {}).map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
+    '',
+    'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），但不支持更深嵌套。',
+    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。',
     '',
     '周期 timeframe 只能是 ' + meta.timeframes.join('/') + '。',
     '',
@@ -197,16 +311,78 @@ test('validateFormula: 括号不配对拒绝', () => {
   assert.match(r.reason, /括号/);
 });
 
-test('validateFormula: 嵌套函数调用拒绝', () => {
-  const r = validateFormula(META, 'MA(CLOSE, MA(CLOSE, 20)) > 10');
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /括号/);
-});
-
 test('validateFormula: NOT 拒绝（后端不支持 ast.Not）', () => {
   const r = validateFormula(META, 'NOT (CLOSE > 11)');
   assert.equal(r.ok, false);
   assert.match(r.reason, /NOT/);
+});
+
+test('validateFormula: CROSS_UP 嵌套指标通过', () => {
+  const r = validateFormula(META, 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: CROSS_UP 字段参数通过', () => {
+  const r = validateFormula(META, 'CROSS_UP(CLOSE, OPEN)');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: COUNT 条件通过', () => {
+  const r = validateFormula(META, 'COUNT(CLOSE > MA(CLOSE, 20), 10) >= 7');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: COUNT AND 条件通过', () => {
+  const r = validateFormula(META, 'COUNT(CLOSE > MA(CLOSE, 20) AND VOL > 1e7, 10) > 3');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: BARSLAST 通过', () => {
+  const r = validateFormula(META, 'BARSLAST(CLOSE > MA(CLOSE, 20)) <= 5');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: HHV/LLV/SUM 通过', () => {
+  assert.equal(validateFormula(META, 'CLOSE > HHV(CLOSE, 20)').ok, true);
+  assert.equal(validateFormula(META, 'CLOSE < LLV(CLOSE, 20)').ok, true);
+  assert.equal(validateFormula(META, 'SUM(AMOUNT, 5) > 5e9').ok, true);
+});
+
+test('validateFormula: 二层嵌套拒绝', () => {
+  const r = validateFormula(META, 'CROSS_UP(MA(MA(CLOSE, 20), 20), MA(CLOSE, 60))');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: COUNT 条件嵌套 COUNT 拒绝', () => {
+  const r = validateFormula(META, 'COUNT(COUNT(CLOSE > 10, 2) > 1, 3)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 窗口超上限拒绝', () => {
+  const r = validateFormula(META, 'MA(CLOSE, 501) > 0');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 未知算子拒绝', () => {
+  const r = validateFormula(META, 'KDJ(CLOSE, 9) > 50');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: cond 支持数值操作数', () => {
+  const r = validateFormula(META, 'COUNT(CLOSE > 11, 3)');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: cond == 拒绝', () => {
+  const r = validateFormula(META, 'COUNT(CLOSE == 10, 3)');
+  assert.equal(r.ok, false);
+});
+
+test('buildSystemPrompt: 包含新算子说明', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /CROSS_UP/);
+  assert.match(p, /上穿/);
+  assert.match(p, /COUNT/);
 });
 
 test('buildSystemPrompt: 包含字段与单位与示例', () => {

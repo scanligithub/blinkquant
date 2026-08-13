@@ -7,6 +7,8 @@ export interface NLMeta {
   timeframes: string[];
   units: Record<string, string>;
   example_queries: string[];
+  signatures: Record<string, string[]>;
+  descriptions: Record<string, string>;
 }
 
 export interface SelectNLResult {
@@ -45,6 +47,9 @@ export function parseSelectNLText(raw: string): SelectNLResult {
   return { formula: parsed.formula.trim(), timeframe, explanation };
 }
 
+const COMPARE_STR = '>=|<=|>|<';
+const POS_INT_MAX = 500;
+
 export function validateFormula(
   meta: NLMeta,
   formula: string
@@ -55,7 +60,6 @@ export function validateFormula(
   if (formula.length > MAX_FORMULA_LENGTH) {
     return { ok: false, reason: `公式过长（上限 ${MAX_FORMULA_LENGTH} 字符）` };
   }
-  // 括号配对检查（防嵌套调用/未闭合括号漏到后端 AST）
   let depth = 0;
   for (const ch of formula) {
     if (ch === '(') depth++;
@@ -63,35 +67,30 @@ export function validateFormula(
     if (depth < 0) return { ok: false, reason: '公式括号不配对' };
   }
   if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
+  if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
 
-  // 嵌套调用检查：FUNC( 的参数内不允许再出现括号（防嵌套调用漏到后端 AST）
-  const callStartRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(`, 'g');
-  let cs: RegExpExecArray | null;
-  while ((cs = callStartRegex.exec(formula)) !== null) {
-    const rest = formula.slice(callStartRegex.lastIndex);
-    const openIdx = rest.indexOf('(');
-    const closeIdx = rest.indexOf(')');
-    if (openIdx !== -1 && openIdx < closeIdx) {
-      return { ok: false, reason: '公式包含嵌套括号（不支持函数嵌套调用）' };
-    }
-  }
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
+  const sigs = meta.signatures ?? {};
 
-  // 1. 函数调用形态校验：FUNC(FIELD, N)，参数必须恰好 (字段, 正整数)
-  const callRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(([^()]*)\\)`, 'g');
+  // 1. 校验所有函数调用签名（含嵌套，正则全局扫描）
+  const callRegex = /([A-Z_][A-Z0-9_]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = callRegex.exec(formula)) !== null) {
     const func = m[1];
-    const args = m[2].split(',').map((s) => s.trim());
-    if (args.length !== 2) return { ok: false, reason: `函数 ${func} 必须恰好 2 个参数` };
-    if (!fields.has(args[0])) return { ok: false, reason: `函数 ${func} 第一参数 ${args[0]} 不在字段白名单` };
-    if (!/^\d+$/.test(args[1]) || Number(args[1]) <= 0) {
-      return { ok: false, reason: `函数 ${func} 第二参数必须是正整数` };
-    }
+    const sig = sigs[func];
+    if (!sig) return { ok: false, reason: `函数 ${func} 未注册` };
+    const openIdx = m.index + m[0].length - 1;
+    const closeIdx = matchParen(formula, openIdx);
+    if (closeIdx === -1) return { ok: false, reason: '公式括号不配对' };
+    const argStr = formula.slice(openIdx + 1, closeIdx);
+    const args = splitTopLevel(argStr, ',').map((s) => s.trim());
+    const v = validateCallArgs(meta, sig, args, func);
+    if (v.ok === false) return v;
+    callRegex.lastIndex = closeIdx + 1;
   }
 
-  // 2. 其余大写标识符必须 ∈ 白名单（NOT 已移除——后端不支持 ast.Not）
+  // 2. 其余大写标识符必须 ∈ 白名单
   const tokenRegex = /[A-Z_][A-Z0-9_]*/g;
   let t: RegExpExecArray | null;
   while ((t = tokenRegex.exec(formula)) !== null) {
@@ -100,11 +99,118 @@ export function validateFormula(
     if (indicators.has(token) || fields.has(token)) continue;
     return { ok: false, reason: `未识别标识符 ${token}` };
   }
-
-  // 3. 非法字符（防注入到 AST 之外）
-  if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
-
   return { ok: true };
+}
+
+function matchParen(s: string, openIdx: number): number {
+  let d = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === '(') d++;
+    else if (s[i] === ')') d--;
+    if (d === 0) return i;
+  }
+  return -1;
+}
+
+function splitTopLevel(s: string, sep: string): string[] {
+  const parts: string[] = [];
+  let d = 0, cur = '';
+  for (const ch of s) {
+    if (ch === '(') d++;
+    else if (ch === ')') d--;
+    if (ch === sep && d === 0) { parts.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  if (cur.trim() !== '') parts.push(cur);
+  return parts;
+}
+
+function splitBoolTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let d2 = 0, seg = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(') d2++;
+    else if (ch === ')') d2--;
+    if (d2 === 0 && (s.slice(i, i + 3) === 'AND' || s.slice(i, i + 2) === 'OR')) {
+      const word = s.slice(i, i + 3) === 'AND' ? 'AND' : 'OR';
+      const beforeOk = i === 0 || !/[A-Z0-9_]/.test(s[i - 1]);
+      const afterIdx = i + word.length;
+      const afterOk = afterIdx >= s.length || !/[A-Z0-9_]/.test(s[afterIdx]);
+      if (beforeOk && afterOk) {
+        out.push(seg.trim());
+        seg = '';
+        i = afterIdx - 1;
+        continue;
+      }
+    }
+    seg += ch;
+  }
+  if (seg.trim() !== '') out.push(seg.trim());
+  return out.filter((x) => x !== '');
+}
+
+function validateCallArgs(
+  meta: NLMeta,
+  sig: string[],
+  args: string[],
+  func: string
+): { ok: true } | { ok: false; reason: string } {
+  if (args.length !== sig.length) {
+    return { ok: false, reason: `函数 ${func} 必须恰好 ${sig.length} 个参数` };
+  }
+  for (let i = 0; i < sig.length; i++) {
+    const kind = sig[i];
+    const arg = args[i];
+    if (kind === 'field') {
+      if (!meta.fields.includes(arg)) {
+        return { ok: false, reason: `函数 ${func} 参数 ${arg} 不在字段白名单` };
+      }
+    } else if (kind === 'pos_int') {
+      if (!/^\d+$/.test(arg) || Number(arg) < 1 || Number(arg) > POS_INT_MAX) {
+        return { ok: false, reason: `函数 ${func} 窗口必须是 1-${POS_INT_MAX} 正整数` };
+      }
+    } else if (kind === 'series') {
+      if (!isSeriesExpr(meta, arg)) {
+        return { ok: false, reason: `函数 ${func} 参数 ${arg} 必须是字段或窗口指标调用` };
+      }
+    } else if (kind === 'cond') {
+      if (!isCondExpr(meta, arg)) {
+        return { ok: false, reason: `函数 ${func} 条件参数不合法` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+function isSeriesExpr(meta: NLMeta, tok: string): boolean {
+  if (meta.fields.includes(tok)) return true;
+  const mm = /^([A-Z_][A-Z0-9_]*)\s*\(([^()]*)\)$/.exec(tok);
+  if (!mm) return false;
+  const sig = meta.signatures?.[mm[1]];
+  if (!sig || sig.length !== 2 || sig[0] !== 'field' || sig[1] !== 'pos_int') return false;
+  const args = mm[2].split(',').map((s) => s.trim());
+  return validateCallArgs(meta, sig, args, mm[1]).ok === true;
+}
+
+function isCondExpr(meta: NLMeta, tok: string): boolean {
+  const parts = splitBoolTopLevel(tok);
+  if (parts.length === 0) return false;
+  return parts.every((p) => isCompareExpr(meta, p));
+}
+
+function isCompareExpr(meta: NLMeta, expr: string): boolean {
+  const m = new RegExp(`^(.*?)\\s*(${COMPARE_STR})\\s*(.*)$`).exec(expr.trim());
+  if (!m) return false;
+  const left = m[1].trim();
+  const right = m[3].trim();
+  if (!isSeriesExpr(meta, left)) return false;
+  if (!isSeriesExpr(meta, right) && !isNumber(right)) return false;
+  return true;
+}
+
+function isNumber(s: string): boolean {
+  return /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(s);
 }
 
 export function buildSystemPrompt(meta: NLMeta): string {
@@ -123,7 +229,12 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '单位换算规则（重要）：',
     '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"应表达为 TOTAL_MV > 1e10。',
     '',
-    `可选指标函数（只能使用，参数形态 FUNC(字段, 正整数窗口)：${meta.indicators.join('、')}。`,
+    `可选算子（函数名(参数形态)：含义）：`,
+    ...Object.entries(meta.descriptions ?? {})
+      .map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
+    '',
+    'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），但不支持更深嵌套。',
+    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
