@@ -21,10 +21,6 @@ export const MAX_FORMULA_LENGTH = 500;
 
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export function stripCodeFence(raw: string): string {
   const m = CODE_FENCE.exec(raw);
   return m ? m[1].trim() : raw.trim();
@@ -204,6 +200,7 @@ function isCompareExpr(meta: NLMeta, expr: string): boolean {
   if (!m) return false;
   const left = m[1].trim();
   const right = m[3].trim();
+  // 有意比后端更严格：后端允许常量在任一侧（仅拒绝双常量），此处要求左侧为 series，与 spec 一致
   if (!isSeriesExpr(meta, left)) return false;
   if (!isSeriesExpr(meta, right) && !isNumber(right)) return false;
   return true;

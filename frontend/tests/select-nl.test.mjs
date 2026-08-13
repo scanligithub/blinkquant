@@ -32,8 +32,6 @@ function parseSelectNLText(raw) {
   return { formula: parsed.formula.trim(), timeframe, explanation };
 }
 
-function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
 const COMPARE_STR = '>=|<=|>|<';
 const POS_INT_MAX = 500;
 
@@ -179,6 +177,7 @@ function isCompareExpr(meta, expr) {
   if (!m) return false;
   const left = m[1].trim();
   const right = m[3].trim();
+  // 有意比后端更严格：后端允许常量在任一侧（仅拒绝双常量），此处要求左侧为 series，与 spec 一致
   if (!isSeriesExpr(meta, left)) return false;
   if (!isSeriesExpr(meta, right) && !isNumber(right)) return false;
   return true;
@@ -376,6 +375,13 @@ test('validateFormula: cond 支持数值操作数', () => {
 test('validateFormula: cond == 拒绝', () => {
   const r = validateFormula(META, 'COUNT(CLOSE == 10, 3)');
   assert.equal(r.ok, false);
+});
+
+test('validateFormula: AND/OR 子串字段不被误分词', () => {
+  const r1 = validateFormula(META, 'COUNT(IS_FORECAST_GOOD > 0.5, 5)');
+  assert.equal(r1.ok, true);
+  const r2 = validateFormula(META, 'COUNT(FORECAST_YOY > 10 AND CLOSE > 5, 3)');
+  assert.equal(r2.ok, true);
 });
 
 test('buildSystemPrompt: 包含新算子说明', () => {
