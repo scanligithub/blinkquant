@@ -110,7 +110,7 @@
   - `core/data_manager.py` `INDICATOR_MAP = dict(INDICATOR_FUNCS)`（window 型纯函数子集）
   - `core/engine.py` `metric_pattern` 由 `INDICATOR_NAMES` 生成（正则用于 `metrics_stats` 指标统计）；`api/routes.py` 的 `METRIC_REGEX = selection_engine.metric_pattern` 亦指向同一正则
 - **后端接口**：`GET /api/v1/nl-meta`（`routes.py`）返回 `{fields, indicators, timeframes, units, example_queries}`，注册表驱动的公开只读元数据。
-- **前端 Edge 路由**：`/api/select-nl`（`frontend/src/app/api/select-nl/route.ts`）职责链 = 登录守卫 → 限流 → 拉取 nl-meta（缓存 24h，`Promise.any`×3 节点）→ 调 LLM → JSON 解析（非 JSON 输出重试一次）→ 强校验公式/周期 → 成功才计入配额。
+- **前端 Edge 路由**：`/api/select-nl`（`frontend/src/app/api/select-nl/route.ts`）职责链 = 登录守卫 → 限流 → 拉取 nl-meta（缓存 24h，`Promise.any`×3 节点）→ 调 LLM → JSON 解析（非 JSON 输出重试一次）→ 强校验公式/周期 → 成功才计入配额。**注意：该路由用 Node.js runtime（`maxDuration=60`），不能用 edge**——Edge 要求 25s 内返回首字节，gpt-oss-120b 推理必超。
 - **前端弹窗**：`frontend/src/components/AISelectModal.tsx` 提供自然语言输入 + 公式预览（可编辑）+ 周期切换，确认后复用现有选股管道（`page.tsx` 的 `handleSelect(overrides?)`）。
 - **纯函数**：`frontend/src/lib/selectNL.ts`（`buildSystemPrompt` / `parseSelectNLText` / `validateFormula` / `checkRateLimit` / `recordRequest`），`frontend/tests/select-nl.test.mjs` 复制实现做单测（仓库惯例）。
 

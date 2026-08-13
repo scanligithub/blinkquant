@@ -10,7 +10,8 @@ import {
   type SelectNLResult,
 } from '@/lib/selectNL';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const NODES = [
   'https://scanli-blinkquant-node1.hf.space',
