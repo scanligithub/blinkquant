@@ -127,3 +127,10 @@
 - 新增指标：注册表 `INDICATORS` 加一项 → security / data_manager / engine / nl-meta 自动派生，无需改动其他文件。
 - 新增字段：需**同步**注册表 `FIELDS` 与 `security.py` 的 `fields` 键集、`/api/v1/kline` 的 `target_cols`（`test_fields_match_registry` 锁一致性防 drift）。
 
+### 后续工作（final review 记录，v2.3 交付时跳过未实施）
+- **软白名单**：`security.py` `_visit(ast.Name)` 对未列入 `FIELDS` 的裸名称会 fallthrough 到 `pl.col(name.lower())`（如 `main_net` 可查询）。函数参数位有 `_require_whitelist_field` 强校验，但裸字段位无。LLM 路径安全（前端拒绝 `_net`），仅手动公式框与无认证直接访问后端时可触达。后续可选：收紧裸名称白名单或文档化内部列可查询。
+- **前端测试测复制版**：`select-nl.test.mjs` 复制实现而非导入真实 `selectNL.ts`（仓库既有惯例）。防 drift 可加 ~20 行守卫测试：读 TS 源码断言各函数体出现在测试复制版中。
+- **运算符接受集**：前端 `validateFormula` 放行 `= != % ** ^ &&` 而后端拒绝（400 报错信息较模糊）。可前端拒绝或扩展后端 operators 映射。
+- **metric_pattern 字段子集硬编码**：`engine.py:14` 仍只匹配 `CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT`，且 `_prepare_hot_jit` 的 `VOL→pl.col('vol')` 与真实列 `volume` 不符；基础字段外的指标（如 `MA(PE_TTM,5)`）与 `*_VOL_*` 永不 Hot-JIT 挂载/统计。正确结果（慢路径），仅性能/统计缺口。
+- **窗口无上限**：`MA(CLOSE, 999999999999)` 前后端均接受，会触发超大 rolling 计算。可加窗口上限（如 ≤500）。
+
