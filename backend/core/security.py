@@ -151,6 +151,9 @@ class BlinkParser:
         if isinstance(node, ast.Compare):
             if len(node.ops) != 1 or type(node.ops[0]) not in (ast.Gt, ast.GtE, ast.Lt, ast.LtE):
                 raise ValueError(f"Function {func} cond must use > >= < <=")
+            if (isinstance(node.left, ast.Constant)
+                    and isinstance(node.comparators[0], ast.Constant)):
+                raise ValueError(f"Function {func} cond needs at least one series operand")
             self._require_series_operand(node.left, func)
             self._require_series_operand(node.comparators[0], func)
             return

@@ -216,5 +216,28 @@ class TestSignatureRecursion(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.eval_expr("COUNT(CLOSE == 10, 3)")
 
+    def test_count_cond_constant_both_sides_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("COUNT(5 > 3, 3)")
+
+    def test_count_cond_window_operand(self):
+        expr = self.eval_expr("COUNT(CLOSE > MA(CLOSE, 2), 3)")
+        got = self.df.with_columns(expr.alias("c"))["c"].to_list()
+        # MA2 = [null, 10.5, 11.5, 12.5]；close > MA2 = [null, T, T, T]
+        # rolling_sum(3) = [null, null, null, 3]
+        self.assertEqual(got, [None, None, None, 3])
+
+    def test_max_min_abs(self):
+        expr = self.eval_expr("MAX(CLOSE, OPEN)")
+        got = self.df.with_columns(expr.alias("m"))["m"].to_list()
+        self.assertEqual(got, [10.0, 11.0, 12.0, 13.0])
+        expr = self.eval_expr("MIN(CLOSE, OPEN)")
+        got = self.df.with_columns(expr.alias("m"))["m"].to_list()
+        self.assertEqual(got, [9.0, 10.5, 11.5, 12.5])
+        expr = self.eval_expr("ABS(MA(CLOSE, 2))")
+        got = self.df.with_columns(expr.alias("a"))["a"].to_list()
+        # MA2 = [null, 10.5, 11.5, 12.5] → 绝对值不变
+        self.assertEqual(got, [None, 10.5, 11.5, 12.5])
+
 if __name__ == "__main__":
     unittest.main()
