@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
-# 正则用于提取公式中的指标
-METRIC_REGEX = re.compile(r'(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)', re.IGNORECASE)
+# 正则用于提取公式中的指标 (从 engine 指标注册表派生，确保与支持指标同步)
+METRIC_REGEX = selection_engine.metric_pattern
 
 class SelectionRequest(BaseModel):
     formula: str
