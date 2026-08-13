@@ -113,7 +113,7 @@ class BlinkParser:
                 pure_key = f"{func}_{field_name}_{n}"
                 if self.current_df is not None and pure_key in self.current_df.columns:
                     return pl.col(pure_key)
-                return entry["func"](pl.col(field_name.lower()), n)
+                return entry["func"](self.fields[field_name], n)
             return entry["func"](*args)
 
         raise ValueError(f"Syntax not allowed: {type(node)}")
@@ -134,7 +134,7 @@ class BlinkParser:
         """series = 白名单字段 或 一层窗口函数调用（复用 _visit 快路径）。"""
         if isinstance(node, ast.Name):
             name = _require_whitelist_field(node)
-            return pl.col(name.lower())
+            return self.fields[name]
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id.upper() in WINDOW_NAMES):
             return self._visit(node)
