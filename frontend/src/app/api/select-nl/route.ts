@@ -21,7 +21,9 @@ const NODES = [
 const LLM_ENDPOINT = process.env.LLM_ENDPOINT;
 const LLM_API_KEY = process.env.LLM_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL;
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 15000);
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 60000);
+const LLM_REASONING_EFFORT = process.env.LLM_REASONING_EFFORT || 'low';
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2048);
 
 const META_TTL_MS = 24 * 60 * 60 * 1000;
 let metaCache: { at: number; data: NLMeta } | null = null;
@@ -51,6 +53,8 @@ async function callLlm(systemPrompt: string, query: string): Promise<string> {
         { role: 'user', content: query },
       ],
       temperature: 0,
+      reasoning_effort: LLM_REASONING_EFFORT,
+      max_tokens: LLM_MAX_TOKENS,
     }),
     signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
   });

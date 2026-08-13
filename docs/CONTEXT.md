@@ -115,7 +115,7 @@
 - **纯函数**：`frontend/src/lib/selectNL.ts`（`buildSystemPrompt` / `parseSelectNLText` / `validateFormula` / `checkRateLimit` / `recordRequest`），`frontend/tests/select-nl.test.mjs` 复制实现做单测（仓库惯例）。
 
 ### 配置与部署
-- **Vercel 新增环境变量（必填）**：`LLM_ENDPOINT` / `LLM_API_KEY` / `LLM_MODEL`；未配置则 AI 选股入口返回 503 `NOT_CONFIGURED`。可选 `LLM_TIMEOUT_MS` 默认 15000。
+- **Vercel 新增环境变量（必填）**：`LLM_ENDPOINT` / `LLM_API_KEY` / `LLM_MODEL`；未配置则 AI 选股入口返回 503 `NOT_CONFIGURED`。可选 `LLM_TIMEOUT_MS`（默认 60000）、`LLM_REASONING_EFFORT`（默认 `low`，NVIDIA gpt-oss reasoning 模型专用）、`LLM_MAX_TOKENS`（默认 2048）。`LLM_ENDPOINT` 需填完整端点（如 `https://integrate.api.nvidia.com/v1/chat/completions`），不是 base URL。
 - **限流**：每用户内存计数（Vercel 每实例近似），3 次/分、20 次/天，仅成功翻译才计数，超限返回 429 且携带 `retryAfterMs`。
 - **后端需推 main 重新部署**：`backend/**` 变更触发 3 节点重部署后注册表派生才生效；前端部署在 Vercel。
 
