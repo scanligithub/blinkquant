@@ -3,15 +3,16 @@ import re
 import logging
 from .data_manager import data_manager
 from .security import blink_parser
-from .indicator_registry import INDICATOR_NAMES
+from .indicator_registry import INDICATOR_NAMES, WINDOW_NAMES, FIELDS
 
 logger = logging.getLogger(__name__)
 
 class SelectionEngine:
     def __init__(self):
-        _funcs = "|".join(INDICATOR_NAMES)
+        _funcs = "|".join(WINDOW_NAMES)
+        _fields = "|".join(FIELDS)
         self.metric_pattern = re.compile(
-            rf'({_funcs})\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)',
+            rf'\b({_funcs})\s*\(\s*({_fields})\s*,\s*(\d+)\s*\)(?![,)])',
             re.IGNORECASE)
 
     def _prepare_hot_jit(self, formula: str):
@@ -39,7 +40,9 @@ class SelectionEngine:
                 if col_name not in df.columns:
                     try:
                         if func_name in data_manager.INDICATOR_MAP:
-                            expr = data_manager.INDICATOR_MAP[func_name](pl.col(field_name.lower()), p_val).alias(col_name)
+                            expr = data_manager.INDICATOR_MAP[func_name](
+                                blink_parser.fields[field_name], p_val
+                            ).alias(col_name)
                             new_exprs.append(expr)
                     except: pass
             
