@@ -10,7 +10,6 @@
 其余为慢路径实时计算。开发者新增指标只需在此字典加一项。
 """
 
-import functools
 import polars as pl
 
 
