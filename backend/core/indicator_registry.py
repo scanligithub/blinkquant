@@ -8,9 +8,9 @@
 import polars as pl
 
 INDICATORS = {
-    "MA":  {"func": lambda c, n: c.rolling_mean(window_size=n),            "window": True},
-    "EMA": {"func": lambda c, n: c.ewm_mean(span=n, adjust=False),          "window": True},
-    "STD": {"func": lambda c, n: c.rolling_std(window_size=n),             "window": True},
+    "MA":  {"func": lambda c, n: c.rolling_mean(window_size=n).over("code"),            "window": True},
+    "EMA": {"func": lambda c, n: c.ewm_mean(span=n, adjust=False).over("code"),          "window": True},
+    "STD": {"func": lambda c, n: c.rolling_std(window_size=n).over("code"),             "window": True},
     "ROC": {"func": lambda c, n: ((c / c.shift(n).over("code")) - 1) * 100, "window": True},
     "REF": {"func": lambda c, n: c.shift(n).over("code"),                  "window": True},
 }
