@@ -540,11 +540,6 @@ const META = {
 };
 const MAX_FORMULA_LENGTH = 500;
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
-const UNIT_RULES = [
-  { re: /(\d+\.?\d*)\s*万亿\b/g, mult: 1e12 },
-  { re: /(\d+\.?\d*)\s*亿\b/g, mult: 1e8 },
-  { re: /(\d+\.?\d*)\s*万\b/g, mult: 1e4 },
-];
 
 function stripCodeFence(raw) {
   const m = CODE_FENCE.exec(raw);
@@ -562,6 +557,8 @@ function parseSelectNLText(raw) {
   const timeframe = typeof parsed.timeframe === 'string' ? parsed.timeframe.toUpperCase() : 'D';
   return { formula: parsed.formula.trim(), timeframe, explanation };
 }
+
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 function validateFormula(meta, formula) {
   if (typeof formula !== 'string' || formula.trim().length === 0) return { ok: false, reason: '公式为空' };
@@ -581,15 +578,13 @@ function validateFormula(meta, formula) {
   let t;
   while ((t = tokenRegex.exec(formula)) !== null) {
     const token = t[0];
-    if (['AND', 'OR', 'NOT'].includes(token)) continue;
+    if (['AND', 'OR'].includes(token)) continue; // NOT 已移除——后端不支持 ast.Not
     if (indicators.has(token) || fields.has(token)) continue;
     return { ok: false, reason: `未识别标识符 ${token}` };
   }
   if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
   return { ok: true };
 }
-
-function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 function buildSystemPrompt(meta) {
   const fieldsLine = meta.fields.join('、');
@@ -601,6 +596,9 @@ function buildSystemPrompt(meta) {
     '',
     '单位：',
     unitsLine,
+    '',
+    '单位换算规则（重要）：',
+    '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"应表达为 TOTAL_MV > 1e10。',
     '',
     '可选指标函数（只能使用，参数形态 FUNC(字段, 正整数窗口)：' + meta.indicators.join('、') + '。',
     '',
@@ -701,12 +699,25 @@ test('validateFormula: 空公式拒绝', () => {
   assert.equal(r.ok, false);
 });
 
+test('validateFormula: NOT 拒绝（后端不支持 ast.Not）', () => {
+  const r = validateFormula(META, 'NOT (CLOSE > 11)');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /NOT/);
+});
+
 test('buildSystemPrompt: 包含字段与单位与示例', () => {
   const p = buildSystemPrompt(META);
   assert.match(p, /PE_TTM/);
   assert.match(p, /TOTAL_MV=元/);
   assert.match(p, /CLOSE > MA\(CLOSE, 20\)/);
   assert.match(p, /timeframe/);
+});
+
+test('buildSystemPrompt: 包含单位换算规则(亿→1e8)', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /亿/);
+  assert.match(p, /1e8/);
+  assert.match(p, /1e10/);
 });
 
 test('checkRateLimit: 允许窗口内请求', () => {
@@ -729,16 +740,15 @@ test('checkRateLimit: 每分钟阈值边界（3次/分内允许）', () => {
   const store = new Map();
   recordRequest(store, 'k', 0);
   recordRequest(store, 'k', 1000);
-  recordRequest(store, 'k', 2000);
-  const r = checkRateLimit(store, 'k', 2000); // 尚未到第 4 个
+  const r = checkRateLimit(store, 'k', 2000); // 第 3 次请求仍允许
   assert.equal(r.allowed, true);
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 2: 运行确认可跑**
 
 Run: `cd frontend; node --test tests/select-nl.test.mjs`
-Expected: FAIL（`Cannot find module` 或断言失败，因为 `selectNL.ts` 尚未创建——测试自带复制实现，所以应先 PASS；为符合 TDD，此步确认测试文件本身语法正确可运行）
+Expected: 18 个测试全部 PASS（测试自带复制实现，这一步验证测试本身正确可运行；`selectNL.ts` 尚未创建，语法正确性由此步保证）
 
 - [ ] **Step 3: 创建 `frontend/src/lib/selectNL.ts`**
 
@@ -816,12 +826,12 @@ export function validateFormula(
     }
   }
 
-  // 2. 其余大写标识符必须 ∈ 白名单
+  // 2. 其余大写标识符必须 ∈ 白名单（NOT 已移除——后端不支持 ast.Not）
   const tokenRegex = /[A-Z_][A-Z0-9_]*/g;
   let t: RegExpExecArray | null;
   while ((t = tokenRegex.exec(formula)) !== null) {
     const token = t[0];
-    if (['AND', 'OR', 'NOT'].includes(token)) continue;
+    if (['AND', 'OR'].includes(token)) continue;
     if (indicators.has(token) || fields.has(token)) continue;
     return { ok: false, reason: `未识别标识符 ${token}` };
   }
@@ -844,6 +854,9 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '',
     '单位：',
     unitsLine,
+    '',
+    '单位换算规则（重要）：',
+    '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"应表达为 TOTAL_MV > 1e10。',
     '',
     `可选指标函数（只能使用，参数形态 FUNC(字段, 正整数窗口)：${meta.indicators.join('、')}。`,
     '',
@@ -895,12 +908,12 @@ export function recordRequest(store: Map<string, RateWindow>, key: string, now: 
 - [ ] **Step 4: 确保测试与实现一致后运行确认通过**
 
 Run: `cd frontend; node --test tests/select-nl.test.mjs`
-Expected: 全部 pass
+Expected: 18 个测试全部 pass
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/lib/selectNL.ts frontend/tests/select-nl.test.mjs
+git add frontend/src/lib/selectNL.ts frontend/tests/select-nl.test.mjs docs/superpowers/plans/2026-08-13-nl-stock-select.md
 git commit -m "feat(select-nl): add pure NL prompt/parse/validate/ratelimit functions with tests"
 ```
 
