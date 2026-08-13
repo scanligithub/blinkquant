@@ -7,6 +7,7 @@ import logging
 import httpx
 import polars as pl
 from huggingface_hub import list_repo_files
+from .indicator_registry import INDICATOR_FUNCS
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +50,8 @@ class DataManager:
         self.df_sector_list = None
         self.stock_sectors = {}
 
-        # 指标计算算子映射
-        self.INDICATOR_MAP = {
-            'MA': lambda col, p: col.rolling_mean(window_size=p).over("code"),
-            'EMA': lambda col, p: col.ewm_mean(span=p, adjust=False).over("code"),
-            'STD': lambda col, p: col.rolling_std(window_size=p).over("code"),
-            'ROC': lambda col, p: ((col / col.shift(p).over("code")) - 1) * 100
-        }
+        # 指标计算算子映射（由注册表派生）
+        self.INDICATOR_MAP = dict(INDICATOR_FUNCS)
 
     async def async_load_data(self):
         """流式、低内存占用的异步加载主入口（串行下载和解析，规避并发 OOM 与连接死锁）"""

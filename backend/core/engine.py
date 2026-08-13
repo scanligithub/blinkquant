@@ -3,12 +3,16 @@ import re
 import logging
 from .data_manager import data_manager
 from .security import blink_parser
+from .indicator_registry import INDICATOR_NAMES
 
 logger = logging.getLogger(__name__)
 
 class SelectionEngine:
     def __init__(self):
-        self.metric_pattern = re.compile(r'(MA|EMA|STD|ROC)\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)', re.IGNORECASE)
+        _funcs = "|".join(INDICATOR_NAMES)
+        self.metric_pattern = re.compile(
+            rf'({_funcs})\s*\(\s*(CLOSE|OPEN|HIGH|LOW|VOL|AMOUNT)\s*,\s*(\d+)\s*\)',
+            re.IGNORECASE)
 
     def _prepare_hot_jit(self, formula: str):
         """
