@@ -32,7 +32,11 @@ export default function AISelectModal({ onClose, onRun }: AISelectModalProps) {
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error || '翻译失败');
+        if (json.code === 'RATE_LIMITED' && json.retryAfterMs) {
+          setError(`调用过于频繁，请 ${Math.ceil(json.retryAfterMs / 1000)} 秒后重试`);
+        } else {
+          setError(json.error || '翻译失败');
+        }
         return;
       }
       setResult(json.data);
@@ -105,7 +109,8 @@ export default function AISelectModal({ onClose, onRun }: AISelectModalProps) {
               </button>
               <button
                 onClick={() => onRun(result.formula, timeframe)}
-                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold"
+                disabled={!result.formula.trim()}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold disabled:opacity-50"
               >
                 运行选股
               </button>

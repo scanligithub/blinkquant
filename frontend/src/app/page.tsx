@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import StockSearch from '../components/StockSearch';
+import AISelectModal from '../components/AISelectModal';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
@@ -43,6 +44,7 @@ export default function Home() {
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showStrategies, setShowStrategies] = useState(false);
   const [saveStrategyOpen, setSaveStrategyOpen] = useState(false);
+  const [showAISelect, setShowAISelect] = useState(false);
   const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [timeframe, setTimeframe] = useState('D');
@@ -278,12 +280,14 @@ useEffect(() => {
     setShowStrategies(false);
   }, []);
 
-  const handleSelect = async () => {
+  const handleSelect = async (overrides?: { formula?: string; timeframe?: string }) => {
     setLoading(true); setResults([]); setSelectedStock(null);
+    const f = overrides?.formula ?? formula;
+    const t = overrides?.timeframe ?? timeframe;
     try {
       const res = await fetch('/api/select', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formula, timeframe })
+        body: JSON.stringify({ formula: f, timeframe: t })
       });
       const json = await res.json();
       if (json.success) setResults(json.data);
@@ -490,8 +494,15 @@ setDailyDataCache(dailyData);
                 value={formula} onChange={(e) => setFormula(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSelect()}
               />
-              <button onClick={handleSelect} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
+              <button onClick={() => handleSelect()} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
                 {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : '运行选股'}
+              </button>
+              <button
+                onClick={() => setShowAISelect(true)}
+                disabled={loading}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-bold"
+              >
+                AI 选股
               </button>
               <button
                 onClick={() => setSaveStrategyOpen(true)}
@@ -800,6 +811,16 @@ setDailyDataCache(dailyData);
             </div>
           </div>
         </div>
+      )}
+
+      {showAISelect && (
+        <AISelectModal
+          onClose={() => setShowAISelect(false)}
+          onRun={(formula, timeframe) => {
+            setShowAISelect(false);
+            handleSelect({ formula, timeframe });
+          }}
+        />
       )}
     </main>
   );
