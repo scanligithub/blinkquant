@@ -1,7 +1,26 @@
 import ast
+import re
 import polars as pl
 from typing import Any
 from .data_manager import data_manager
+from .indicator_registry import INDICATORS, FIELDS
+
+def _require_whitelist_field(node: ast.AST) -> str:
+    """参数必须是白名单字段名的 ast.Name。返回大写字段名。"""
+    if not isinstance(node, ast.Name):
+        raise ValueError("Field argument must be a field name")
+    name = node.id.upper()
+    if name not in FIELDS:
+        raise ValueError(f"Unknown field {name}")
+    return name
+
+def _require_positive_int(node: ast.AST) -> int:
+    """参数必须是正整数常量。"""
+    if not isinstance(node, ast.Constant) or isinstance(node.value, bool) or not isinstance(node.value, int):
+        raise ValueError("Window argument must be an integer constant")
+    if node.value <= 0:
+        raise ValueError("Window argument must be positive")
+    return node.value
 
 class BlinkParser:
     def __init__(self):
@@ -43,8 +62,9 @@ class BlinkParser:
         elif timeframe == 'M': self.current_df = data_manager.df_monthly
         else: self.current_df = data_manager.df_daily
         
-        # 兼容性替换
-        clean_expr = expr_str.strip().replace('&&','&').replace('||','|')
+        # 兼容性替换（含大写逻辑词归一化，兼容 LLM 输出；\b 词边界容忍多空格/开头位置）
+        clean_expr = re.sub(r'\b(AND|OR|NOT)\b', lambda m: m.group(1).lower(), expr_str.strip())
+        clean_expr = clean_expr.replace('&&', '&').replace('||', '|')
         tree = ast.parse(clean_expr, mode='eval')
         return self._visit(tree.body)
 
@@ -74,28 +94,22 @@ class BlinkParser:
             return res
 
         elif isinstance(node, ast.Call):
+            # 非 Name 函数名（如 foo.bar(1)）统一走 ValueError
+            if not isinstance(node.func, ast.Name):
+                raise ValueError("Function call target must be a name")
             func = node.func.id.upper()
-            if func in ['MA', 'EMA', 'STD', 'ROC'] and len(node.args) == 2:
-                if isinstance(node.args[0], ast.Name) and isinstance(node.args[1], ast.Constant):
-                    arg_field = node.args[0].id.upper()
-                    arg_param = node.args[1].value
-                    
-                    # 生成统一列名：MA_CLOSE_20 (无后缀)
-                    pure_key = f"{func}_{arg_field}_{arg_param}"
-                    
-                    # 检查当前上下文的 DF 中是否有该列
-                    if self.current_df is not None and pure_key in self.current_df.columns:
-                        return pl.col(pure_key)
-
-            # 回退：实时向量化计算
-            args = [self._visit(arg) for arg in node.args]
-            if func == 'MA': return args[0].rolling_mean(window_size=int(args[1])).over("code")
-            if func == 'EMA': return args[0].ewm_mean(span=int(args[1]), adjust=False).over("code")
-            if func == 'STD': return args[0].rolling_std(window_size=int(args[1])).over("code")
-            if func == 'REF': return args[0].shift(int(args[1])).over("code")
-            if func == 'ROC': return ((args[0] / args[0].shift(int(args[1])).over("code")) - 1) * 100
-            
-            raise ValueError(f"Unknown function {func}")
+            if func not in INDICATORS or not INDICATORS[func].get("window"):
+                raise ValueError(f"Unknown function {func}")
+            if len(node.args) != 2 or node.keywords:
+                raise ValueError(f"Function {func} expects exactly 2 positional args")
+            field_name = _require_whitelist_field(node.args[0])
+            n = _require_positive_int(node.args[1])
+            # ★ 快路径必须保留：命中 Hot-JIT 挂载列则直接返回列引用（提速来源，勿删）
+            pure_key = f"{func}_{field_name}_{n}"
+            if self.current_df is not None and pure_key in self.current_df.columns:
+                return pl.col(pure_key)
+            # 慢路径：实时向量化计算（首算后 engine 会挂载，下次即命中快路径）
+            return INDICATORS[func]["func"](self.fields[field_name], n)
 
         raise ValueError(f"Syntax not allowed: {type(node)}")
 

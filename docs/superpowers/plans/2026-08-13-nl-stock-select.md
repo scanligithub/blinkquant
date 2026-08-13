@@ -260,10 +260,10 @@ class TestCallBranch(unittest.TestCase):
             "close": [10.0, 11.0, 12.0],
         })
         blink_parser.current_df = df
-        node = parse_call("MA(CLOSE, 20)")
+        node = parse_call("MA(CLOSE, 2)")
         expr = blink_parser._visit(node)
         result = df.with_columns(expr.alias("m")).select(pl.col("m")).to_series().to_list()
-        self.assertEqual(result, [10.0, 10.5, 11.0])
+        self.assertEqual(result, [None, 10.5, 11.5])
 
     def test_fields_match_registry(self):
         from core.indicator_registry import FIELDS
@@ -307,11 +307,14 @@ def _require_positive_int(node: ast.AST) -> int:
 
 ```python
         elif isinstance(node, ast.Call):
+            # 非 Name 函数名（如 foo.bar(1)）统一走 ValueError
+            if not isinstance(node.func, ast.Name):
+                raise ValueError("Function call target must be a name")
             func = node.func.id.upper()
-            entry = INDICATORS.get(func)
-            if entry is None or not entry.get("window") or len(node.args) != 2:
+            if func not in INDICATORS or not INDICATORS[func].get("window"):
                 raise ValueError(f"Unknown function {func}")
-            # 参数形态强制校验
+            if len(node.args) != 2 or node.keywords:
+                raise ValueError(f"Function {func} expects exactly 2 positional args")
             field_name = _require_whitelist_field(node.args[0])
             n = _require_positive_int(node.args[1])
             # ★ 快路径必须保留：命中 Hot-JIT 挂载列则直接返回列引用（提速来源，勿删）
@@ -319,7 +322,7 @@ def _require_positive_int(node: ast.AST) -> int:
             if self.current_df is not None and pure_key in self.current_df.columns:
                 return pl.col(pure_key)
             # 慢路径：实时向量化计算（首算后 engine 会挂载，下次即命中快路径）
-            return entry["func"](pl.col(field_name.lower()), n)
+            return INDICATORS[func]["func"](self.fields[field_name], n)
 ```
 
 - [ ] **Step 4: 运行确认通过**
@@ -331,9 +334,9 @@ Expected: `OK`
 
 Run:
 ```bash
-cd backend; python -c "import ast; from core.security import blink_parser; blink_parser.current_df=None; e=blink_parser.parse_expression('CLOSE > MA(CLOSE, 20) AND PE_TTM < 30','D'); print('OK', type(e).__name__)"
+cd backend; python -c "from core.security import blink_parser; blink_parser.current_df=None; print(type(blink_parser.parse_expression('CLOSE > MA(CLOSE, 20) and PE_TTM < 30','D')).__name__)"
 ```
-Expected: `OK <class 'polars.expr.expr.Expr'>`（不抛异常）
+Expected: `Expr`（不抛异常；`parse_expression` 已归一化大写逻辑词，如 `CLOSE > 11 AND PE_TTM < 30` 亦可用）
 
 - [ ] **Step 6: Commit**
 
