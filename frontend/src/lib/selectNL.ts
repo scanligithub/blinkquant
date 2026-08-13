@@ -276,3 +276,13 @@ export function recordRequest(store: Map<string, RateWindow>, key: string, now: 
   win.timestamps = [...win.timestamps.filter((ts) => now - ts < DAY), now];
   store.set(key, win);
 }
+
+// LLM 调用超时：默认 50s，钳制上限 55s（Vercel Hobby 函数硬限 60s，必须留余量）
+export const LLM_TIMEOUT_DEFAULT_MS = 50000;
+export const LLM_TIMEOUT_CAP_MS = 55000;
+
+export function resolveLlmTimeout(raw?: string | null): number {
+  const v = raw === undefined || raw === null || raw === '' ? NaN : Number(raw);
+  if (Number.isNaN(v) || v < 1000) return LLM_TIMEOUT_DEFAULT_MS;
+  return Math.min(v, LLM_TIMEOUT_CAP_MS);
+}

@@ -110,12 +110,12 @@
   - `core/data_manager.py` `INDICATOR_MAP = dict(INDICATOR_FUNCS)`（window 型纯函数子集）
   - `core/engine.py` `metric_pattern` 由 `INDICATOR_NAMES` 生成（正则用于 `metrics_stats` 指标统计）；`api/routes.py` 的 `METRIC_REGEX = selection_engine.metric_pattern` 亦指向同一正则
 - **后端接口**：`GET /api/v1/nl-meta`（`routes.py`）返回 `{fields, indicators, timeframes, units, example_queries}`，注册表驱动的公开只读元数据。
-- **前端 Edge 路由**：`/api/select-nl`（`frontend/src/app/api/select-nl/route.ts`）职责链 = 登录守卫 → 限流 → 拉取 nl-meta（缓存 24h，`Promise.any`×3 节点）→ 调 LLM → JSON 解析（非 JSON 输出重试一次）→ 强校验公式/周期 → 成功才计入配额。**注意：该路由用 Node.js runtime（`maxDuration=60`），不能用 edge**——Edge 要求 25s 内返回首字节，gpt-oss-120b 推理必超。
+- **前端 Edge 路由**：`/api/select-nl`（`frontend/src/app/api/select-nl/route.ts`）职责链 = 登录守卫 → 限流 → 拉取 nl-meta（缓存 24h，`Promise.any`×3 节点）→ 调 LLM → JSON 解析（非 JSON 输出直接 400 `INVALID_LLM`，无重试）→ 强校验公式/周期 → 成功才计入配额。**注意：该路由用 Node.js runtime（`maxDuration=60`），不能用 edge**——Edge 要求 25s 内返回首字节，gpt-oss-120b 推理必超。
 - **前端弹窗**：`frontend/src/components/AISelectModal.tsx` 提供自然语言输入 + 公式预览（可编辑）+ 周期切换，确认后复用现有选股管道（`page.tsx` 的 `handleSelect(overrides?)`）。
 - **纯函数**：`frontend/src/lib/selectNL.ts`（`buildSystemPrompt` / `parseSelectNLText` / `validateFormula` / `checkRateLimit` / `recordRequest`），`frontend/tests/select-nl.test.mjs` 复制实现做单测（仓库惯例）。
 
 ### 配置与部署
-- **Vercel 新增环境变量（必填）**：`LLM_ENDPOINT` / `LLM_API_KEY` / `LLM_MODEL`；未配置则 AI 选股入口返回 503 `NOT_CONFIGURED`。可选 `LLM_TIMEOUT_MS`（默认 60000）、`LLM_REASONING_EFFORT`（默认 `low`，NVIDIA gpt-oss reasoning 模型专用）、`LLM_MAX_TOKENS`（默认 2048）。`LLM_ENDPOINT` 需填完整端点（如 `https://integrate.api.nvidia.com/v1/chat/completions`），不是 base URL。
+- **Vercel 新增环境变量（必填）**：`LLM_ENDPOINT` / `LLM_API_KEY` / `LLM_MODEL`；未配置则 AI 选股入口返回 503 `NOT_CONFIGURED`。可选 `LLM_TIMEOUT_MS`（默认 50000，代码钳制上限 55000——Hobby 函数硬限 60s 必须留余量）、`LLM_REASONING_EFFORT`（默认 `low`，NVIDIA gpt-oss reasoning 模型专用）、`LLM_MAX_TOKENS`（默认 1024）。`LLM_ENDPOINT` 需填完整端点（如 `https://integrate.api.nvidia.com/v1/chat/completions`），不是 base URL。
 - **限流**：每用户内存计数（Vercel 每实例近似），3 次/分、20 次/天，仅成功翻译才计数，超限返回 429 且携带 `retryAfterMs`。
 - **后端需推 main 重新部署**：`backend/**` 变更触发 3 节点重部署后注册表派生才生效；前端部署在 Vercel。
 

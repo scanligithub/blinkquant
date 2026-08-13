@@ -240,6 +240,16 @@ function recordRequest(store, key, now) {
   win.timestamps = [...win.timestamps.filter((ts) => now - ts < DAY), now];
   store.set(key, win);
 }
+
+// LLM 调用超时：默认 50s，钳制上限 55s（Vercel Hobby 函数硬限 60s，必须留余量）
+const LLM_TIMEOUT_DEFAULT_MS = 50000;
+const LLM_TIMEOUT_CAP_MS = 55000;
+
+function resolveLlmTimeout(raw) {
+  const v = raw === undefined || raw === null || raw === '' ? NaN : Number(raw);
+  if (Number.isNaN(v) || v < 1000) return LLM_TIMEOUT_DEFAULT_MS;
+  return Math.min(v, LLM_TIMEOUT_CAP_MS);
+}
 // ---- 复制结束 ----
 
 test('parseSelectNLText: 纯 JSON 正常解析', () => {
@@ -428,4 +438,19 @@ test('checkRateLimit: 每分钟阈值边界（3次/分内允许）', () => {
   recordRequest(store, 'k', 1000);
   const r = checkRateLimit(store, 'k', 2000); // 第 3 次请求仍允许
   assert.equal(r.allowed, true);
+});
+
+test('resolveLlmTimeout: 未配置用默认 50s', () => {
+  assert.equal(resolveLlmTimeout(undefined), 50000);
+  assert.equal(resolveLlmTimeout(''), 50000);
+  assert.equal(resolveLlmTimeout('abc'), 50000);
+});
+
+test('resolveLlmTimeout: 配置超上限被钳制到 55s', () => {
+  assert.equal(resolveLlmTimeout('90000'), 55000);
+  assert.equal(resolveLlmTimeout('60000'), 55000);
+});
+
+test('resolveLlmTimeout: 合法值原样返回', () => {
+  assert.equal(resolveLlmTimeout('45000'), 45000);
 });

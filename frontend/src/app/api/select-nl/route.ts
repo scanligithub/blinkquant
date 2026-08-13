@@ -6,6 +6,7 @@ import {
   recordRequest,
   parseSelectNLText,
   validateFormula,
+  resolveLlmTimeout,
   type NLMeta,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -22,9 +23,9 @@ const NODES = [
 const LLM_ENDPOINT = process.env.LLM_ENDPOINT;
 const LLM_API_KEY = process.env.LLM_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL;
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 60000);
+const LLM_TIMEOUT_MS = resolveLlmTimeout(process.env.LLM_TIMEOUT_MS);
 const LLM_REASONING_EFFORT = process.env.LLM_REASONING_EFFORT || 'low';
-const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2048);
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 1024);
 
 const META_TTL_MS = 24 * 60 * 60 * 1000;
 let metaCache: { at: number; data: NLMeta } | null = null;
@@ -104,14 +105,16 @@ export async function POST(req: NextRequest) {
     const meta = await fetchNlMeta();
     const systemPrompt = buildSystemPrompt(meta);
 
-    // LLM 非 JSON 输出时重试一次（设计文档 §6：每轮尽量重试一次）
-    let raw = await callLlm(systemPrompt, query);
+    // 单次 LLM 调用（Hobby 60s 硬限下无重试预算；非 JSON 输出直接报错，用户可重发）
+    const raw = await callLlm(systemPrompt, query);
     let parsed: SelectNLResult;
     try {
       parsed = parseSelectNLText(raw);
     } catch {
-      raw = await callLlm(systemPrompt, query);
-      parsed = parseSelectNLText(raw);
+      return NextResponse.json(
+        { error: 'AI 翻译输出格式异常，请重新输入或换种说法', code: 'INVALID_LLM' },
+        { status: 400 }
+      );
     }
 
     const validation = validateFormula(meta, parsed.formula);
