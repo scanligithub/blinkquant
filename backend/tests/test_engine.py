@@ -38,6 +38,11 @@ class TestEnginePattern(unittest.TestCase):
         # 非 window 算子（CROSS_UP 不在 WINDOW_NAMES）直接调用不匹配
         self.assertFalse(selection_engine.metric_pattern.search("CROSS_UP(CLOSE, 10)"))
 
+    def test_pattern_matches_no_space_and_lowercase_field(self):
+        self.assertTrue(selection_engine.metric_pattern.search("MA(CLOSE,20)"))
+        self.assertTrue(selection_engine.metric_pattern.search("MA(pe_ttm, 5)"))
+        self.assertFalse(selection_engine.metric_pattern.search("XEMA(CLOSE, 10)"))
+
     def test_pattern_extracts_inner_window_calls(self):
         # 金叉/COUNT 公式内层 MA 必须被提取（Hot-JIT 挂载依赖子串匹配）
         golden = selection_engine.metric_pattern.findall("CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))")

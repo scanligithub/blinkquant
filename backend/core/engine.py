@@ -3,7 +3,7 @@ import re
 import logging
 from .data_manager import data_manager
 from .security import blink_parser
-from .indicator_registry import INDICATOR_NAMES, WINDOW_NAMES, FIELDS
+from .indicator_registry import WINDOW_NAMES, FIELDS
 
 logger = logging.getLogger(__name__)
 
