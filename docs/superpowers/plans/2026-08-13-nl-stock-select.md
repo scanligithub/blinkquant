@@ -563,6 +563,26 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function validateFormula(meta, formula) {
   if (typeof formula !== 'string' || formula.trim().length === 0) return { ok: false, reason: '公式为空' };
   if (formula.length > MAX_FORMULA_LENGTH) return { ok: false, reason: `公式过长（上限 ${MAX_FORMULA_LENGTH} 字符）` };
+  // 括号配对检查（防嵌套调用/未闭合括号漏到后端 AST）
+  let depth = 0;
+  for (const ch of formula) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (depth < 0) return { ok: false, reason: '公式括号不配对' };
+  }
+  if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
+
+  // 嵌套调用检查：FUNC( 的参数内不允许再出现括号（防嵌套调用漏到后端 AST）
+  const callStartRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(`, 'g');
+  let cs;
+  while ((cs = callStartRegex.exec(formula)) !== null) {
+    const rest = formula.slice(callStartRegex.lastIndex);
+    const openIdx = rest.indexOf('(');
+    const closeIdx = rest.indexOf(')');
+    if (openIdx !== -1 && openIdx < closeIdx) {
+      return { ok: false, reason: '公式包含嵌套括号（不支持函数嵌套调用）' };
+    }
+  }
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
   const callRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(([^()]*)\\)`, 'g');
@@ -619,8 +639,8 @@ function checkRateLimit(store, key, now, limitPerMinute = 3, limitPerDay = 20) {
   const recent = win.timestamps.filter((ts) => now - ts < DAY);
   const minuteCount = recent.filter((ts) => now - ts < MINUTE).length;
   if (minuteCount >= limitPerMinute) {
-    const last = recent[recent.length - 1];
-    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - last)) };
+    const oldest = recent[recent.length - minuteCount];
+    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - oldest)) };
   }
   if (recent.length >= limitPerDay) {
     const first = recent[0];
@@ -699,6 +719,18 @@ test('validateFormula: 空公式拒绝', () => {
   assert.equal(r.ok, false);
 });
 
+test('validateFormula: 括号不配对拒绝', () => {
+  const r = validateFormula(META, 'CLOSE > (5');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /括号/);
+});
+
+test('validateFormula: 嵌套函数调用拒绝', () => {
+  const r = validateFormula(META, 'MA(CLOSE, MA(CLOSE, 20)) > 10');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /括号/);
+});
+
 test('validateFormula: NOT 拒绝（后端不支持 ast.Not）', () => {
   const r = validateFormula(META, 'NOT (CLOSE > 11)');
   assert.equal(r.ok, false);
@@ -748,7 +780,7 @@ test('checkRateLimit: 每分钟阈值边界（3次/分内允许）', () => {
 - [ ] **Step 2: 运行确认可跑**
 
 Run: `cd frontend; node --test tests/select-nl.test.mjs`
-Expected: 18 个测试全部 PASS（测试自带复制实现，这一步验证测试本身正确可运行；`selectNL.ts` 尚未创建，语法正确性由此步保证）
+Expected: 20 个测试全部 PASS（测试自带复制实现，这一步验证测试本身正确可运行；`selectNL.ts` 尚未创建，语法正确性由此步保证）
 
 - [ ] **Step 3: 创建 `frontend/src/lib/selectNL.ts`**
 
@@ -809,6 +841,26 @@ export function validateFormula(
   }
   if (formula.length > MAX_FORMULA_LENGTH) {
     return { ok: false, reason: `公式过长（上限 ${MAX_FORMULA_LENGTH} 字符）` };
+  }
+  // 括号配对检查（防嵌套调用/未闭合括号漏到后端 AST）
+  let depth = 0;
+  for (const ch of formula) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (depth < 0) return { ok: false, reason: '公式括号不配对' };
+  }
+  if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
+
+  // 嵌套调用检查：FUNC( 的参数内不允许再出现括号（防嵌套调用漏到后端 AST）
+  const callStartRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(`, 'g');
+  let cs: RegExpExecArray | null;
+  while ((cs = callStartRegex.exec(formula)) !== null) {
+    const rest = formula.slice(callStartRegex.lastIndex);
+    const openIdx = rest.indexOf('(');
+    const closeIdx = rest.indexOf(')');
+    if (openIdx !== -1 && openIdx < closeIdx) {
+      return { ok: false, reason: '公式包含嵌套括号（不支持函数嵌套调用）' };
+    }
   }
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
@@ -887,8 +939,8 @@ export function checkRateLimit(
   const recent = win.timestamps.filter((ts) => now - ts < DAY);
   const minuteCount = recent.filter((ts) => now - ts < MINUTE).length;
   if (minuteCount >= limitPerMinute) {
-    const last = recent[recent.length - 1];
-    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - last)) };
+    const oldest = recent[recent.length - minuteCount];
+    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - oldest)) };
   }
   if (recent.length >= limitPerDay) {
     const first = recent[0];
@@ -908,7 +960,7 @@ export function recordRequest(store: Map<string, RateWindow>, key: string, now: 
 - [ ] **Step 4: 确保测试与实现一致后运行确认通过**
 
 Run: `cd frontend; node --test tests/select-nl.test.mjs`
-Expected: 18 个测试全部 pass
+Expected: 20 个测试全部 pass
 
 - [ ] **Step 5: Commit**
 

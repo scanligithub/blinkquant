@@ -55,6 +55,26 @@ export function validateFormula(
   if (formula.length > MAX_FORMULA_LENGTH) {
     return { ok: false, reason: `公式过长（上限 ${MAX_FORMULA_LENGTH} 字符）` };
   }
+  // 括号配对检查（防嵌套调用/未闭合括号漏到后端 AST）
+  let depth = 0;
+  for (const ch of formula) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (depth < 0) return { ok: false, reason: '公式括号不配对' };
+  }
+  if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
+
+  // 嵌套调用检查：FUNC( 的参数内不允许再出现括号（防嵌套调用漏到后端 AST）
+  const callStartRegex = new RegExp(`\\b(${meta.indicators.map(escapeRe).join('|')})\\s*\\(`, 'g');
+  let cs: RegExpExecArray | null;
+  while ((cs = callStartRegex.exec(formula)) !== null) {
+    const rest = formula.slice(callStartRegex.lastIndex);
+    const openIdx = rest.indexOf('(');
+    const closeIdx = rest.indexOf(')');
+    if (openIdx !== -1 && openIdx < closeIdx) {
+      return { ok: false, reason: '公式包含嵌套括号（不支持函数嵌套调用）' };
+    }
+  }
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
 
@@ -132,8 +152,8 @@ export function checkRateLimit(
   const recent = win.timestamps.filter((ts) => now - ts < DAY);
   const minuteCount = recent.filter((ts) => now - ts < MINUTE).length;
   if (minuteCount >= limitPerMinute) {
-    const last = recent[recent.length - 1];
-    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - last)) };
+    const oldest = recent[recent.length - minuteCount];
+    return { allowed: false, remaining: 0, retryAfterMs: Math.max(0, MINUTE - (now - oldest)) };
   }
   if (recent.length >= limitPerDay) {
     const first = recent[0];
