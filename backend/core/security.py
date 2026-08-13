@@ -3,7 +3,7 @@ import re
 import polars as pl
 from typing import Any
 from .data_manager import data_manager
-from .indicator_registry import INDICATORS, FIELDS
+from .indicator_registry import INDICATORS, FIELDS, WINDOW_NAMES
 
 def _require_whitelist_field(node: ast.AST) -> str:
     """参数必须是白名单字段名的 ast.Name。返回大写字段名。"""
@@ -14,12 +14,16 @@ def _require_whitelist_field(node: ast.AST) -> str:
         raise ValueError(f"Unknown field {name}")
     return name
 
+WINDOW_MAX = 500
+
 def _require_positive_int(node: ast.AST) -> int:
-    """参数必须是正整数常量。"""
+    """参数必须是正整数常量，且 1 ≤ n ≤ 500。"""
     if not isinstance(node, ast.Constant) or isinstance(node.value, bool) or not isinstance(node.value, int):
         raise ValueError("Window argument must be an integer constant")
     if node.value <= 0:
         raise ValueError("Window argument must be positive")
+    if node.value > WINDOW_MAX:
+        raise ValueError(f"Window argument must be at most {WINDOW_MAX}")
     return node.value
 
 class BlinkParser:
@@ -94,23 +98,74 @@ class BlinkParser:
             return res
 
         elif isinstance(node, ast.Call):
-            # 非 Name 函数名（如 foo.bar(1)）统一走 ValueError
             if not isinstance(node.func, ast.Name):
                 raise ValueError("Function call target must be a name")
             func = node.func.id.upper()
-            if func not in INDICATORS or not INDICATORS[func].get("window"):
+            entry = INDICATORS.get(func)
+            if entry is None:
                 raise ValueError(f"Unknown function {func}")
-            if len(node.args) != 2 or node.keywords:
-                raise ValueError(f"Function {func} expects exactly 2 positional args")
-            field_name = _require_whitelist_field(node.args[0])
-            n = _require_positive_int(node.args[1])
-            # ★ 快路径必须保留：命中 Hot-JIT 挂载列则直接返回列引用（提速来源，勿删）
-            pure_key = f"{func}_{field_name}_{n}"
-            if self.current_df is not None and pure_key in self.current_df.columns:
-                return pl.col(pure_key)
-            # 慢路径：实时向量化计算（首算后 engine 会挂载，下次即命中快路径）
-            return INDICATORS[func]["func"](self.fields[field_name], n)
+            sig = entry["signature"]
+            if len(node.args) != len(sig) or node.keywords:
+                raise ValueError(f"Function {func} expects {len(sig)} positional args")
+            args = [self._visit_arg(a, s, func) for a, s in zip(node.args, sig)]
+            if entry.get("window"):
+                field_name, n = args
+                pure_key = f"{func}_{field_name}_{n}"
+                if self.current_df is not None and pure_key in self.current_df.columns:
+                    return pl.col(pure_key)
+                return entry["func"](pl.col(field_name.lower()), n)
+            return entry["func"](*args)
 
         raise ValueError(f"Syntax not allowed: {type(node)}")
+
+    def _visit_arg(self, node: Any, kind: str, func: str) -> Any:
+        """按签名声明的形态校验并求值单个参数。"""
+        if kind == "field":
+            return _require_whitelist_field(node)
+        if kind == "pos_int":
+            return _require_positive_int(node)
+        if kind == "series":
+            return self._require_series(node, func)
+        if kind == "cond":
+            return self._require_cond(node, func)
+        raise ValueError(f"Unknown signature kind {kind}")
+
+    def _require_series(self, node: Any, func: str) -> Any:
+        """series = 白名单字段 或 一层窗口函数调用（复用 _visit 快路径）。"""
+        if isinstance(node, ast.Name):
+            name = _require_whitelist_field(node)
+            return pl.col(name.lower())
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id.upper() in WINDOW_NAMES):
+            return self._visit(node)
+        raise ValueError(f"Function {func} arg must be a field or window indicator call")
+
+    def _require_cond(self, node: Any, func: str) -> Any:
+        """cond = Compare(> >= < <=) 或 BoolOp(AND/OR)。先结构白名单校验，再委托 _visit。"""
+        self._validate_cond_structure(node, func, depth=0)
+        return self._visit(node)
+
+    def _validate_cond_structure(self, node: Any, func: str, depth: int) -> None:
+        if depth > 2:
+            raise ValueError(f"Function {func} cond nesting too deep")
+        if isinstance(node, ast.Compare):
+            if len(node.ops) != 1 or type(node.ops[0]) not in (ast.Gt, ast.GtE, ast.Lt, ast.LtE):
+                raise ValueError(f"Function {func} cond must use > >= < <=")
+            self._require_series_operand(node.left, func)
+            self._require_series_operand(node.comparators[0], func)
+            return
+        if isinstance(node, ast.BoolOp) and type(node.op) in (ast.And, ast.Or):
+            for v in node.values:
+                self._validate_cond_structure(v, func, depth + 1)
+            return
+        raise ValueError(f"Function {func} cond must be a comparison or AND/OR expression")
+
+    def _require_series_operand(self, node: Any, func: str) -> None:
+        """cond 的操作数：series（字段/窗口调用）或数值常量。"""
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool):
+                raise ValueError(f"Function {func} cond operand must be number or series")
+            return
+        self._require_series(node, func)
 
 blink_parser = BlinkParser()
