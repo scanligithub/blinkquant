@@ -102,3 +102,28 @@
 - 板块 K 线无 `adjustFactor`/`main_net`，`parseParquetRecords` 兜底为 1.0/0，复权不作用于板块。
 - 需要后端 3 节点重新部署（推 main 触发）后，`stock_sectors` 才会构建。
 
+## 9. 自然语言选股 + 指标注册表 (v2.3，已实现)
+
+### 架构要点
+- **指标注册表 = 单一事实来源**：`backend/core/indicator_registry.py` 统一声明字段白名单（FIELDS）/ 指标（INDICATORS，`window: True`）/ 单位（UNITS）/ 示例（EXAMPLE_QUERIES）。新增指标只需在 `INDICATORS` 加一项，以下三处**自动派生**：
+  - `core/security.py` 的 `_visit(ast.Call)` 分支查 `INDICATORS`（配合 `_require_whitelist_field` / `_require_positive_int` 参数形态校验）；Hot-JIT 快路径保留（命中挂载列直接返回列引用，未命中走注册表 `func` 慢路径）
+  - `core/data_manager.py` `INDICATOR_MAP = dict(INDICATOR_FUNCS)`（window 型纯函数子集）
+  - `core/engine.py` `metric_pattern` 由 `INDICATOR_NAMES` 生成（正则用于 `metrics_stats` 指标统计）；`api/routes.py` 的 `METRIC_REGEX = selection_engine.metric_pattern` 亦指向同一正则
+- **后端接口**：`GET /api/v1/nl-meta`（`routes.py`）返回 `{fields, indicators, timeframes, units, example_queries}`，注册表驱动的公开只读元数据。
+- **前端 Edge 路由**：`/api/select-nl`（`frontend/src/app/api/select-nl/route.ts`）职责链 = 登录守卫 → 限流 → 拉取 nl-meta（缓存 24h，`Promise.any`×3 节点）→ 调 LLM → JSON 解析（非 JSON 输出重试一次）→ 强校验公式/周期 → 成功才计入配额。
+- **前端弹窗**：`frontend/src/components/AISelectModal.tsx` 提供自然语言输入 + 公式预览（可编辑）+ 周期切换，确认后复用现有选股管道（`page.tsx` 的 `handleSelect(overrides?)`）。
+- **纯函数**：`frontend/src/lib/selectNL.ts`（`buildSystemPrompt` / `parseSelectNLText` / `validateFormula` / `checkRateLimit` / `recordRequest`），`frontend/tests/select-nl.test.mjs` 复制实现做单测（仓库惯例）。
+
+### 配置与部署
+- **Vercel 新增环境变量（必填）**：`LLM_ENDPOINT` / `LLM_API_KEY` / `LLM_MODEL`；未配置则 AI 选股入口返回 503 `NOT_CONFIGURED`。可选 `LLM_TIMEOUT_MS` 默认 15000。
+- **限流**：每用户内存计数（Vercel 每实例近似），3 次/分、20 次/天，仅成功翻译才计数，超限返回 429 且携带 `retryAfterMs`。
+- **后端需推 main 重新部署**：`backend/**` 变更触发 3 节点重部署后注册表派生才生效；前端部署在 Vercel。
+
+### 已知对齐
+- 前端 `NOT` 不在 token 白名单：后端不支持 `ast.Not`，提示词只允许 `AND`/`OR`。
+- 公式不支持函数嵌套调用：`validateFormula` 的括号配对校验会拒绝嵌套括号。
+
+### 扩展指南
+- 新增指标：注册表 `INDICATORS` 加一项 → security / data_manager / engine / nl-meta 自动派生，无需改动其他文件。
+- 新增字段：需**同步**注册表 `FIELDS` 与 `security.py` 的 `fields` 键集、`/api/v1/kline` 的 `target_cols`（`test_fields_match_registry` 锁一致性防 drift）。
+
