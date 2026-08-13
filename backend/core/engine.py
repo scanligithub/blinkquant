@@ -12,7 +12,7 @@ class SelectionEngine:
         _funcs = "|".join(WINDOW_NAMES)
         _fields = "|".join(FIELDS)
         self.metric_pattern = re.compile(
-            rf'\b({_funcs})\s*\(\s*({_fields})\s*,\s*(\d+)\s*\)(?![,)])',
+            rf'\b({_funcs})\s*\(\s*({_fields})\s*,\s*(\d+)\s*\)',
             re.IGNORECASE)
 
     def _prepare_hot_jit(self, formula: str):
