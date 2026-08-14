@@ -239,5 +239,106 @@ class TestSignatureRecursion(unittest.TestCase):
         # MA2 = [null, 10.5, 11.5, 12.5] → 绝对值不变
         self.assertEqual(got, [None, 10.5, 11.5, 12.5])
 
+class TestKDJATRRSIBoll(unittest.TestCase):
+    def setUp(self):
+        self.df6 = pl.DataFrame({
+            "date": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"],
+            "code": ["sh.600000"] * 6,
+            "close": [10.0, 10.5, 10.3, 11.0, 11.8, 12.1],
+            "open": [9.9, 10.4, 10.6, 10.2, 11.2, 11.9],
+            "high": [10.2, 10.8, 10.7, 11.2, 12.0, 12.3],
+            "low": [9.8, 10.2, 10.1, 10.8, 11.4, 11.7],
+        })
+        self.df12 = pl.DataFrame({
+            "date": ["2024-0%d-01" % i for i in range(1, 10)] + ["2024-10-01", "2024-11-01", "2024-12-01"],
+            "code": ["sh.600000"] * 12,
+            "close": [10.0, 10.5, 10.3, 11.0, 11.8, 12.1, 11.5, 11.0, 12.0, 13.0, 13.5, 14.0],
+            "open": [9.9, 10.4, 10.6, 10.2, 11.2, 11.9, 11.7, 11.3, 11.8, 12.5, 13.2, 13.8],
+            "high": [10.2, 10.8, 10.7, 11.2, 12.0, 12.3, 11.9, 11.4, 12.4, 13.4, 13.9, 14.4],
+            "low": [9.8, 10.2, 10.1, 10.8, 11.4, 11.7, 11.0, 10.7, 11.6, 12.6, 13.1, 13.6],
+        })
+
+    def eval_df(self, expr, df):
+        blink_parser.current_df = df
+        return blink_parser.parse_expression(expr, "D")
+
+    def values(self, expr, df):
+        return df.with_columns(expr.alias("v")).select("v").to_series().to_list()
+
+    def test_atr(self):
+        got = self.values(self.eval_df("ATR(2)", self.df6), self.df6)
+        self.assertEqual(len(got), 6)
+        self.assertIsNone(got[0])
+        self.assertAlmostEqual(got[1], 0.6, places=3)
+        self.assertAlmostEqual(got[2], 0.7, places=3)
+        self.assertAlmostEqual(got[3], 0.75, places=3)
+        self.assertAlmostEqual(got[4], 0.95, places=3)
+        self.assertAlmostEqual(got[5], 0.8, places=3)
+
+    def test_rsi(self):
+        got = self.values(self.eval_df("RSI(CLOSE, 2)", self.df6), self.df6)
+        self.assertEqual(len(got), 6)
+        self.assertIsNone(got[0])
+        self.assertIsNone(got[1])
+        self.assertAlmostEqual(got[2], 71.4286, places=3)
+        self.assertAlmostEqual(got[3], 77.7778, places=3)
+        self.assertAlmostEqual(got[4], 100, places=3)
+        self.assertAlmostEqual(got[5], 100, places=3)
+
+    def test_boll_band(self):
+        up = self.values(self.eval_df("BOLL_UPPER(CLOSE, 2, 2)", self.df6), self.df6)
+        low = self.values(self.eval_df("BOLL_LOWER(CLOSE, 2, 2)", self.df6), self.df6)
+        # MA(2)=10.4, STD=0.1414 → upper=10.6828, lower=10.1172
+        self.assertIsNone(up[0])
+        self.assertIsNone(low[0])
+        self.assertAlmostEqual(up[2], 10.6828, places=3)
+        self.assertAlmostEqual(low[2], 10.1172, places=3)
+
+    def test_kdj_k_d(self):
+        k = self.values(self.eval_df("KDJ_K(2, 2)", self.df12), self.df12)
+        d = self.values(self.eval_df("KDJ_D(2, 2)", self.df12), self.df12)
+        self.assertIsNone(k[0])
+        self.assertIsNone(k[1])
+        self.assertAlmostEqual(k[2], 49.2857, places=3)
+        self.assertAlmostEqual(k[11], 69.2308, places=3)
+        self.assertIsNone(d[0])
+        self.assertIsNone(d[2])
+        self.assertAlmostEqual(d[3], 52.2403, places=3)
+        self.assertAlmostEqual(d[11], 71.3675, places=3)
+
+    def test_kdj_golden_cross_parses(self):
+        expr = self.eval_df("CROSS_UP(KDJ_K(2, 2), KDJ_D(2, 2))", self.df12)
+        self.assertIsNotNone(expr)
+        rows = self.values(expr, self.df12)
+        self.assertEqual(len(rows), 12)
+
+    def test_rsi_cross_nested(self):
+        expr = self.eval_df("CROSS_UP(RSI(CLOSE, 2), RSI(CLOSE, 4))", self.df6)
+        self.assertIsNotNone(expr)
+
+    def test_count_rsi_cond(self):
+        got = self.values(self.eval_df("COUNT(RSI(CLOSE, 2) > 70, 2)", self.df6), self.df6)
+        # RSI(2)=[None,None,71.43,77.78,100,100]; >70 掩码 [N,N,T,T,T,T]; rolling_sum(2)=[N,N,N,2,2,2]
+        self.assertEqual(got, [None, None, None, 2, 2, 2])
+
+    def test_max_two_level_allowed(self):
+        expr = self.eval_df("MAX(MAX(CLOSE, OPEN), OPEN)", self.df6)
+        got = self.values(expr, self.df6)
+        self.assertEqual(got, [10.0, 10.5, 10.6, 11.0, 11.8, 12.1])
+
+    def test_deep_nesting_still_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_df("CROSS_UP(MA(MA(CLOSE, 2), 2), OPEN)", self.df6)
+        with self.assertRaises(ValueError):
+            self.eval_df("COUNT(COUNT(CLOSE > 10, 2) > 1, 3)", self.df6)
+
+    def test_pos_int_bounds(self):
+        with self.assertRaises(ValueError):
+            self.eval_df("ATR(0)", self.df6)
+        with self.assertRaises(ValueError):
+            self.eval_df("ATR(501)", self.df6)
+        with self.assertRaises(ValueError):
+            self.eval_df("BOLL_UPPER(CLOSE, 20, 501)", self.df6)
+
 if __name__ == "__main__":
     unittest.main()
