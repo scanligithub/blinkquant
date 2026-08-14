@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ast
 import unittest
 import polars as pl
-from core.security import blink_parser, _require_whitelist_field, _require_positive_int
+from core.security import blink_parser, _require_whitelist_field, _require_positive_int, _split_arith_top_level, _strip_outer_parens
 
 def parse_call(src):
     return ast.parse(src, mode="eval").body
@@ -412,6 +412,22 @@ class TestSeriesArithmetic(unittest.TestCase):
         # (REF1-REF2)/REF2: day3 (11-10)/10=0.1; day4 (12-11)/11=0.0909 → abs same
         self.assertAlmostEqual(got[2], 0.1, places=6)
         self.assertAlmostEqual(got[3], 0.090909, places=6)
+
+
+class TestArithSplitHelpers(unittest.TestCase):
+    def test_split_top_level(self):
+        self.assertEqual(_split_arith_top_level("A + B - C * D"), ["A", "B", "C", "D"])
+
+    def test_split_ignores_operators_inside_parens(self):
+        self.assertEqual(_split_arith_top_level("(A - B) + C"), ["(A - B)", "C"])
+
+    def test_split_keeps_exponent_minus(self):
+        self.assertEqual(_split_arith_top_level("A - 1e-3"), ["A", "1e-3"])
+        self.assertEqual(_split_arith_top_level("A * 5e9"), ["A", "5e9"])
+
+    def test_strip_outer_parens(self):
+        self.assertEqual(_strip_outer_parens("(A - B) / C"), "(A - B) / C")
+        self.assertEqual(_strip_outer_parens("((A))"), "A")
 
 
 if __name__ == "__main__":
