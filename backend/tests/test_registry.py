@@ -78,6 +78,9 @@ class TestRegistry(unittest.TestCase):
             "CROSS_UP": ["series", "series"], "CROSS_DOWN": ["series", "series"],
             "MAX": ["series", "series"], "MIN": ["series", "series"],
             "ABS": ["series"], "COUNT": ["cond", "pos_int"], "BARSLAST": ["cond"],
+            "ATR": ["pos_int"], "RSI": ["series", "pos_int"],
+            "BOLL_UPPER": ["series", "pos_int", "pos_int"], "BOLL_LOWER": ["series", "pos_int", "pos_int"],
+            "KDJ_K": ["pos_int", "pos_int"], "KDJ_D": ["pos_int", "pos_int"],
         }
         got = {name: entry["signature"] for name, entry in INDICATORS.items()}
         self.assertEqual(got, expect)

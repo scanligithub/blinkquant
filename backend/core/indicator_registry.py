@@ -34,6 +34,13 @@ def barslast(cond):
     return (row - filled).cast(pl.Int32)
 
 
+def _kdj_rsv(n: int):
+    """KDJ 中间量 RSV：RSV=(C-LLV(L,n))/(HHV(H,n)-LLV(L,n))*100（固定用 H/L/C 列）"""
+    low_min = pl.col("low").rolling_min(window_size=n).over("code")
+    high_max = pl.col("high").rolling_max(window_size=n).over("code")
+    return (pl.col("close") - low_min) / (high_max - low_min) * 100
+
+
 INDICATORS = {
     # ---- window 型（签名 [field, pos_int]，Hot-JIT 挂载）----
     "MA":  {"func": lambda c, n: c.rolling_mean(window_size=n).over("code"),            "window": True, "signature": ["field", "pos_int"]},
@@ -52,6 +59,28 @@ INDICATORS = {
     "ABS": {"func": lambda x: x.abs(), "window": False, "signature": ["series"]},
     "COUNT":    {"func": count,    "window": False, "signature": ["cond", "pos_int"]},
     "BARSLAST": {"func": barslast, "window": False, "signature": ["cond"]},
+    # ---- 单值复合指标（非 window，慢路径实时计算）----
+    "ATR": {"func": lambda n: pl.max_horizontal(
+            pl.col("high") - pl.col("low"),
+            (pl.col("high") - pl.col("close").shift(1)).abs(),
+            (pl.col("low") - pl.col("close").shift(1)).abs(),
+        ).rolling_mean(window_size=n).over("code"),
+        "window": False, "signature": ["pos_int"]},
+    "RSI": {"func": lambda c, n: (lambda gain, loss: 100 * gain / (gain + loss))(
+            c.diff().over("code").clip(lower_bound=0).rolling_mean(window_size=n).over("code"),
+            (-c.diff().over("code")).clip(lower_bound=0).rolling_mean(window_size=n).over("code")),
+        "window": False, "signature": ["series", "pos_int"]},
+    "BOLL_UPPER": {"func": lambda c, n, k: c.rolling_mean(window_size=n).over("code")
+            + k * c.rolling_std(window_size=n).over("code"),
+        "window": False, "signature": ["series", "pos_int", "pos_int"]},
+    "BOLL_LOWER": {"func": lambda c, n, k: c.rolling_mean(window_size=n).over("code")
+            - k * c.rolling_std(window_size=n).over("code"),
+        "window": False, "signature": ["series", "pos_int", "pos_int"]},
+    "KDJ_K": {"func": lambda n, m: _kdj_rsv(n).rolling_mean(window_size=m).over("code"),
+        "window": False, "signature": ["pos_int", "pos_int"]},
+    "KDJ_D": {"func": lambda n, m: _kdj_rsv(n).rolling_mean(window_size=m).over("code")
+            .rolling_mean(window_size=m).over("code"),
+        "window": False, "signature": ["pos_int", "pos_int"]},
 }
 
 # 字段白名单：必须与 security.py 现有 fields 键集逐项一致（防 drift）
@@ -79,6 +108,9 @@ DESCRIPTIONS = {
     "CROSS_UP": "上穿（今日A>B且昨日A<=B）", "CROSS_DOWN": "下穿（今日A<B且昨日A>=B）",
     "MAX": "取两序列较大值", "MIN": "取两序列较小值", "ABS": "绝对值",
     "COUNT": "N周期内条件成立次数", "BARSLAST": "距上次条件成立周期数",
+    "ATR": "N日真实波幅均值（最高最低与昨收的最大差距，简化版）", "RSI": "N日相对强弱（涨跌幅均值比，简化版）",
+    "BOLL_UPPER": "布林上轨（N日均价 + K倍N日标准差）", "BOLL_LOWER": "布林下轨（N日均价 - K倍N日标准差）",
+    "KDJ_K": "KDJ随机指标K值（固定用HIGH/LOW/CLOSE，简化版）", "KDJ_D": "KDJ随机指标D值（固定用HIGH/LOW/CLOSE，简化版）",
 }
 
 EXAMPLE_QUERIES = [
@@ -86,6 +118,8 @@ EXAMPLE_QUERIES = [
     "PE_TTM < 20 AND TOTAL_MV > 1e10",
     "CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))",
     "SUM(AMOUNT, 5) > 5e9",
+    "CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))",
+    "CLOSE > BOLL_UPPER(CLOSE, 20, 2)",
 ]
 
 TIMEFRAMES = ["D", "W", "M"]
