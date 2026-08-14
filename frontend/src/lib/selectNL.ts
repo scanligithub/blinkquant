@@ -181,11 +181,15 @@ function validateCallArgs(
 
 function isSeriesExpr(meta: NLMeta, tok: string): boolean {
   if (meta.fields.includes(tok)) return true;
-  const mm = /^([A-Z_][A-Z0-9_]*)\s*\(([^()]*)\)$/.exec(tok);
+  const mm = /^([A-Z_][A-Z0-9_]*)\s*\(/.exec(tok);
   if (!mm) return false;
   const sig = meta.signatures?.[mm[1]];
-  if (!sig || sig.length !== 2 || sig[0] !== 'field' || sig[1] !== 'pos_int') return false;
-  const args = mm[2].split(',').map((s) => s.trim());
+  if (!sig || sig.includes('cond')) return false;
+  const openIdx = mm.index + mm[0].length - 1;
+  const closeIdx = matchParen(tok, openIdx);
+  if (closeIdx !== tok.length - 1) return false; // 括号尾部有残留
+  const argStr = tok.slice(openIdx + 1, closeIdx);
+  const args = splitTopLevel(argStr, ',').map((s) => s.trim());
   return validateCallArgs(meta, sig, args, mm[1]).ok === true;
 }
 
