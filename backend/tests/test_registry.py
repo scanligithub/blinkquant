@@ -16,8 +16,10 @@ def meta_signatures_set():
 class TestRegistry(unittest.TestCase):
     def test_builtin_indicators_present(self):
         self.assertEqual(sorted(INDICATORS.keys()), [
-            "ABS", "BARSLAST", "COUNT", "CROSS_DOWN", "CROSS_UP",
-            "EMA", "HHV", "LLV", "MA", "MAX", "MIN", "REF", "ROC", "STD", "SUM",
+            "ABS", "ATR", "BARSLAST", "BOLL_LOWER", "BOLL_UPPER",
+            "COUNT", "CROSS_DOWN", "CROSS_UP", "EMA", "HHV", "KDJ_D",
+            "KDJ_K", "LLV", "MA", "MAX", "MIN", "REF", "ROC", "RSI",
+            "STD", "SUM",
         ])
 
     def test_window_indicators_are_window_funcs(self):
@@ -79,6 +81,21 @@ class TestRegistry(unittest.TestCase):
         }
         got = {name: entry["signature"] for name, entry in INDICATORS.items()}
         self.assertEqual(got, expect)
+
+    def test_new_indicators_signatures(self):
+        expect = {
+            "ATR": ["pos_int"],
+            "RSI": ["series", "pos_int"],
+            "BOLL_UPPER": ["series", "pos_int", "pos_int"],
+            "BOLL_LOWER": ["series", "pos_int", "pos_int"],
+            "KDJ_K": ["pos_int", "pos_int"],
+            "KDJ_D": ["pos_int", "pos_int"],
+        }
+        got = {name: entry["signature"] for name, entry in INDICATORS.items() if name in expect}
+        self.assertEqual(got, expect)
+        for name in expect:
+            self.assertFalse(INDICATORS[name]["window"], f"{name} must be window=False")
+            self.assertIn("func", INDICATORS[name])
 
     def test_lambdas_partition_by_code(self):
         df = pl.DataFrame({
