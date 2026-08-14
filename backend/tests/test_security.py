@@ -413,6 +413,28 @@ class TestSeriesArithmetic(unittest.TestCase):
         self.assertAlmostEqual(got[2], 0.1, places=6)
         self.assertAlmostEqual(got[3], 0.090909, places=6)
 
+    def test_unary_minus_top_level_passes(self):
+        expr = self.eval_expr("CLOSE / REF(CLOSE, 1) - 1 < -0.05")
+        got = self.values(expr)
+        # 单日涨幅 (close/ref1-1): [null,0.1,0.0909,0.0769] 均 > -0.05 → 全 False
+        self.assertEqual(got, [None, False, False, False])
+
+    def test_unary_minus_cond_operand_passes(self):
+        expr = self.eval_expr("COUNT(OPEN - CLOSE < -0.05, 2)")
+        got = self.values(expr)
+        # open-close: [-1,-0.5,-0.5,-0.5] < -0.05 → [T,T,T,T] → rolling_sum(2)=[null,2,2,2]
+        self.assertEqual(got, [None, 2, 2, 2])
+
+    def test_unary_plus_passes(self):
+        expr = self.eval_expr("COUNT(CLOSE > +10, 2)")
+        got = self.values(expr)
+        # close > 10: [F,T,T,T] → rolling_sum(2)=[null,1,2,2]
+        self.assertEqual(got, [None, 1, 2, 2])
+
+    def test_unary_bool_operand_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("CLOSE < -True")
+
 
 class TestArithSplitHelpers(unittest.TestCase):
     def test_split_top_level(self):

@@ -135,6 +135,16 @@ class BlinkParser:
         elif isinstance(node, ast.BinOp):
             return self.operators[type(node.op)](self._visit(node.left), self._visit(node.right))
 
+        elif isinstance(node, ast.UnaryOp):
+            val = self._visit(node.operand)
+            if isinstance(val, bool):
+                raise ValueError("Unary operator not allowed on boolean operand")
+            if type(node.op) is ast.USub:
+                return -val
+            if type(node.op) is ast.UAdd:
+                return +val
+            raise ValueError(f"Unary operator not allowed: {type(node.op).__name__}")
+
         elif isinstance(node, ast.Compare):
             left = self._visit(node.left)
             res = self.operators[type(node.ops[0])](left, self._visit(node.comparators[0]))
@@ -246,7 +256,9 @@ class BlinkParser:
         raise ValueError(f"Function {func} cond must be a comparison or AND/OR expression")
 
     def _require_series_operand(self, node: Any, func: str) -> None:
-        """cond 的操作数：series（字段/窗口调用）或数值常量。"""
+        """cond 的操作数：series（字段/窗口调用）或数值常量（支持一元正负号，如 -0.05、+10）。"""
+        if isinstance(node, ast.UnaryOp) and type(node.op) in (ast.USub, ast.UAdd):
+            node = node.operand
         if isinstance(node, ast.Constant):
             if isinstance(node.value, bool):
                 raise ValueError(f"Function {func} cond operand must be number or series")
