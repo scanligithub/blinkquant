@@ -75,6 +75,8 @@ export function validateFormula(
   let m: RegExpExecArray | null;
   while ((m = callRegex.exec(formula)) !== null) {
     const func = m[1];
+    // AND/OR 是布尔逻辑词，后跟 ( 是括号条件而非函数调用
+    if (func === 'AND' || func === 'OR') continue;
     const sig = sigs[func];
     if (!sig) return { ok: false, reason: `函数 ${func} 未注册` };
     const openIdx = m.index + m[0].length - 1;

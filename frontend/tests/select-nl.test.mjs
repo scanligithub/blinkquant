@@ -57,6 +57,8 @@ function validateFormula(meta, formula) {
   let m;
   while ((m = callRegex.exec(formula)) !== null) {
     const func = m[1];
+    // AND/OR 是布尔逻辑词，后跟 ( 是括号条件而非函数调用
+    if (func === 'AND' || func === 'OR') continue;
     const sig = sigs[func];
     if (!sig) return { ok: false, reason: `函数 ${func} 未注册` };
     const openIdx = m.index + m[0].length - 1;
@@ -575,4 +577,19 @@ test('validateFormula: 嵌套括号算术通过', () => {
     validateFormula(META, 'ABS((REF(CLOSE, 1) - REF(CLOSE, 2)) / REF(CLOSE, 2))').ok,
     true
   );
+});
+
+test('validateFormula: 顶层 AND 后跟括号条件不误判函数', () => {
+  const r = validateFormula(META, 'CLOSE > MA(CLOSE, 20) AND (CLOSE - OPEN) / (HIGH - LOW) > 0.4');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: 顶层 OR 后跟括号条件不误判函数', () => {
+  const r = validateFormula(META, 'CLOSE > MA(CLOSE, 20) OR (CLOSE - OPEN) / (HIGH - LOW) > 0.4');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: COUNT 内 AND 后跟括号条件通过', () => {
+  const r = validateFormula(META, 'COUNT(CLOSE > OPEN AND (CLOSE - OPEN) / (HIGH - LOW) > 0.4, 3) > 0');
+  assert.equal(r.ok, true);
 });
