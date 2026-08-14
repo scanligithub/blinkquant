@@ -45,6 +45,7 @@ export function parseSelectNLText(raw: string): SelectNLResult {
 
 const COMPARE_STR = '>=|<=|>|<';
 const POS_INT_MAX = 500;
+const ARITH_MAX_OPS = 3;
 
 export function validateFormula(
   meta: NLMeta,
@@ -179,18 +180,66 @@ function validateCallArgs(
   return { ok: true };
 }
 
+function stripOuterParens(tok: string): string {
+  let t = tok.trim();
+  while (t.startsWith('(') && matchParen(t, 0) === t.length - 1) t = t.slice(1, -1).trim();
+  return t;
+}
+
+function splitArithTopLevel(s: string): string[] {
+  // 按 + - * / 在括号外拆分；e/E 指数记号（5e9、1e-3）的 -/+ 不算操作符
+  const parts: string[] = [];
+  let d = 0, cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(') d++;
+    else if (ch === ')') d--;
+    if (d === 0 && '+-*/'.includes(ch)) {
+      // 处理 1e-3：'-' 前是 e/E 时不作为操作符（不切分）
+      if ((ch === '-' || ch === '+') && /[eE]/.test(s[i - 1] ?? '')) { cur += ch; continue; }
+      parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim() !== '') parts.push(cur.trim());
+  return parts;
+}
+
+function countTopLevelOps(tok: string): number {
+  return splitArithTopLevel(stripOuterParens(tok)).length - 1;
+}
+
+function isArithExpr(meta: NLMeta, tok: string): boolean {
+  const parts = splitArithTopLevel(stripOuterParens(tok));
+  if (parts.length < 2) return false;
+  if (countTopLevelOps(tok) > ARITH_MAX_OPS) return false;
+  return parts.every((p) => isSeriesExpr(meta, p) || isNumber(p) || isArithExpr(meta, p));
+}
+
 function isSeriesExpr(meta: NLMeta, tok: string): boolean {
   if (meta.fields.includes(tok)) return true;
+  // 1. 平衡外括号剥离：'(CLOSE-OPEN)' → 'CLOSE-OPEN'（后端 ast 对括号透明，前端需显式剥）
+  if (tok.trim().startsWith('(') && matchParen(tok.trim(), 0) === tok.trim().length - 1) {
+    return isSeriesExpr(meta, tok.trim().slice(1, -1));
+  }
+  // 2. 函数调用路径：仅当 call 的闭合括号恰在末尾（纯调用，尾部无残留）
   const mm = /^([A-Z_][A-Z0-9_]*)\s*\(/.exec(tok);
-  if (!mm) return false;
-  const sig = meta.signatures?.[mm[1]];
-  if (!sig || sig.includes('cond')) return false;
-  const openIdx = mm.index + mm[0].length - 1;
-  const closeIdx = matchParen(tok, openIdx);
-  if (closeIdx !== tok.length - 1) return false; // 括号尾部有残留
-  const argStr = tok.slice(openIdx + 1, closeIdx);
-  const args = splitTopLevel(argStr, ',').map((s) => s.trim());
-  return validateCallArgs(meta, sig, args, mm[1]).ok === true;
+  if (mm) {
+    const sig = meta.signatures?.[mm[1]];
+    const openIdx = mm.index + mm[0].length - 1;
+    if (sig && !sig.includes('cond')) {
+      const closeIdx = matchParen(tok, openIdx);
+      if (closeIdx === tok.length - 1) {
+        const argStr = tok.slice(openIdx + 1, closeIdx);
+        const args = splitTopLevel(argStr, ',').map((s) => s.trim());
+        if (validateCallArgs(meta, sig, args, mm[1]).ok === true) return true;
+      }
+    }
+  }
+  // 3. 算术表达式路径：函数调用路径不匹配（非纯调用/尾部有残留/非调用）时尝试
+  const aparts = splitArithTopLevel(tok);
+  if (aparts.length > 1) return isArithExpr(meta, tok);
+  return false;
 }
 
 function isCondExpr(meta: NLMeta, tok: string): boolean {

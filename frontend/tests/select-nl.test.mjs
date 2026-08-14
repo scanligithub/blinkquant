@@ -34,6 +34,7 @@ function parseSelectNLText(raw) {
 
 const COMPARE_STR = '>=|<=|>|<';
 const POS_INT_MAX = 500;
+const ARITH_MAX_OPS = 3;
 
 function validateFormula(meta, formula) {
   if (typeof formula !== 'string' || formula.trim().length === 0) return { ok: false, reason: '公式为空' };
@@ -158,16 +159,63 @@ function validateCallArgs(meta, sig, args, func) {
 
 function isSeriesExpr(meta, tok) {
   if (meta.fields.includes(tok)) return true;
+  // 1. 平衡外括号剥离
+  if (tok.trim().startsWith('(') && matchParen(tok.trim(), 0) === tok.trim().length - 1) {
+    return isSeriesExpr(meta, tok.trim().slice(1, -1));
+  }
+  // 2. 函数调用路径：仅当 call 的闭合括号恰在末尾
   const mm = /^([A-Z_][A-Z0-9_]*)\s*\(/.exec(tok);
-  if (!mm) return false;
-  const sig = meta.signatures?.[mm[1]];
-  if (!sig || sig.includes('cond')) return false;
-  const openIdx = mm.index + mm[0].length - 1;
-  const closeIdx = matchParen(tok, openIdx);
-  if (closeIdx !== tok.length - 1) return false; // 括号尾部有残留
-  const argStr = tok.slice(openIdx + 1, closeIdx);
-  const args = splitTopLevel(argStr, ',').map((s) => s.trim());
-  return validateCallArgs(meta, sig, args, mm[1]).ok === true;
+  if (mm) {
+    const sig = meta.signatures?.[mm[1]];
+    const openIdx = mm.index + mm[0].length - 1;
+    if (sig && !sig.includes('cond')) {
+      const closeIdx = matchParen(tok, openIdx);
+      if (closeIdx === tok.length - 1) {
+        const argStr = tok.slice(openIdx + 1, closeIdx);
+        const args = splitTopLevel(argStr, ',').map((s) => s.trim());
+        if (validateCallArgs(meta, sig, args, mm[1]).ok === true) return true;
+      }
+    }
+  }
+  // 3. 算术表达式路径
+  const aparts = splitArithTopLevel(tok);
+  if (aparts.length > 1) return isArithExpr(meta, tok);
+  return false;
+}
+
+function stripOuterParens(tok) {
+  let t = tok.trim();
+  while (t.startsWith('(') && matchParen(t, 0) === t.length - 1) t = t.slice(1, -1).trim();
+  return t;
+}
+
+function splitArithTopLevel(s) {
+  // 按 + - * / 在括号外拆分；e/E 指数记号（5e9、1e-3）的 -/+ 不算操作符
+  const parts = [];
+  let d = 0, cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(') d++;
+    else if (ch === ')') d--;
+    if (d === 0 && '+-*/'.includes(ch)) {
+      if ((ch === '-' || ch === '+') && /[eE]/.test(s[i - 1] ?? '')) { cur += ch; continue; }
+      parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim() !== '') parts.push(cur.trim());
+  return parts;
+}
+
+function countTopLevelOps(tok) {
+  return splitArithTopLevel(stripOuterParens(tok)).length - 1;
+}
+
+function isArithExpr(meta, tok) {
+  const parts = splitArithTopLevel(stripOuterParens(tok));
+  if (parts.length < 2) return false;
+  if (countTopLevelOps(tok) > ARITH_MAX_OPS) return false;
+  return parts.every((p) => isSeriesExpr(meta, p) || isNumber(p) || isArithExpr(meta, p));
 }
 
 function isCondExpr(meta, tok) {
@@ -484,4 +532,47 @@ test('resolveLlmTimeout: 配置超上限被钳制到 55s', () => {
 
 test('resolveLlmTimeout: 合法值原样返回', () => {
   assert.equal(resolveLlmTimeout('45000'), 45000);
+});
+
+test('validateFormula: ABS 算术参数通过', () => {
+  assert.equal(validateFormula(META, 'ABS(REF(CLOSE, 1) - REF(CLOSE, 2))').ok, true);
+});
+
+test('validateFormula: cond 括号算术比较通过', () => {
+  assert.equal(validateFormula(META, 'COUNT((CLOSE - OPEN) / CLOSE > 0.05, 5)').ok, true);
+});
+
+test('validateFormula: cond 常量乘法通过', () => {
+  assert.equal(validateFormula(META, 'COUNT(CLOSE * 1.1 > REF(CLOSE, 1), 5)').ok, true);
+});
+
+test('validateFormula: 顶层运算符超上限拒绝', () => {
+  const r = validateFormula(META, 'ABS(CLOSE / CLOSE / CLOSE / CLOSE / CLOSE)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 括号内运算符不计入父级顶层', () => {
+  assert.equal(validateFormula(META, 'ABS(((CLOSE - OPEN) / (CLOSE / CLOSE)) * 2)').ok, true);
+});
+
+test('validateFormula: 窗口 field 参数算术拒绝', () => {
+  const r = validateFormula(META, 'MA(CLOSE - OPEN, 20)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 幂运算符拒绝', () => {
+  const r = validateFormula(META, 'ABS(CLOSE ** 2)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 布尔操作数拒绝', () => {
+  const r = validateFormula(META, 'ABS(CLOSE - True)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 嵌套括号算术通过', () => {
+  assert.equal(
+    validateFormula(META, 'ABS((REF(CLOSE, 1) - REF(CLOSE, 2)) / REF(CLOSE, 2))').ok,
+    true
+  );
 });
