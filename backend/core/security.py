@@ -16,6 +16,53 @@ def _require_whitelist_field(node: ast.AST) -> str:
 
 WINDOW_MAX = 500
 
+ARITH_MAX_OPS = 3
+
+def _split_arith_top_level(text: str) -> list:
+    """按 + - * / 在括号外拆分；e/E 指数记号（5e9、1e-3）的 -/+ 不算操作符。与前端 splitArithTopLevel 语义一致。"""
+    parts = []
+    depth = 0
+    cur = ''
+    for i, ch in enumerate(text):
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if depth == 0 and ch in '+-*/':
+            if (ch in '+-') and i > 0 and text[i - 1] in 'eE':
+                cur += ch
+                continue
+            parts.append(cur.strip())
+            cur = ''
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return [p for p in parts if p]
+
+
+def _is_outer_paren_balanced(t: str) -> bool:
+    """首括号是否配对并闭合于末位。"""
+    if not t.startswith('('):
+        return False
+    depth = 0
+    for i, ch in enumerate(t):
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if depth == 0:
+            return i == len(t) - 1
+    return False
+
+
+def _strip_outer_parens(text: str) -> str:
+    t = text.strip()
+    while t.startswith('(') and _is_outer_paren_balanced(t):
+        t = t[1:-1].strip()
+    return t
+
+
 def _require_positive_int(node: ast.AST) -> int:
     """参数必须是正整数常量，且 1 ≤ n ≤ 500。"""
     if not isinstance(node, ast.Constant) or isinstance(node.value, bool) or not isinstance(node.value, int):
@@ -59,6 +106,7 @@ class BlinkParser:
         }
         # 当前解析上下文
         self.current_df = None
+        self.current_source = None
 
     def parse_expression(self, expr_str: str, timeframe: str = 'D') -> pl.Expr:
         """解析入口：根据 timeframe 设置当前数据上下文"""
@@ -69,6 +117,7 @@ class BlinkParser:
         # 兼容性替换（含大写逻辑词归一化，兼容 LLM 输出；\b 词边界容忍多空格/开头位置）
         clean_expr = re.sub(r'\b(AND|OR|NOT)\b', lambda m: m.group(1).lower(), expr_str.strip())
         clean_expr = clean_expr.replace('&&', '&').replace('||', '|')
+        self.current_source = clean_expr
         tree = ast.parse(clean_expr, mode='eval')
         return self._visit(tree.body)
 
@@ -131,7 +180,7 @@ class BlinkParser:
         raise ValueError(f"Unknown signature kind {kind}")
 
     def _require_series(self, node: Any, func: str) -> Any:
-        """series = 白名单字段 或 签名不含 cond 形态的任意算子调用（含窗口与非窗口单值算子）。"""
+        """series = 白名单字段 或 签名不含 cond 形态的算子调用（含窗口/非窗口） 或 +-*/ 算术表达式。"""
         if isinstance(node, ast.Name):
             name = _require_whitelist_field(node)
             return self.fields[name]
@@ -139,7 +188,39 @@ class BlinkParser:
                 and node.func.id.upper() in INDICATORS
                 and "cond" not in INDICATORS[node.func.id.upper()]["signature"]):
             return self._visit(node)
-        raise ValueError(f"Function {func} arg must be a field or single-value indicator call")
+        if isinstance(node, ast.BinOp) and type(node.op) in (ast.Add, ast.Sub, ast.Mult, ast.Div):
+            self._require_arith(node, func)
+            return self._visit(node)
+        raise ValueError(f"Function {func} arg must be a field, single-value indicator call, or arithmetic expression")
+
+    def _top_level_ops(self, node) -> int:
+        """按源码文本统计顶层算术运算符数（括号内不计入）。get_source_segment 失败时退化为整树计数兜底。"""
+        seg = ast.get_source_segment(self.current_source, node) if isinstance(self.current_source, str) else None
+        if seg is not None:
+            t = _strip_outer_parens(seg)
+            parts = _split_arith_top_level(t)
+            return max(0, len(parts) - 1)
+        return self._arith_ops_tree(node)
+
+    def _arith_ops_tree(self, node) -> int:
+        """兜底：整棵 BinOp 子树运算符总数。"""
+        if not isinstance(node, ast.BinOp) or type(node.op) not in (ast.Add, ast.Sub, ast.Mult, ast.Div):
+            return 0
+        return 1 + self._arith_ops_tree(node.left) + self._arith_ops_tree(node.right)
+
+    def _require_arith(self, node: Any, func: str) -> Any:
+        """算术表达式结构校验：操作数 = 数值常量 / series / 更浅的算术；顶层运算符数 ≤ ARITH_MAX_OPS。"""
+        if self._top_level_ops(node) > ARITH_MAX_OPS:
+            raise ValueError(f"Function {func} arithmetic too many top-level operators (max {ARITH_MAX_OPS})")
+        for child in (node.left, node.right):
+            if isinstance(child, ast.Constant):
+                if isinstance(child.value, bool):
+                    raise ValueError(f"Function {func} arithmetic operand must be number or series")
+                continue
+            if isinstance(child, ast.BinOp) and type(child.op) in (ast.Add, ast.Sub, ast.Mult, ast.Div):
+                self._require_arith(child, func)
+            else:
+                self._require_series(child, func)
 
     def _require_cond(self, node: Any, func: str) -> Any:
         """cond = Compare(> >= < <=) 或 BoolOp(AND/OR)。先结构白名单校验，再委托 _visit。"""

@@ -340,5 +340,79 @@ class TestKDJATRRSIBoll(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.eval_df("BOLL_UPPER(CLOSE, 20, 501)", self.df6)
 
+class TestSeriesArithmetic(unittest.TestCase):
+    def setUp(self):
+        self.df = pl.DataFrame({
+            "date": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"],
+            "code": ["sh.600000"] * 4,
+            "close": [10.0, 11.0, 12.0, 13.0],
+            "open": [9.0, 10.5, 11.5, 12.5],
+            "high": [10.5, 11.5, 12.5, 13.5],
+            "low": [9.5, 10.5, 11.5, 12.5],
+        })
+        blink_parser.current_df = self.df
+
+    def eval_expr(self, expr):
+        return blink_parser.parse_expression(expr, "D")
+
+    def values(self, expr):
+        return self.df.with_columns(expr.alias("v")).select("v").to_series().to_list()
+
+    def test_abs_ref_diff_passes(self):
+        expr = self.eval_expr("ABS(REF(CLOSE, 1) - REF(CLOSE, 2))")
+        got = self.values(expr)
+        # REF1: [null,10,11,12]  REF2: [null,null,10,11]  差: [null,null,1,1]
+        self.assertEqual(got, [None, None, 1.0, 1.0])
+
+    def test_paren_division_cond_passes(self):
+        expr = self.eval_expr("(CLOSE - OPEN) / CLOSE > 0.05")
+        got = self.values(expr)
+        # day1: (10-9)/10=0.10>0.05 T; day2: (11-10.5)/11=0.0455 F; day3: 0.0417 F; day4: (13-12.5)/13=0.0385 F
+        self.assertEqual(got, [True, False, False, False])
+
+    def test_constant_mult_cond_passes(self):
+        expr = self.eval_expr("CLOSE * 1.1 > REF(CLOSE, 1)")
+        got = self.values(expr)
+        # day2: 11*1.1=12.1>10 T; day3: 12*1.1=13.2>11 T; day4: 13*1.1=14.3>12 T
+        self.assertEqual(got, [None, True, True, True])
+
+    def test_top_level_too_many_ops_rejected(self):
+        # 顶层算术前端/后端均不校验，须包进 series 位置触发 _require_series → _require_arith
+        with self.assertRaises(ValueError):
+            self.eval_expr("ABS(CLOSE / CLOSE / CLOSE / CLOSE / CLOSE)")
+
+    def test_paren_inner_ops_not_counted_in_parent(self):
+        # 顶层 1 个运算符(*)，括号内各 1 个；整式共 5 个运算符——若按整树计数会误拒，按顶层计数应放行
+        expr = self.eval_expr("ABS(((CLOSE - OPEN) / (CLOSE / CLOSE)) * 2)")
+        got = self.values(expr)
+        # close/close=1 → (close-open)/1*2 = close-open 的 2 倍: [2,1,1,1]
+        self.assertEqual(got, [2.0, 1.0, 1.0, 1.0])
+
+    def test_window_field_param_still_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("MA(CLOSE - OPEN, 20)")
+
+    def test_pow_operator_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("ABS(CLOSE ** 2)")
+
+    def test_count_cond_with_arith_passes(self):
+        expr = self.eval_expr("COUNT((CLOSE - OPEN) / CLOSE > 0.05, 2)")
+        got = self.values(expr)
+        # cond: [T,F,F,F] → rolling_sum(2)=[null,1,0,0]
+        self.assertEqual(got, [None, 1, 0, 0])
+
+    def test_bool_operand_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("ABS(CLOSE - True)")
+
+    def test_abs_nested_paren_passes(self):
+        expr = self.eval_expr("ABS((REF(CLOSE, 1) - REF(CLOSE, 2)) / REF(CLOSE, 2))")
+        got = self.values(expr)
+        # (REF1-REF2)/REF2: day3 (11-10)/10=0.1; day4 (12-11)/11=0.0909 → abs same
+        self.assertAlmostEqual(got[2], 0.1, places=6)
+        self.assertAlmostEqual(got[3], 0.090909, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
