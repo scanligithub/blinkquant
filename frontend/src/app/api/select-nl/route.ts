@@ -20,12 +20,22 @@ const NODES = [
   'https://scanli-blinkquant-node3.hf.space',
 ];
 
+// Nemotron 系列模型（含 Lightning）在 NVIDIA NIM 上以 chat_template_kwargs 控制 thinking，
+// 与 OpenAI 系 gpt-oss 的 reasoning_effort 参数语义不同，需区分处理。
+function isNemotron(): boolean {
+  return /nemotron|lightning/i.test(LLM_MODEL || '');
+}
+
 const LLM_ENDPOINT = process.env.LLM_ENDPOINT;
 const LLM_API_KEY = process.env.LLM_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL;
 const LLM_TIMEOUT_MS = resolveLlmTimeout(process.env.LLM_TIMEOUT_MS);
 const LLM_REASONING_EFFORT = process.env.LLM_REASONING_EFFORT || 'low';
 const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 1024);
+// Nemotron 系列（Lightning 等）在 NVIDIA NIM 上默认开启 thinking，
+// 会把思维链直接写入 content 导致 JSON 解析失败。结构化输出需关闭：
+// https://docs.nvidia.com/nim/large-language-models/latest/get-started/advanced/get-started-nemotron-3.5-lightning.html
+const LLM_TEMPLATE_KWARGS = process.env.LLM_TEMPLATE_KWARGS || '{"enable_thinking": false}';
 
 const META_TTL_MS = 24 * 60 * 60 * 1000;
 let metaCache: { at: number; data: NLMeta } | null = null;
@@ -55,7 +65,8 @@ async function callLlm(systemPrompt: string, query: string): Promise<string> {
         { role: 'user', content: query },
       ],
       temperature: 0,
-      reasoning_effort: LLM_REASONING_EFFORT,
+      ...(isNemotron() ? {} : { reasoning_effort: LLM_REASONING_EFFORT }),
+      ...(isNemotron() ? { chat_template_kwargs: JSON.parse(LLM_TEMPLATE_KWARGS) } : {}),
       max_tokens: LLM_MAX_TOKENS,
     }),
     signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
