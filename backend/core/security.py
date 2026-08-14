@@ -131,14 +131,15 @@ class BlinkParser:
         raise ValueError(f"Unknown signature kind {kind}")
 
     def _require_series(self, node: Any, func: str) -> Any:
-        """series = 白名单字段 或 一层窗口函数调用（复用 _visit 快路径）。"""
+        """series = 白名单字段 或 签名不含 cond 形态的任意算子调用（含窗口与非窗口单值算子）。"""
         if isinstance(node, ast.Name):
             name = _require_whitelist_field(node)
             return self.fields[name]
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id.upper() in WINDOW_NAMES):
+                and node.func.id.upper() in INDICATORS
+                and "cond" not in INDICATORS[node.func.id.upper()]["signature"]):
             return self._visit(node)
-        raise ValueError(f"Function {func} arg must be a field or window indicator call")
+        raise ValueError(f"Function {func} arg must be a field or single-value indicator call")
 
     def _require_cond(self, node: Any, func: str) -> Any:
         """cond = Compare(> >= < <=) 或 BoolOp(AND/OR)。先结构白名单校验，再委托 _visit。"""
