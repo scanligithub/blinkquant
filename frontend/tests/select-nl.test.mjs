@@ -5,12 +5,12 @@ import assert from 'node:assert/strict';
 // ---- 复制自 src/lib/selectNL.ts（保持与实现一致）----
 const META = {
   fields: ['CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'AMOUNT', 'PCT_CHG', 'S_CLOSE', 'PE_TTM', 'PB_MRQ', 'FORECAST_YOY', 'IS_FORECAST_GOOD', 'IS_FORECAST_BAD', 'TOTAL_SHARES', 'FLOAT_SHARES', 'TOTAL_MV', 'FLOAT_MV', 'TURN'],
-  indicators: ['ABS', 'BARSLAST', 'COUNT', 'CROSS_DOWN', 'CROSS_UP', 'EMA', 'HHV', 'LLV', 'MA', 'MAX', 'MIN', 'REF', 'ROC', 'STD', 'SUM'],
+  indicators: ['ABS', 'ATR', 'BARSLAST', 'BOLL_LOWER', 'BOLL_UPPER', 'COUNT', 'CROSS_DOWN', 'CROSS_UP', 'EMA', 'HHV', 'KDJ_D', 'KDJ_K', 'LLV', 'MA', 'MAX', 'MIN', 'REF', 'ROC', 'RSI', 'STD', 'SUM'],
   timeframes: ['D', 'W', 'M'],
   units: { TOTAL_MV: '元', FLOAT_MV: '元', TOTAL_SHARES: '股', FLOAT_SHARES: '股', AMOUNT: '元', VOL: '股', PE_TTM: '无量纲(倍)', PB_MRQ: '无量纲(倍)', TURN: '百分比(%)', FORECAST_YOY: '百分比(%)', PCT_CHG: '百分比(%)', S_CLOSE: '指数点位' },
-  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10', 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))', 'SUM(AMOUNT, 5) > 5e9'],
-  signatures: { MA: ['field', 'pos_int'], EMA: ['field', 'pos_int'], STD: ['field', 'pos_int'], ROC: ['field', 'pos_int'], REF: ['field', 'pos_int'], HHV: ['field', 'pos_int'], LLV: ['field', 'pos_int'], SUM: ['field', 'pos_int'], CROSS_UP: ['series', 'series'], CROSS_DOWN: ['series', 'series'], MAX: ['series', 'series'], MIN: ['series', 'series'], ABS: ['series'], COUNT: ['cond', 'pos_int'], BARSLAST: ['cond'] },
-  descriptions: { MA: 'N日简单移动平均', EMA: 'N日指数移动平均', STD: 'N日标准差', ROC: 'N日变动率(%)', REF: 'N日前值', HHV: 'N周期内最高值', LLV: 'N周期内最低值', SUM: 'N周期内求和', CROSS_UP: '上穿（今日A>B且昨日A<=B）', CROSS_DOWN: '下穿（今日A<B且昨日A>=B）', MAX: '取两序列较大值', MIN: '取两序列较小值', ABS: '绝对值', COUNT: 'N周期内条件成立次数', BARSLAST: '距上次条件成立周期数' },
+  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10', 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))', 'SUM(AMOUNT, 5) > 5e9', 'CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))', 'CLOSE > BOLL_UPPER(CLOSE, 20, 2)'],
+  signatures: { MA: ['field', 'pos_int'], EMA: ['field', 'pos_int'], STD: ['field', 'pos_int'], ROC: ['field', 'pos_int'], REF: ['field', 'pos_int'], HHV: ['field', 'pos_int'], LLV: ['field', 'pos_int'], SUM: ['field', 'pos_int'], CROSS_UP: ['series', 'series'], CROSS_DOWN: ['series', 'series'], MAX: ['series', 'series'], MIN: ['series', 'series'], ABS: ['series'], COUNT: ['cond', 'pos_int'], BARSLAST: ['cond'], ATR: ['pos_int'], RSI: ['series', 'pos_int'], BOLL_UPPER: ['series', 'pos_int', 'pos_int'], BOLL_LOWER: ['series', 'pos_int', 'pos_int'], KDJ_K: ['pos_int', 'pos_int'], KDJ_D: ['pos_int', 'pos_int'] },
+  descriptions: { MA: 'N日简单移动平均', EMA: 'N日指数移动平均', STD: 'N日标准差', ROC: 'N日变动率(%)', REF: 'N日前值', HHV: 'N周期内最高值', LLV: 'N周期内最低值', SUM: 'N周期内求和', CROSS_UP: '上穿（今日A>B且昨日A<=B）', CROSS_DOWN: '下穿（今日A<B且昨日A>=B）', MAX: '取两序列较大值', MIN: '取两序列较小值', ABS: '绝对值', COUNT: 'N周期内条件成立次数', BARSLAST: '距上次条件成立周期数', ATR: 'N日真实波幅均值（最高最低与昨收的最大差距，简化版）', RSI: 'N日相对强弱（涨跌幅均值比，简化版）', BOLL_UPPER: '布林上轨（N日均价 + K倍N日标准差）', BOLL_LOWER: '布林下轨（N日均价 - K倍N日标准差）', KDJ_K: 'KDJ随机指标K值（固定用HIGH/LOW/CLOSE，简化版）', KDJ_D: 'KDJ随机指标D值（固定用HIGH/LOW/CLOSE，简化版）' },
 };
 const MAX_FORMULA_LENGTH = 500;
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
@@ -370,6 +370,33 @@ test('validateFormula: COUNT 条件嵌套 COUNT 拒绝', () => {
 test('validateFormula: 窗口超上限拒绝', () => {
   const r = validateFormula(META, 'MA(CLOSE, 501) > 0');
   assert.equal(r.ok, false);
+});
+
+test('validateFormula: KDJ 金叉通过', () => {
+  const r = validateFormula(META, 'CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: BOLL 突破通过', () => {
+  assert.equal(validateFormula(META, 'CLOSE > BOLL_UPPER(CLOSE, 20, 2)').ok, true);
+});
+
+test('validateFormula: ATR 顶层通过', () => {
+  assert.equal(validateFormula(META, 'ATR(14) < 0.8').ok, true);
+});
+
+test('validateFormula: RSI 交叉通过', () => {
+  assert.equal(validateFormula(META, 'CROSS_UP(RSI(CLOSE, 6), RSI(CLOSE, 24))').ok, true);
+});
+
+test('validateFormula: BOLL 窗口超上限拒绝', () => {
+  const r = validateFormula(META, 'BOLL_UPPER(CLOSE, 20, 501)');
+  assert.equal(r.ok, false);
+});
+
+test('validateFormula: 两层嵌套一致放行', () => {
+  const r = validateFormula(META, 'CROSS_UP(MAX(MAX(CLOSE, OPEN), OPEN), MAX(CLOSE, OPEN))');
+  assert.equal(r.ok, true);
 });
 
 test('validateFormula: 未知算子拒绝', () => {
