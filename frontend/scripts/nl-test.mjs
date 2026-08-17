@@ -6,6 +6,8 @@
 // 前置: 生产环境需设置 NL_TEST_MODE=true 豁免限流（否则单账号 20 次/天被限）。
 // 结果按类别分组汇总，失败用例打印完整响应便于排查。
 
+import { buildCoverageCases, computeCoverageMatrix, formatCoverageMatrix } from './nl-coverage.mjs';
+
 const [, , argBase, argEmail, argPass] = process.argv;
 const BASE_URL = (process.env.BASE_URL || argBase || '').replace(/\/$/, '');
 const EMAIL = process.env.TEST_EMAIL || argEmail || '';
@@ -14,6 +16,28 @@ const PASSWORD = process.env.TEST_PASSWORD || argPass || '';
 if (!BASE_URL || !EMAIL || !PASSWORD) {
   console.error('用法: node scripts/nl-test.mjs <baseUrl> <email> <password>');
   process.exit(1);
+}
+
+// 后端节点（与 src/lib/selectNLServer.ts 的 NODES 一致），meta 从任一节点拉取。
+const META_NODES = [
+  'https://scanli-blinkquant-node1.hf.space',
+  'https://scanli-blinkquant-node2.hf.space',
+  'https://scanli-blinkquant-node3.hf.space',
+];
+
+async function fetchMeta() {
+  for (const node of META_NODES) {
+    try {
+      const res = await fetch(`${node}/api/v1/nl-meta`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (Array.isArray(json.fields) && Array.isArray(json.indicators)) return json;
+      throw new Error('meta 字段不完整');
+    } catch (e) {
+      console.log(`  (meta ${node} 失败: ${e.message})`);
+    }
+  }
+  throw new Error('所有节点拉取 nl-meta 均失败');
 }
 
 // ---- 用例集 ----
@@ -134,12 +158,28 @@ function sleep(ms) {
 async function run() {
   const cookie = await login();
 
+  let meta;
+  try {
+    meta = await fetchMeta();
+    console.log(`注册表: 字段 ${meta.fields.length} / 算子 ${meta.indicators.length}`);
+  } catch (e) {
+    console.error(`拉取 nl-meta 失败: ${e.message}`);
+    process.exit(2);
+  }
+
+  const { cases: genCases, uncoveredFields, uncoveredInds } = buildCoverageCases(meta, CASES);
+  if (genCases.length) {
+    console.log(`按注册表补齐缺口用例 ${genCases.length} 条:`);
+    for (const g of genCases) console.log(`  ${g.cid} [${g.cat}] "${g.q}"`);
+  }
+  const casesToRun = [...CASES, ...genCases];
+
   const results = [];
   let pass = 0, fail = 0;
   let i = 0;
-  for (const c of CASES) {
+  for (const c of casesToRun) {
     i += 1;
-    const label = `[${i}/${CASES.length}] ${c.cid} ${c.cat} "${c.q}"`;
+    const label = `[${i}/${casesToRun.length}] ${c.cid} ${c.cat} "${c.q}"`;
     const r = { ...c, ok: false, reason: '', formula: '', restatement: '', explanations: [] };
 
     try {
@@ -204,6 +244,7 @@ async function run() {
 
       if (!r.reason) {
         r.ok = true; pass += 1;
+        results.push(r);
         console.log(`  PASS ${label}`);
         console.log(`       → ${r.formula}`);
       } else {
@@ -219,7 +260,7 @@ async function run() {
 
   // ---- 汇总 ----
   console.log('\n================ 结果汇总 ================');
-  console.log(`总计 ${CASES.length} 用例：PASS ${pass} / FAIL ${fail}`);
+  console.log(`总计 ${casesToRun.length} 用例：PASS ${pass} / FAIL ${fail}`);
   const byCat = {};
   for (const r of results) {
     (byCat[r.cat] ||= []).push(r);
@@ -234,6 +275,18 @@ async function run() {
     }
   }
 
+  // ---- 覆盖矩阵 ----
+  const matrix = computeCoverageMatrix(meta, results);
+  matrix.uncoveredFields = uncoveredFields;
+  matrix.uncoveredInds = uncoveredInds;
+  console.log('\n' + formatCoverageMatrix(matrix));
+
+  const incomplete =
+    matrix.fields.covered < matrix.fields.total ||
+    matrix.indicators.covered < matrix.indicators.total ||
+    uncoveredFields.length > 0 ||
+    uncoveredInds.length > 0;
+
   console.log('\n--- 完整公式输出（人工复核语义） ---');
   for (const r of results) {
     console.log(`  ${r.cid} [${r.cat}] ${r.q}`);
@@ -241,7 +294,7 @@ async function run() {
     console.log(`      公式: ${r.formula}`);
   }
 
-  process.exit(fail === 0 ? 0 : 1);
+  process.exit(fail === 0 && !incomplete ? 0 : 1);
 }
 
 run().catch((e) => {
