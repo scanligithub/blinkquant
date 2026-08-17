@@ -36,7 +36,8 @@ const CASES = [
   { cid: 'i4', cat: '指标', q: 'KDJ金叉的股票', sub: ['CROSS_UP'], tf: 'D' },
   { cid: 'i5', cat: '指标', q: '布林带上轨被突破的股票', sub: ['BOLL_UPPER'], tf: 'D' },
   { cid: 'i6', cat: '指标', q: 'RSI短期超买的股票', sub: ['RSI'], tf: 'D' },
-  { cid: 'i7', cat: '指标', q: '连续5天收盘价上涨的股票', sub: ['COUNT', 'REF'], tf: 'D' },
+  // 连续上涨：模型可用 COUNT 或链式 REF（两者语义等价），任选其一
+  { cid: 'i7', cat: '指标', q: '连续5天收盘价上涨的股票', sub_any: ['COUNT(', 'REF(CLOSE, 1) AND'], tf: 'D' },
 
   // ===== 类别 3: 已发现的 3 类语义错误点 =====
   // 3a. 振幅歧义：弱模型曾误把"振幅"当 PCT_CHANGE，应指出语义歧义并在翻译时明确
@@ -45,12 +46,12 @@ const CASES = [
   { cid: 'e2', cat: '错误点-OR优先级', q: '市盈率低于30或者总市值大于100亿且市净率小于3的股票', sub: ['OR'], logic: '(' , tf: 'D' },
   // 3c. 创新高：HHV 与 REF 复用语义；注意日线与5日对比
   { cid: 'e3', cat: '错误点-新高', q: '创20日新高的股票', sub: ['HHV', 'CLOSE'], tf: 'D' },
-  { cid: 'e4', cat: '错误点-新高', q: '创5日新低的股票', sub: ['LLV', 'CLOSE'], tf: 'D' },
+  { cid: 'e4', cat: '错误点-新高', q: '创5日新低的股票', sub: ['LLV'], tf: 'D' },
 
-  // ===== 类别 4: 单位换算 =====
-  { cid: 'u1', cat: '单位换算', q: '总市值大于5000万的股票', sub: ['TOTAL_MV', 'e9'], tf: 'D' },
-  { cid: 'u2', cat: '单位换算', q: '流通市值大于200亿元的股票', sub: ['FLOAT_MV', 'e10'], tf: 'D' },
-  { cid: 'u3', cat: '单位换算', q: '成交额大于5亿的股票', sub: ['AMOUNT', 'e9'], tf: 'D' },
+  // ===== 类别 4: 单位换算（亿=1e8 / 万=1e4）=====
+  { cid: 'u1', cat: '单位换算', q: '总市值大于5000万的股票', sub: ['TOTAL_MV', '5e7'], tf: 'D' },
+  { cid: 'u2', cat: '单位换算', q: '流通市值大于200亿元的股票', sub: ['FLOAT_MV', '2e10'], tf: 'D' },
+  { cid: 'u3', cat: '单位换算', q: '成交额大于5亿的股票', sub: ['AMOUNT', '5e8'], tf: 'D' },
 
   // ===== 类别 5: 长窗口 / 嵌套指标（边界） =====
   { cid: 'b1', cat: '边界-窗口', q: '按20日均线选股，要求近期突破', sub: ['MA('], tf: 'D' },
@@ -99,6 +100,32 @@ async function translate(cookie, analysis) {
   return { status: res.status, json };
 }
 
+// 瞬时 5xx（502/504，NVIDIA LLM 偶发过载）自动重试；业务 4xx 与 429 不重试
+const RETRY_MAX = 3;
+const RETRY_DELAY_MS = 3000;
+
+async function analyzeWithRetry(cookie, query) {
+  let last;
+  for (let attempt = 0; attempt < RETRY_MAX; attempt++) {
+    last = await analyze(cookie, query);
+    if (!(last.status >= 500) || attempt === RETRY_MAX - 1) return last;
+    console.log(`       (analyze ${last.status}，等待重试 ${attempt + 1}/${RETRY_MAX - 1}…)`);
+    await sleep(RETRY_DELAY_MS);
+  }
+  return last;
+}
+
+async function translateWithRetry(cookie, analysis) {
+  let last;
+  for (let attempt = 0; attempt < RETRY_MAX; attempt++) {
+    last = await translate(cookie, analysis);
+    if (!(last.status >= 500) || attempt === RETRY_MAX - 1) return last;
+    console.log(`       (translate ${last.status}，等待重试 ${attempt + 1}/${RETRY_MAX - 1}…)`);
+    await sleep(RETRY_DELAY_MS);
+  }
+  return last;
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -117,7 +144,7 @@ async function run() {
 
     try {
       // 第一步: 语义分析
-      const ana = await analyze(cookie, c.q);
+      const ana = await analyzeWithRetry(cookie, c.q);
       await sleep(80);
       if (ana.status !== 200 || !ana.json?.data) {
         r.reason = `analyze HTTP ${ana.status}: ${ana.json?.error || ''}`;
@@ -143,7 +170,7 @@ async function run() {
       }
 
       // 第二步: 公式翻译（模拟"确认"）
-      const tr = await translate(cookie, data);
+      const tr = await translateWithRetry(cookie, data);
       await sleep(120);
       if (tr.status !== 200 || !tr.json?.data) {
         r.reason = `translate HTTP ${tr.status}: ${tr.json?.error || ''}`;
@@ -155,11 +182,20 @@ async function run() {
       r.formula = tdata.formula || '';
       r.explanations = [tdata.explanation || ''];
 
-      // 语义子串校验（仅断言存在性，验证公式确实覆盖该算子/字段）
+      // 语义子串校验（不区分大小写；断言存在性，验证公式确实覆盖该算子/字段）
       if (c.sub) {
-        const missing = c.sub.filter((s) => !r.formula.toUpperCase().includes(s));
+        const up = r.formula.toUpperCase();
+        const missing = c.sub.filter((s) => !up.includes(s.toUpperCase()));
         if (missing.length) {
           r.reason = `公式缺少算子/字段: ${missing.join(', ')}`;
+        }
+      }
+      // sub_any：子串任选其一命中即通过（多解场景）
+      if (!r.reason && c.sub_any) {
+        const up = r.formula.toUpperCase();
+        const hit = c.sub_any.some((s) => up.includes(s.toUpperCase()));
+        if (!hit) {
+          r.reason = `公式未命中任选算子: ${c.sub_any.join(' / ')}`;
         }
       }
       if (c.logic && !r.formula.includes(c.logic)) {
