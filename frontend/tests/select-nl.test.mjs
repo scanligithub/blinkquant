@@ -4,6 +4,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import {
+  buildCoverageCases,
+  computeCoverageMatrix,
+  formatCoverageMatrix,
+} from '../scripts/nl-coverage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1004,4 +1009,84 @@ test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
   assert.match(src, /export function buildRepairSystemSuffix/);
   assert.match(src, /export function buildRepairUserMessage/);
   assert.match(src, /export function trySafeBollRefRewrite/);
+});
+
+// ---- 注册表全覆盖：生成器与覆盖矩阵（import scripts/nl-coverage.mjs，纯 .mjs 无需复制）----
+
+test('buildCoverageCases: 只生成未被现有用例断言的字段/算子缺口', () => {
+  const meta = {
+    fields: ['CLOSE', 'OPEN', 'PCT_CHG'],
+    indicators: ['MA', 'ABS', 'CROSS_UP'],
+    timeframes: ['D', 'W', 'M'],
+    units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const existing = [
+    { cid: 'x1', q: '收盘价站上20日均线的股票', sub: ['CLOSE', 'MA('], tf: 'D' },
+    { cid: 'x2', q: '5日均线上穿30日均线的股票', sub: ['CROSS_UP'], tf: 'D' },
+  ];
+  const out = buildCoverageCases(meta, existing);
+  const cids = out.cases.map((c) => c.cid).sort();
+  assert.deepEqual(cids, ['gF_OPEN', 'gF_PCT_CHG', 'gI_ABS']);
+  assert.deepEqual(out.uncoveredFields, []);
+  assert.deepEqual(out.uncoveredInds, []);
+  const openCase = out.cases.find((c) => c.cid === 'gF_OPEN');
+  assert.equal(typeof openCase.q, 'string');
+  assert.ok(openCase.q.length > 0);
+  assert.deepEqual(openCase.sub, ['OPEN']);
+});
+
+test('buildCoverageCases: 注册表新增无生成器的项计入未覆盖', () => {
+  const meta = {
+    fields: ['NOVEL_FIELD'],
+    indicators: ['NOVEL_IND'],
+    timeframes: ['D', 'W', 'M'],
+    units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const out = buildCoverageCases(meta, []);
+  assert.deepEqual(out.cases, []);
+  assert.deepEqual(out.uncoveredFields, ['NOVEL_FIELD']);
+  assert.deepEqual(out.uncoveredInds, ['NOVEL_IND']);
+});
+
+test('computeCoverageMatrix: 从公式反推字段/算子覆盖与缺失', () => {
+  const meta = {
+    fields: ['CLOSE', 'OPEN', 'PCT_CHG'],
+    indicators: ['MA', 'ABS', 'CROSS_UP'],
+    timeframes: ['D', 'W', 'M'],
+    units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const results = [
+    { ok: true, formula: 'CLOSE > MA(CLOSE, 20)' },
+    { ok: true, formula: 'ABS(CLOSE - OPEN) > 2' },
+  ];
+  const m = computeCoverageMatrix(meta, results);
+  assert.equal(m.fields.total, 3);
+  assert.equal(m.fields.covered, 2);
+  assert.deepEqual(m.fields.missing, ['PCT_CHG']);
+  assert.equal(m.indicators.total, 3);
+  assert.equal(m.indicators.covered, 2);
+  assert.deepEqual(m.indicators.missing, ['CROSS_UP']);
+});
+
+test('computeCoverageMatrix: 大小写不敏感的公式 token 提取', () => {
+  const meta = {
+    fields: ['CLOSE'], indicators: ['MA'],
+    timeframes: ['D'], units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const m = computeCoverageMatrix(meta, [{ ok: true, formula: 'close > ma(CLOSE,20)' }]);
+  assert.equal(m.fields.covered, 1);
+  assert.equal(m.indicators.covered, 1);
+  assert.deepEqual(m.fields.missing, []);
+});
+
+test('formatCoverageMatrix: 输出含总数与缺失项', () => {
+  const meta = {
+    fields: ['CLOSE', 'OPEN'], indicators: ['MA'],
+    timeframes: ['D'], units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const m = computeCoverageMatrix(meta, [{ ok: true, formula: 'CLOSE > MA(CLOSE,20)' }]);
+  const s = formatCoverageMatrix(m);
+  assert.match(s, /字段: 1\/2/);
+  assert.match(s, /缺: OPEN/);
+  assert.match(s, /算子: 1\/1/);
 });
