@@ -7,7 +7,7 @@ import {
   parseSelectNLAnalysis,
   type AnalyzeResult,
 } from '@/lib/selectNL';
-import { fetchNlMeta, callLlm, rateStore, LLM_ENDPOINT, LLM_API_KEY, LLM_MODEL } from '@/lib/selectNLServer';
+import { fetchNlMeta, callLlm, rateStore, LLM_ENDPOINT, LLM_API_KEY, LLM_MODEL, NL_TEST_MODE } from '@/lib/selectNLServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -27,8 +27,9 @@ export async function POST(req: NextRequest) {
   const key = `select-nl-analyze:${auth.user.userId}`;
   const now = Date.now();
   // 分析端点独立限流（与翻译端点同 Map 不同 key），成功分析才计配额。
-  const limit = checkRateLimit(rateStore, key, now);
-  if (!limit.allowed) {
+  // 测试模式（NL_TEST_MODE=true）跳过限流，仅供自动化测试使用。
+  const limit = NL_TEST_MODE ? null : checkRateLimit(rateStore, key, now);
+  if (limit && !limit.allowed) {
     return NextResponse.json(
       { error: '调用过于频繁，请稍后再试', code: 'RATE_LIMITED', retryAfterMs: limit.retryAfterMs },
       { status: 429 }
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 只有成功分析才计入限流配额
-    recordRequest(rateStore, key, now);
+    if (!NL_TEST_MODE) recordRequest(rateStore, key, now);
 
     return NextResponse.json({ success: true, data: analyzed });
   } catch (err) {

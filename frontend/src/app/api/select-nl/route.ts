@@ -9,7 +9,7 @@ import {
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
-import { fetchNlMeta, callLlm, rateStore, LLM_ENDPOINT, LLM_API_KEY, LLM_MODEL } from '@/lib/selectNLServer';
+import { fetchNlMeta, callLlm, rateStore, LLM_ENDPOINT, LLM_API_KEY, LLM_MODEL, NL_TEST_MODE } from '@/lib/selectNLServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -31,8 +31,9 @@ export async function POST(req: NextRequest) {
   // 限流策略：checkRateLimit 检查、成功翻译后才 recordRequest。
   // 失败尝试（LLM 错误 / 公式非法）不扣配额，避免用户被误伤；
   // 代价是恶意用户可以无限次失败 LLM 调用烧 token——当前接受（配合 Vercel 每实例内存 Map 的近似性）。
-  const limit = checkRateLimit(rateStore, key, now);
-  if (!limit.allowed) {
+  // 测试模式（NL_TEST_MODE=true）跳过限流，仅供自动化测试使用。
+  const limit = NL_TEST_MODE ? null : checkRateLimit(rateStore, key, now);
+  if (limit && !limit.allowed) {
     return NextResponse.json(
       { error: '调用过于频繁，请稍后再试', code: 'RATE_LIMITED', retryAfterMs: limit.retryAfterMs },
       { status: 429 }
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 只有成功翻译才计入限流配额（策略见上方注释）
-    recordRequest(rateStore, key, now);
+    if (!NL_TEST_MODE) recordRequest(rateStore, key, now);
 
     return NextResponse.json({
       success: true,

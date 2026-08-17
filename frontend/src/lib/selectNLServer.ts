@@ -4,6 +4,10 @@
 
 import { resolveLlmTimeout, type NLMeta } from './selectNL';
 
+// 测试模式：设置 NL_TEST_MODE=true 时跳过限流（仅供自动化测试，生产勿开）。
+// 仅在 Vercel 环境变量显式开启，默认关闭。
+export const NL_TEST_MODE = process.env.NL_TEST_MODE === 'true';
+
 export const NODES = [
   'https://scanli-blinkquant-node1.hf.space',
   'https://scanli-blinkquant-node2.hf.space',
