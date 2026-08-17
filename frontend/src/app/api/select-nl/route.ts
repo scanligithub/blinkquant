@@ -7,6 +7,7 @@ import {
   parseSelectNLText,
   validateFormula,
   findMagnitudeMismatch,
+  shouldRetryTranslation,
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -75,19 +76,20 @@ export async function POST(req: NextRequest) {
       `周期：${analysis.timeframe}`,
     ].join('\n');
 
-    // 单次 LLM 调用（Hobby 60s 硬限下无重试预算）；量级兑底不符时允许追加提示重翻一次。
-    const attempt = async (query: string) => {
+    // 单/双次 LLM 调用（Hobby 60s 硬限下最多一次重试，且仅在时间预算内）；
+    // 弱模型首次输出可能非法或量级漂移，用追加提示重翻一次拖住偶发错误。
+    const attempt = async (query: string): Promise<SelectNLResult | { kind: 'invalid'; reason: string; formula?: string; explanation?: string }> => {
       const raw = await callLlm(systemPrompt, query);
       let parsed: SelectNLResult;
       try {
         parsed = parseSelectNLText(raw);
       } catch {
-        return { kind: 'invalid' as const, reason: 'AI 翻译输出格式异常，请返回确认语义或换种说法' };
+        return { kind: 'invalid', reason: 'AI 翻译输出格式异常，请返回确认语义或换种说法' };
       }
       const validation = validateFormula(meta, parsed.formula);
       if (validation.ok === false) {
         return {
-          kind: 'invalid' as const,
+          kind: 'invalid',
           reason: `翻译结果不合法：${validation.reason}`,
           formula: parsed.formula,
           explanation: parsed.explanation,
@@ -95,35 +97,46 @@ export async function POST(req: NextRequest) {
       }
       if (!meta.timeframes.includes(parsed.timeframe)) {
         return {
-          kind: 'invalid' as const,
+          kind: 'invalid',
           reason: `翻译结果周期不合法：${parsed.timeframe}`,
           formula: parsed.formula,
           explanation: parsed.explanation,
         };
       }
       const mismatch = findMagnitudeMismatch(analysis, parsed.formula);
-      if (mismatch) return { kind: 'mismatch' as const, reason: mismatch, parsed };
-      return { kind: 'ok' as const, parsed };
+      if (mismatch) return { kind: 'invalid', reason: mismatch, formula: parsed.formula, explanation: parsed.explanation };
+      return parsed;
     };
 
     let result = await attempt(baseQuery);
-    if (result.kind === 'mismatch' && Date.now() - startedAt < 40000) {
-      // 追加量级兑底提示重翻一次；正式计数前失败不触发限流。
-      result = await attempt(`${baseQuery}\n注意：${result.reason}。请重新换算后输出完整 JSON。`);
+    if (typeof result !== 'string' && result && (result as any).kind === 'invalid') {
+      const denied = result as { kind: 'invalid'; reason: string; formula?: string; explanation?: string };
+      const elapsedMs = Date.now() - startedAt;
+      if (shouldRetryTranslation(denied, elapsedMs, 40000)) {
+        // 追加兑底/纠正提示重翻一次；正式计数前失败不触发限流。
+        result = await attempt(`${baseQuery}\n注意：${denied.reason}。请修正后重新输出完整 JSON。`);
+      }
     }
-    if (result.kind !== 'ok') {
-      const payload = result.kind === 'invalid'
-        ? { error: result.reason, code: 'INVALID_FORMULA', formula: (result as any).formula, explanation: (result as any).explanation }
-        : { error: `翻译结果不合法：${result.reason}`, code: 'INVALID_FORMULA' };
-      return NextResponse.json(payload, { status: 400 });
+    if (typeof result !== 'string' && result && (result as any).kind === 'invalid') {
+      const denied = result as { kind: 'invalid'; reason: string; formula?: string; explanation?: string };
+      return NextResponse.json(
+        {
+          error: denied.reason.startsWith('翻译结果不合法') ? denied.reason : `翻译结果不合法：${denied.reason}`,
+          code: 'INVALID_FORMULA',
+          formula: denied.formula,
+          explanation: denied.explanation,
+        },
+        { status: 400 }
+      );
     }
+    const parsed = result as SelectNLResult;
 
     // 只有成功翻译才计入限流配额（策略见上方注释）
     if (!NL_TEST_MODE) recordRequest(rateStore, key, now);
 
     return NextResponse.json({
       success: true,
-      data: { formula: result.parsed.formula, timeframe: result.parsed.timeframe, explanation: result.parsed.explanation },
+      data: { formula: parsed.formula, timeframe: parsed.timeframe, explanation: parsed.explanation },
     });
   } catch (err) {
     console.error('select-nl failed:', err);

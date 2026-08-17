@@ -25,11 +25,44 @@ function stripCodeFence(raw) {
   return m ? m[1].trim() : raw.trim();
 }
 
+// 兜底：LLM 偶尔在 JSON 前后夹带自然语言，提取首个平衡的大括号对象
+function extractFirstJsonObject(raw) {
+  const start = raw.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function parseSelectNLText(raw) {
   const cleaned = stripCodeFence(raw);
+  let text = cleaned;
   let parsed;
-  try { parsed = JSON.parse(cleaned); }
-  catch { throw new Error('LLM 输出不是合法 JSON'); }
+  try { parsed = JSON.parse(text); }
+  catch {
+    // 尝试提取首个对象（可能只是被自然语言包裹）
+    const obj = extractFirstJsonObject(text);
+    if (obj) {
+      try { parsed = JSON.parse(obj); }
+      catch { throw new Error('LLM 输出不是合法 JSON'); }
+    } else {
+      throw new Error('LLM 输出不是合法 JSON');
+    }
+  }
   if (!parsed || typeof parsed !== 'object') throw new Error('LLM 输出不是合法 JSON');
   if (typeof parsed.formula !== 'string' || parsed.formula.trim().length === 0) throw new Error('翻译结果缺少 formula');
   const explanation = typeof parsed.explanation === 'string' ? parsed.explanation.trim() : '';
@@ -250,6 +283,12 @@ const UNIT_FACTORS = { 万亿: 1e12, 亿: 1e8, 万: 1e4 };
 const UNIT_RE = /(\d+(?:\.\d+)?)\s*(万亿|亿|万)/g;
 const NUM_LITERAL_RE = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
 
+// 重试决策：invalid/mismatch 在时间预算内可再翻一次；ok 直接通过
+function shouldRetryTranslation(result, elapsedMs, budgetMs) {
+  if (result.kind === 'ok') return false;
+  return elapsedMs < budgetMs;
+}
+
 function findMagnitudeMismatch(analysis, formula) {
   const text = [analysis.restatement, ...analysis.conditions].filter(Boolean).join('\n');
   const expected = [];
@@ -295,7 +334,8 @@ function buildSystemPrompt(meta) {
     ...Object.entries(meta.descriptions ?? {}).map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
     '',
     'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），但不支持更深嵌套。',
-    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。',
+    'REF 的第一个参数必须是字段（如 REF(CLOSE, 1)），禁止嵌套调用（如 REF(MA(CLOSE,20), 1)、REF(HHV(CLOSE,20), 1) 都是非法的）。',
+    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。示例：连续3天放量 = COUNT(VOL > REF(VOL, 1), 3) >= 3。',
     '',
     '周期 timeframe 只能是 ' + meta.timeframes.join('/') + '。',
     '',
@@ -359,6 +399,11 @@ test('parseSelectNLText: 缺少 formula 抛错', () => {
 
 test('parseSelectNLText: 非法 JSON 抛错', () => {
   assert.throws(() => parseSelectNLText('not json'), /JSON/);
+});
+
+test('parseSelectNLText: 前后夹杂文字时提取首个 JSON 对象', () => {
+  const r = parseSelectNLText('好的，翻译如下：\n{"formula":"PE_TTM < 20","timeframe":"d","explanation":"低估值"}\n请确认。');
+  assert.deepEqual(r, { formula: 'PE_TTM < 20', timeframe: 'D', explanation: '低估值' });
 });
 
 test('validateFormula: 合法公式通过', () => {
@@ -533,6 +578,14 @@ test('buildSystemPrompt: 包含单位换算规则(亿→1e8)', () => {
   assert.match(p, /1e10/);
   assert.match(p, /5000万=5e7/);
   assert.match(p, /200亿=2e10/);
+});
+
+test('buildSystemPrompt: 禁止 REF 嵌套调用 + COUNT 条件正例', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /REF 的第一个参数必须是字段/);
+  assert.match(p, /禁止嵌套调用/);
+  assert.match(p, /REF\(CLOSE,\s*1\)/);
+  assert.match(p, /COUNT\(VOL > REF\(VOL,\s*1\),\s*3\) >= 3/);
 });
 
 test('checkRateLimit: 允许窗口内请求', () => {
@@ -750,6 +803,16 @@ test('findMagnitudeMismatch: 无单位短语返回 null', () => {
 test('findMagnitudeMismatch: 长整型写法 20000000000 也命中', () => {
   const a = { restatement: '总市值大于100亿', conditions: ['总市值大于100亿'], logic: '1', timeframe: 'D' };
   assert.equal(findMagnitudeMismatch(a, 'TOTAL_MV > 10000000000'), null);
+});
+
+test('shouldRetryTranslation: invalid/mismatch 可重试，ok 不重试', () => {
+  assert.equal(shouldRetryTranslation({ kind: 'invalid', reason: 'x' }, 1000, 40000), true);
+  assert.equal(shouldRetryTranslation({ kind: 'mismatch', reason: 'x' }, 1000, 40000), true);
+  assert.equal(shouldRetryTranslation({ kind: 'ok', formula: 'X', timeframe: 'D', explanation: '' }, 1000, 40000), false);
+});
+
+test('shouldRetryTranslation: 超过时间预算不重试', () => {
+  assert.equal(shouldRetryTranslation({ kind: 'invalid', reason: 'x' }, 45000, 40000), false);
 });
 
 test('buildAnalyzePrompt: 强调不翻译公式且输出 JSON 契约', () => {

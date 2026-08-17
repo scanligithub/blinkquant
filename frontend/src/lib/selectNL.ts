@@ -34,13 +34,46 @@ export function stripCodeFence(raw: string): string {
   return m ? m[1].trim() : raw.trim();
 }
 
+// 兜底：LLM 偶尔在 JSON 前后夹带自然语言，提取首个平衡的大括号对象
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export function parseSelectNLText(raw: string): SelectNLResult {
   const cleaned = stripCodeFence(raw);
   let parsed: any;
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error('LLM 输出不是合法 JSON');
+    // 尝试提取首个对象（可能只是被自然语言包裹）
+    const obj = extractFirstJsonObject(cleaned);
+    if (obj) {
+      try {
+        parsed = JSON.parse(obj);
+      } catch {
+        throw new Error('LLM 输出不是合法 JSON');
+      }
+    } else {
+      throw new Error('LLM 输出不是合法 JSON');
+    }
   }
   if (!parsed || typeof parsed !== 'object') throw new Error('LLM 输出不是合法 JSON');
   if (typeof parsed.formula !== 'string' || parsed.formula.trim().length === 0) {
@@ -296,7 +329,8 @@ export function buildSystemPrompt(meta: NLMeta): string {
       .map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
     '',
     'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），但不支持更深嵌套。',
-    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。',
+    'REF 的第一个参数必须是字段（如 REF(CLOSE, 1)），禁止嵌套调用（如 REF(MA(CLOSE,20), 1)、REF(HHV(CLOSE,20), 1) 都是非法的）。',
+    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。示例：连续3天放量 = COUNT(VOL > REF(VOL, 1), 3) >= 3。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -333,6 +367,22 @@ export function parseSelectNLAnalysis(raw: string): AnalyzeResult {
 const UNIT_FACTORS: Record<string, number> = { 万亿: 1e12, 亿: 1e8, 万: 1e4 };
 const UNIT_RE = /(\d+(?:\.\d+)?)\s*(万亿|亿|万)/g;
 const NUM_LITERAL_RE = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+// 翻译尝试结果（route 内 attempt 的统一形状）
+export interface TranslateAttemptResult {
+  kind: 'ok' | 'invalid' | 'mismatch';
+  reason?: string;
+  formula?: string;
+  explanation?: string;
+  parsed?: SelectNLResult;
+}
+
+// 重试决策：invalid/mismatch 在时间预算内可再翻一次；ok 直接通过。
+// 时间预算用于守 Vercel Hobby 60s 硬限，避免重试把首调用慢的请求拖超时。
+export function shouldRetryTranslation(result: TranslateAttemptResult, elapsedMs: number, budgetMs: number): boolean {
+  if (result.kind === 'ok') return false;
+  return elapsedMs < budgetMs;
+}
 
 // 量级兑底：从已确认语义中提取带「万亿/亿/万」的数值阈值，
 // 校验公式里是否存在数值量级与之接近的常量。用于拦截弱模型把 200亿=2e11 这类换算漂移。
