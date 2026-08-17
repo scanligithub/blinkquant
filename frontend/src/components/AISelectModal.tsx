@@ -73,7 +73,12 @@ export default function AISelectModal({ onClose, onRun }: AISelectModalProps) {
       const data = json.data as AnalyzeResult;
       setAnalysis(data);
       setTimeframe(data.timeframe);
-      if (withCorrection) setCorrectionRounds((r) => r + 1);
+      if (withCorrection) {
+        setCorrectionRounds((r) => r + 1);
+        // 纠正轮后端返回的是「修订后的语义」，把顶部输入框同步为最新复述，
+        // 避免「描述你的选股条件」与下方语义确认/条件清单不一致。
+        setQuery(data.restatement);
+      }
       setCorrection('');
       setPhase('confirm');
     } catch {
