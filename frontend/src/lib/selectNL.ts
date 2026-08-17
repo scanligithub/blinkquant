@@ -328,9 +328,23 @@ export function buildSystemPrompt(meta: NLMeta): string {
     ...Object.entries(meta.descriptions ?? {})
       .map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
     '',
-    'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），但不支持更深嵌套。',
-    'REF 的第一个参数必须是字段（如 REF(CLOSE, 1)），禁止嵌套调用（如 REF(MA(CLOSE,20), 1)、REF(HHV(CLOSE,20), 1) 都是非法的）。',
-    'COUNT/BARSLAST 的条件参数是比较表达式（> >= < <=），可用 AND/OR 组合。示例：连续3天放量 = COUNT(VOL > REF(VOL, 1), 3) >= 3。',
+    'CROSS_UP/CROSS_DOWN/MAX/MIN 参数可嵌套一层指标调用（如 CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))），禁止更深嵌套。',
+    'REF 的第一个参数必须是字段（如 REF(CLOSE,1)），禁止嵌套调用（REF(MA(...),1)、REF(HHV(...),1)、REF(BOLL_UPPER(...),1) 均非法）。',
+    'COUNT(cond, N) 必须 2 个参数；BARSLAST(cond) 只能 1 个条件参数。条件为比较式（> >= < <=），可用 AND/OR。',
+    '示例：连续3天放量 = COUNT(VOL > REF(VOL,1), 3) >= 3；距上次站上20日线 = BARSLAST(CLOSE > MA(CLOSE,20))。',
+    '',
+    '【易错模式 — 必须遵守】',
+    '1) 创N日新高/新低：',
+    '   正确: CLOSE >= HHV(CLOSE,N) ； CLOSE <= LLV(CLOSE,N)（优先 >= / <=，不要用 ==）',
+    '   错误: BARSLAST(...)、REF(HHV(...),1)、REF(LLV(...),1)',
+    '2) 近N日振幅 / 振幅大于x%：',
+    '   正确: (HIGH-LOW)/CLOSE*100 > x  或  ATR(N) 相关比较',
+    '   错误: BARSLAST(...)、把振幅写成「距上次」类条件',
+    '3) 上破/下破布林轨：',
+    '   正确: CLOSE > BOLL_UPPER(CLOSE,20,2) 或 CROSS_UP(CLOSE, BOLL_UPPER(CLOSE,20,2))',
+    '         CLOSE < BOLL_LOWER(CLOSE,20,2) 或 CROSS_DOWN(CLOSE, BOLL_LOWER(CLOSE,20,2))',
+    '   错误: REF(BOLL_UPPER(...),1)、REF(BOLL_LOWER(...),1)',
+    '4) 不要用未在清单中的算子；不要为「昨天的均线/布林」去写 REF(指标调用,1)。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -413,6 +427,86 @@ export function findMagnitudeMismatch(analysis: AnalyzeResult, formula: string):
   return null;
 }
 
+// 根据已确认语义追加硬约束（补丁式，针对 e1/e4/i5 类）
+export function buildHardConstraintSuffix(analysis: AnalyzeResult): string {
+  const text = [analysis.restatement, ...(analysis.conditions || [])].join('\n');
+  const lines: string[] = [];
+  if (/新高|新低/.test(text)) {
+    lines.push('硬约束：本需求含新高/新低，禁止使用 BARSLAST；请用 HHV/LLV 与 CLOSE 的 >= 或 <= 比较。');
+  }
+  if (/振幅/.test(text)) {
+    lines.push('硬约束：本需求与振幅相关，禁止使用 BARSLAST；优先 (HIGH-LOW)/CLOSE*100 或 ATR。');
+  }
+  if (/布林|BOLL/i.test(text)) {
+    lines.push('硬约束：布林相关禁止 REF(BOLL_UPPER/LOWER(...), n)；上破/下破用 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。');
+  }
+  return lines.length ? '\n' + lines.join('\n') : '';
+}
+
+// 首次翻译的 user 消息
+export function buildTranslateUserMessage(analysis: AnalyzeResult): string {
+  const conditionLines = analysis.conditions.map((c, i) => `${i + 1}. ${c}`).join('\n');
+  return [
+    '这是用户需求对应的已确认语义，请严格按它翻译成 BlinkQuant 公式：',
+    `需求复述：${analysis.restatement}`,
+    `条件清单：\n${conditionLines}`,
+    `逻辑关系：${analysis.logic}`,
+    `周期：${analysis.timeframe}`,
+    buildHardConstraintSuffix(analysis),
+  ].join('\n');
+}
+
+// repair 专用 system：在全量 buildSystemPrompt 之后追加，比整段重写更聚焦。
+export function buildRepairSystemSuffix(): string {
+  return [
+    '',
+    '【公式修复模式】',
+    '上一次输出的公式未通过签名校验。请只输出修正后的合法 JSON（formula/timeframe/explanation）。',
+    '规则：',
+    '- 只修改公式使之满足函数签名与白名单，不要改变用户已确认的语义意图；',
+    '- 禁止引入未列出的算子；禁止 REF/MA/HHV/LLV/SUM 等 window 函数的第一参写成函数调用；',
+    '- BARSLAST 只能有 1 个 cond 参数；COUNT 必须是 COUNT(cond, N)；',
+    '- 若上次误用 BARSLAST 表达新高/新低/振幅，改为 HHV/LLV 或 (HIGH-LOW)/CLOSE；',
+    '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。',
+  ].join('\n');
+}
+
+// repair 的 user 消息：必须带上被拒公式原文 + reason
+export function buildRepairUserMessage(
+  analysis: AnalyzeResult,
+  rejectedFormula: string,
+  reason: string
+): string {
+  return [
+    buildTranslateUserMessage(analysis),
+    '',
+    '上次非法公式：',
+    rejectedFormula,
+    `校验失败原因：${reason}`,
+    '请输出修正后的完整 JSON。',
+  ].join('\n');
+}
+
+// 唯一安全的确定性改写：REF(BOLL_UPPER|BOLL_LOWER(...), 1) 与 CLOSE 比较/意图为突破时，
+// 改为 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。不改写 REF(MA(...),1)（昨日均线是合法语义，只是不支持）。
+export function trySafeBollRefRewrite(formula: string): string | null {
+  const up = formula.match(
+    /CLOSE\s*>\s*REF\s*\(\s*(BOLL_UPPER\s*\([^)]*\))\s*,\s*1\s*\)|REF\s*\(\s*(BOLL_UPPER\s*\([^)]*\))\s*,\s*1\s*\)\s*<\s*CLOSE/i
+  );
+  if (up) {
+    const inner = up[1] || up[2];
+    return formula.replace(up[0], `CROSS_UP(CLOSE, ${inner})`);
+  }
+  const down = formula.match(
+    /CLOSE\s*<\s*REF\s*\(\s*(BOLL_LOWER\s*\([^)]*\))\s*,\s*1\s*\)|REF\s*\(\s*(BOLL_LOWER\s*\([^)]*\))\s*,\s*1\s*\)\s*>\s*CLOSE/i
+  );
+  if (down) {
+    const inner = down[1] || down[2];
+    return formula.replace(down[0], `CROSS_DOWN(CLOSE, ${inner})`);
+  }
+  return null;
+}
+
 export function buildAnalyzePrompt(meta: NLMeta): string {
   const fieldsLine = meta.fields.join('、');
   const unitsLine = Object.entries(meta.units)
@@ -442,6 +536,12 @@ export function buildAnalyzePrompt(meta: NLMeta): string {
     '2. 把需求拆成若干条独立的条件（conditions），每条是中文自然语言描述，并尽量指出对应字段/指标。',
     '3. 给出条件之间的逻辑关系（logic），用条件序号（1、2、3…）+ AND/OR，括号可省略。',
     '4. 给出周期 timeframe，只能是 ' + meta.timeframes.join('/') + '。',
+    '5. 歧义术语在 conditions 中必须写成可比较的中文语义（仍不要输出公式）：',
+    '   - 「创N日新高」→「收盘价大于等于近N日最高价」',
+    '   - 「创N日新低」→「收盘价小于等于近N日最低价」',
+    '   - 「近N日振幅」「振幅大于x%」→「（最高价-最低价）/收盘价 的百分比」或明确阈值；不要写成「距上次某条件成立」',
+    '   - 「上破/下破布林上轨/下轨」→「收盘价大于/小于布林上轨/下轨」或「收盘价上穿/下穿布林轨」',
+    '   - 「距上次…不超过N日」才对应 BARSLAST 类语义；「新高/新低/振幅」不要用 BARSLAST 语义描述',
     '',
     '输出必须是合法 JSON：{"restatement":"...","conditions":["...","..."],"logic":"1 AND 2","timeframe":"D"}。',
     '只输出 JSON，不要输出其他文字。',

@@ -8,6 +8,10 @@ import {
   validateFormula,
   findMagnitudeMismatch,
   shouldRetryTranslation,
+  buildTranslateUserMessage,
+  buildRepairSystemSuffix,
+  buildRepairUserMessage,
+  trySafeBollRefRewrite,
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -64,28 +68,26 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt(meta);
     const startedAt = Date.now();
 
-    // 把「已确认的语义」注入 user 消息；弱模型按条件清单+逻辑翻译，无需自行理解中文歧义。
-    const conditionLines = analysis.conditions
-      .map((c, i) => `${i + 1}. ${c}`)
-      .join('\n');
-    const baseQuery = [
-      '这是用户需求对应的已确认语义，请严格按它翻译成 BlinkQuant 公式：',
-      `需求复述：${analysis.restatement}`,
-      `条件清单：\n${conditionLines}`,
-      `逻辑关系：${analysis.logic}`,
-      `周期：${analysis.timeframe}`,
-    ].join('\n');
+    // 首次翻译 user 消息（含备选值硬约束，追加自 analyze 已确认语义）
+    const userMsg = buildTranslateUserMessage(analysis);
 
-    // 单/双次 LLM 调用（Hobby 60s 硬限下最多一次重试，且仅在时间预算内）；
-    // 弱模型首次输出可能非法或量级漂移，用追加提示重翻一次拖住偶发错误。
-    const attempt = async (query: string): Promise<SelectNLResult | { kind: 'invalid'; reason: string; formula?: string; explanation?: string }> => {
-      const raw = await callLlm(systemPrompt, query);
+    // 单/双次 LLM 调用（Hobby 60s 硬限下最多一次 repair，且仅在时间预算内）；
+    // 弱模型首次输出可能非法或量级漂移，用「非法公式原文 + reason + repair system」修正一次。
+    // 返回 SelectNLResult 表示成功；否则返回非法明细。
+    const translateOnce = async (
+      sys: string,
+      user: string
+    ): Promise<SelectNLResult | { kind: 'invalid'; reason: string; formula?: string; explanation?: string }> => {
+      const raw = await callLlm(sys, user);
       let parsed: SelectNLResult;
       try {
         parsed = parseSelectNLText(raw);
       } catch {
         return { kind: 'invalid', reason: 'AI 翻译输出格式异常，请返回确认语义或换种说法' };
       }
+      // 安全 BOLL 改写（零 token），成功后直接过检则省一次 repair
+      const rewritten = trySafeBollRefRewrite(parsed.formula);
+      if (rewritten) parsed = { ...parsed, formula: rewritten };
       const validation = validateFormula(meta, parsed.formula);
       if (validation.ok === false) {
         return {
@@ -108,16 +110,18 @@ export async function POST(req: NextRequest) {
       return parsed;
     };
 
-    let result = await attempt(baseQuery);
-    if (typeof result !== 'string' && result && (result as any).kind === 'invalid') {
+    let result = await translateOnce(systemPrompt, userMsg);
+    if (result && (result as any).kind === 'invalid') {
       const denied = result as { kind: 'invalid'; reason: string; formula?: string; explanation?: string };
       const elapsedMs = Date.now() - startedAt;
       if (shouldRetryTranslation(denied, elapsedMs, 40000)) {
-        // 追加兑底/纠正提示重翻一次；正式计数前失败不触发限流。
-        result = await attempt(`${baseQuery}\n注意：${denied.reason}。请修正后重新输出完整 JSON。`);
+        // repair：专属 system + 带「非法公式原文 + reason」的 user 消息；正式计数前失败不触发限流。
+        const repairSystem = systemPrompt + buildRepairSystemSuffix();
+        const repairUser = buildRepairUserMessage(analysis, denied.formula ?? '', denied.reason);
+        result = await translateOnce(repairSystem, repairUser);
       }
     }
-    if (typeof result !== 'string' && result && (result as any).kind === 'invalid') {
+    if (result && (result as any).kind === 'invalid') {
       const denied = result as { kind: 'invalid'; reason: string; formula?: string; explanation?: string };
       return NextResponse.json(
         {
