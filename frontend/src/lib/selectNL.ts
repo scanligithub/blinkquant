@@ -17,6 +17,14 @@ export interface SelectNLResult {
   explanation: string;
 }
 
+// 两步语义翻译（语义确认 → 公式翻译）的第一阶段输出
+export interface AnalyzeResult {
+  restatement: string;
+  conditions: string[];
+  logic: string;
+  timeframe: string;
+}
+
 export const MAX_FORMULA_LENGTH = 500;
 
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
@@ -294,6 +302,62 @@ export function buildSystemPrompt(meta: NLMeta): string {
     meta.example_queries.join('\n'),
     '',
     '输出必须是合法 JSON：{"formula":"...","timeframe":"D","explanation":"中文解释"}。',
+    '只输出 JSON，不要输出其他文字。',
+  ].join('\n');
+}
+
+export function parseSelectNLAnalysis(raw: string): AnalyzeResult {
+  const cleaned = stripCodeFence(raw);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error('LLM 输出不是合法 JSON');
+  }
+  if (!parsed || typeof parsed !== 'object') throw new Error('LLM 输出不是合法 JSON');
+  if (typeof parsed.restatement !== 'string' || parsed.restatement.trim().length === 0) {
+    throw new Error('分析结果缺少 restatement');
+  }
+  if (!Array.isArray(parsed.conditions)) throw new Error('分析结果缺少 conditions');
+  const conditions = parsed.conditions
+    .filter((c) => typeof c === 'string' && c.trim().length > 0)
+    .map((c) => c.trim());
+  if (conditions.length === 0) throw new Error('分析结果缺少 conditions');
+  const logic = typeof parsed.logic === 'string' && parsed.logic.trim() !== '' ? parsed.logic.trim() : conditions.map((_, i) => `${i + 1}`).join(' AND ');
+  const timeframe = typeof parsed.timeframe === 'string' ? parsed.timeframe.toUpperCase() : 'D';
+  return { restatement: parsed.restatement.trim(), conditions, logic, timeframe };
+}
+
+export function buildAnalyzePrompt(meta: NLMeta): string {
+  const fieldsLine = meta.fields.join('、');
+  const unitsLine = Object.entries(meta.units)
+    .map(([k, v]) => `${k}=${v}`)
+    .join('，');
+  const indicatorsLine = Object.entries(meta.descriptions ?? {})
+    .map(([k, d]) => `${k}: ${d}`)
+    .join('\n');
+  return [
+    '你是一名 A 股量化选股需求理解助手。请把用户的中文选股需求拆解成清晰的语义，供用户确认。',
+    '不要直接输出公式，不要做任何公式翻译。',
+    '字段白名单（理解需求时可能用到的数据维度，大小写必须一致）：',
+    fieldsLine,
+    '',
+    '单位：',
+    unitsLine,
+    '',
+    '单位换算规则（重要）：',
+    '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"的阈值是 1e10。',
+    '',
+    '可选指标（函数名(参数形态)：含义），理解需求时明确指标语义，尤其是歧义术语（如"振幅""新高""乖离"）：',
+    ...Object.entries(meta.descriptions ?? {}).map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
+    '',
+    '分析要求：',
+    '1. 用中文复述你理解的需求（restatement），明确标出任何有歧义或需要用户确认的术语。',
+    '2. 把需求拆成若干条独立的条件（conditions），每条是中文自然语言描述，并尽量指出对应字段/指标。',
+    '3. 给出条件之间的逻辑关系（logic），用条件序号（1、2、3…）+ AND/OR，括号可省略。',
+    '4. 给出周期 timeframe，只能是 ' + meta.timeframes.join('/') + '。',
+    '',
+    '输出必须是合法 JSON：{"restatement":"...","conditions":["...","..."],"logic":"1 AND 2","timeframe":"D"}。',
     '只输出 JSON，不要输出其他文字。',
   ].join('\n');
 }

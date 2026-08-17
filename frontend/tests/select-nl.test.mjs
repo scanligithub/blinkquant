@@ -1,6 +1,11 @@
 // frontend/tests/select-nl.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---- 复制自 src/lib/selectNL.ts（保持与实现一致）----
 const META = {
@@ -592,4 +597,119 @@ test('validateFormula: 顶层 OR 后跟括号条件不误判函数', () => {
 test('validateFormula: COUNT 内 AND 后跟括号条件通过', () => {
   const r = validateFormula(META, 'COUNT(CLOSE > OPEN AND (CLOSE - OPEN) / (HIGH - LOW) > 0.4, 3) > 0');
   assert.equal(r.ok, true);
+});
+
+// ---- 两步语义翻译：parseSelectNLAnalysis / buildAnalyzePrompt ----
+
+function parseSelectNLAnalysis(raw) {
+  // 见 src/lib/selectNL.ts
+  const cleaned = stripCodeFence(raw);
+  let parsed;
+  try { parsed = JSON.parse(cleaned); }
+  catch { throw new Error('LLM 输出不是合法 JSON'); }
+  if (!parsed || typeof parsed !== 'object') throw new Error('LLM 输出不是合法 JSON');
+  if (typeof parsed.restatement !== 'string' || parsed.restatement.trim().length === 0) {
+    throw new Error('分析结果缺少 restatement');
+  }
+  if (!Array.isArray(parsed.conditions)) throw new Error('分析结果缺少 conditions');
+  const conditions = parsed.conditions
+    .filter((c) => typeof c === 'string' && c.trim().length > 0)
+    .map((c) => c.trim());
+  if (conditions.length === 0) throw new Error('分析结果缺少 conditions');
+  const logic = typeof parsed.logic === 'string' && parsed.logic.trim() !== '' ? parsed.logic.trim() : conditions.map((_, i) => `${i + 1}`).join(' AND ');
+  const timeframe = typeof parsed.timeframe === 'string' ? parsed.timeframe.toUpperCase() : 'D';
+  return { restatement: parsed.restatement.trim(), conditions, logic, timeframe };
+}
+
+function buildAnalyzePrompt(meta) {
+  const fieldsLine = meta.fields.join('、');
+  const unitsLine = Object.entries(meta.units).map(([k, v]) => `${k}=${v}`).join('，');
+  const indicatorsLine = Object.entries(meta.descriptions ?? {}).map(([k, d]) => `${k}: ${d}`).join('\n');
+  return [
+    '你是一名 A 股量化选股需求理解助手。请把用户的中文选股需求拆解成清晰的语义，供用户确认。',
+    '不要直接输出公式，不要做任何公式翻译。',
+    '字段白名单（理解需求时可能用到的数据维度，大小写必须一致）：',
+    fieldsLine,
+    '',
+    '单位：',
+    unitsLine,
+    '',
+    '单位换算规则（重要）：',
+    '用户说"亿"=1e8、"万"=1e4、"万亿"=1e12。例如"总市值大于100亿"的阈值是 1e10。',
+    '',
+    '可选指标（函数名(参数形态)：含义），理解需求时明确指标语义，尤其是歧义术语（如"振幅""新高""乖离"）：',
+    ...Object.entries(meta.descriptions ?? {}).map(([k, d]) => `${k}(${(meta.signatures?.[k] ?? []).join(', ')}): ${d}`),
+    '',
+    '分析要求：',
+    '1. 用中文复述你理解的需求（restatement），明确标出任何有歧义或需要用户确认的术语。',
+    '2. 把需求拆成若干条独立的条件（conditions），每条是中文自然语言描述，并尽量指出对应字段/指标。',
+    '3. 给出条件之间的逻辑关系（logic），用条件序号（1、2、3…）+ AND/OR，括号可省略。',
+    '4. 给出周期 timeframe，只能是 ' + meta.timeframes.join('/') + '。',
+    '',
+    '输出必须是合法 JSON：{"restatement":"...","conditions":["...","..."],"logic":"1 AND 2","timeframe":"D"}。',
+    '只输出 JSON，不要输出其他文字。',
+  ].join('\n');
+}
+
+test('parseSelectNLAnalysis: 正常解析', () => {
+  const r = parseSelectNLAnalysis('{"restatement":"找5日振幅大于3%的股票","conditions":["近5日振幅 > 3%","总市值 > 100亿"],"logic":"1 AND 2","timeframe":"D"}');
+  assert.deepEqual(r, {
+    restatement: '找5日振幅大于3%的股票',
+    conditions: ['近5日振幅 > 3%', '总市值 > 100亿'],
+    logic: '1 AND 2',
+    timeframe: 'D',
+  });
+});
+
+test('parseSelectNLAnalysis: 代码围栏剥离', () => {
+  const r = parseSelectNLAnalysis('```json\n{"restatement":"x","conditions":["a"],"logic":"1","timeframe":"w"}\n```');
+  assert.equal(r.restatement, 'x');
+  assert.equal(r.timeframe, 'W');
+});
+
+test('parseSelectNLAnalysis: 缺少 restatement 抛错', () => {
+  assert.throws(() => parseSelectNLAnalysis('{"conditions":["a"],"logic":"1"}'), /restatement/);
+});
+
+test('parseSelectNLAnalysis: conditions 缺失或空抛错', () => {
+  assert.throws(() => parseSelectNLAnalysis('{"restatement":"x"}'), /conditions/);
+  assert.throws(() => parseSelectNLAnalysis('{"restatement":"x","conditions":[]}'), /conditions/);
+});
+
+test('parseSelectNLAnalysis: 非法 JSON 抛错', () => {
+  assert.throws(() => parseSelectNLAnalysis('not json'), /JSON/);
+});
+
+test('parseSelectNLAnalysis: 缺少 logic 时默认顺序 AND', () => {
+  const r = parseSelectNLAnalysis('{"restatement":"x","conditions":["a","b","c"]}');
+  assert.equal(r.logic, '1 AND 2 AND 3');
+});
+
+test('parseSelectNLAnalysis: 缺少 timeframe 默认 D', () => {
+  const r = parseSelectNLAnalysis('{"restatement":"x","conditions":["a"]}');
+  assert.equal(r.timeframe, 'D');
+});
+
+test('buildAnalyzePrompt: 强调不翻译公式且输出 JSON 契约', () => {
+  const p = buildAnalyzePrompt(META);
+  assert.match(p, /不要直接输出公式/);
+  assert.match(p, /restatement/);
+  assert.match(p, /conditions/);
+  assert.match(p, /"logic"/);
+});
+
+test('buildAnalyzePrompt: 包含字段/单位/指标与周期', () => {
+  const p = buildAnalyzePrompt(META);
+  assert.match(p, /PE_TTM/);
+  assert.match(p, /TOTAL_MV=元/);
+  assert.match(p, /CROSS_UP/);
+  assert.match(p, /timeframe/);
+  assert.match(p, /D\/W\/M/);
+});
+
+// 守卫测试：测试内嵌实现副本与 src/lib/selectNL.ts 保持一致（防漂移）
+test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
+  const src = readFileSync(join(__dirname, '..', 'src', 'lib', 'selectNL.ts'), 'utf8');
+  assert.match(src, /export function parseSelectNLAnalysis/);
+  assert.match(src, /export function buildAnalyzePrompt/);
 });
