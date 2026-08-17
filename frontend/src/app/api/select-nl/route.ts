@@ -6,6 +6,7 @@ import {
   recordRequest,
   parseSelectNLText,
   validateFormula,
+  findMagnitudeMismatch,
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -60,12 +61,13 @@ export async function POST(req: NextRequest) {
   try {
     const meta = await fetchNlMeta();
     const systemPrompt = buildSystemPrompt(meta);
+    const startedAt = Date.now();
 
     // 把「已确认的语义」注入 user 消息；弱模型按条件清单+逻辑翻译，无需自行理解中文歧义。
     const conditionLines = analysis.conditions
       .map((c, i) => `${i + 1}. ${c}`)
       .join('\n');
-    const query = [
+    const baseQuery = [
       '这是用户需求对应的已确认语义，请严格按它翻译成 BlinkQuant 公式：',
       `需求复述：${analysis.restatement}`,
       `条件清单：\n${conditionLines}`,
@@ -73,35 +75,47 @@ export async function POST(req: NextRequest) {
       `周期：${analysis.timeframe}`,
     ].join('\n');
 
-    // 单次 LLM 调用（Hobby 60s 硬限下无重试预算；非 JSON 输出直接报错，用户可返回重试）
-    const raw = await callLlm(systemPrompt, query);
-    let parsed: SelectNLResult;
-    try {
-      parsed = parseSelectNLText(raw);
-    } catch {
-      return NextResponse.json(
-        { error: 'AI 翻译输出格式异常，请返回确认语义或换种说法', code: 'INVALID_LLM' },
-        { status: 400 }
-      );
-    }
-
-    const validation = validateFormula(meta, parsed.formula);
-    if (validation.ok === false) {
-      return NextResponse.json(
-        {
-          error: `翻译结果不合法：${validation.reason}`,
-          code: 'INVALID_FORMULA',
+    // 单次 LLM 调用（Hobby 60s 硬限下无重试预算）；量级兑底不符时允许追加提示重翻一次。
+    const attempt = async (query: string) => {
+      const raw = await callLlm(systemPrompt, query);
+      let parsed: SelectNLResult;
+      try {
+        parsed = parseSelectNLText(raw);
+      } catch {
+        return { kind: 'invalid' as const, reason: 'AI 翻译输出格式异常，请返回确认语义或换种说法' };
+      }
+      const validation = validateFormula(meta, parsed.formula);
+      if (validation.ok === false) {
+        return {
+          kind: 'invalid' as const,
+          reason: `翻译结果不合法：${validation.reason}`,
           formula: parsed.formula,
           explanation: parsed.explanation,
-        },
-        { status: 400 }
-      );
+        };
+      }
+      if (!meta.timeframes.includes(parsed.timeframe)) {
+        return {
+          kind: 'invalid' as const,
+          reason: `翻译结果周期不合法：${parsed.timeframe}`,
+          formula: parsed.formula,
+          explanation: parsed.explanation,
+        };
+      }
+      const mismatch = findMagnitudeMismatch(analysis, parsed.formula);
+      if (mismatch) return { kind: 'mismatch' as const, reason: mismatch, parsed };
+      return { kind: 'ok' as const, parsed };
+    };
+
+    let result = await attempt(baseQuery);
+    if (result.kind === 'mismatch' && Date.now() - startedAt < 40000) {
+      // 追加量级兑底提示重翻一次；正式计数前失败不触发限流。
+      result = await attempt(`${baseQuery}\n注意：${result.reason}。请重新换算后输出完整 JSON。`);
     }
-    if (!meta.timeframes.includes(parsed.timeframe)) {
-      return NextResponse.json(
-        { error: `翻译结果周期不合法：${parsed.timeframe}`, code: 'INVALID_FORMULA' },
-        { status: 400 }
-      );
+    if (result.kind !== 'ok') {
+      const payload = result.kind === 'invalid'
+        ? { error: result.reason, code: 'INVALID_FORMULA', formula: (result as any).formula, explanation: (result as any).explanation }
+        : { error: `翻译结果不合法：${result.reason}`, code: 'INVALID_FORMULA' };
+      return NextResponse.json(payload, { status: 400 });
     }
 
     // 只有成功翻译才计入限流配额（策略见上方注释）
@@ -109,7 +123,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { formula: parsed.formula, timeframe: parsed.timeframe, explanation: parsed.explanation },
+      data: { formula: result.parsed.formula, timeframe: result.parsed.timeframe, explanation: result.parsed.explanation },
     });
   } catch (err) {
     console.error('select-nl failed:', err);

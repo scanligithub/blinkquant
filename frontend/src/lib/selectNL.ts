@@ -330,6 +330,39 @@ export function parseSelectNLAnalysis(raw: string): AnalyzeResult {
   return { restatement: parsed.restatement.trim(), conditions, logic, timeframe };
 }
 
+const UNIT_FACTORS: Record<string, number> = { 万亿: 1e12, 亿: 1e8, 万: 1e4 };
+const UNIT_RE = /(\d+(?:\.\d+)?)\s*(万亿|亿|万)/g;
+const NUM_LITERAL_RE = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+// 量级兑底：从已确认语义中提取带「万亿/亿/万」的数值阈值，
+// 校验公式里是否存在数值量级与之接近的常量。用于拦截弱模型把 200亿=2e11 这类换算漂移。
+// stricter than the translation prompt; a mismatch here means we should retry the translation once.
+export function findMagnitudeMismatch(analysis: AnalyzeResult, formula: string): string | null {
+  const text = [analysis.restatement, ...analysis.conditions].filter(Boolean).join('\n');
+  const expected: { raw: string; value: number }[] = [];
+  let m: RegExpExecArray | null;
+  UNIT_RE.lastIndex = 0;
+  while ((m = UNIT_RE.exec(text)) !== null) {
+    const n = Number(m[1]);
+    const factor = UNIT_FACTORS[m[2]];
+    const value = n * factor;
+    if (!Number.isFinite(value) || value <= 0) continue;
+    // 同一量级只保留一次，避免 restatement 与 conditions 重复
+    if (!expected.some((e) => Math.abs(e.value - value) / value < 1e-9)) {
+      expected.push({ raw: m[0], value });
+    }
+  }
+  if (expected.length === 0) return null;
+
+  const constants = (formula.match(NUM_LITERAL_RE) ?? []).map(Number).filter((v) => Number.isFinite(v) && v > 0);
+
+  for (const e of expected) {
+    const hit = constants.some((c) => c >= e.value * 0.5 && c <= e.value * 1.5);
+    if (!hit) return `需求中「${e.raw}」应换算为 ${e.value}，但公式未出现该量级数值`;
+  }
+  return null;
+}
+
 export function buildAnalyzePrompt(meta: NLMeta): string {
   const fieldsLine = meta.fields.join('、');
   const unitsLine = Object.entries(meta.units)

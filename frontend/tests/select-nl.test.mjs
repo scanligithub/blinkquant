@@ -246,6 +246,35 @@ function isNumber(s) {
   return /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(s);
 }
 
+const UNIT_FACTORS = { 万亿: 1e12, 亿: 1e8, 万: 1e4 };
+const UNIT_RE = /(\d+(?:\.\d+)?)\s*(万亿|亿|万)/g;
+const NUM_LITERAL_RE = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+function findMagnitudeMismatch(analysis, formula) {
+  const text = [analysis.restatement, ...analysis.conditions].filter(Boolean).join('\n');
+  const expected = [];
+  let m;
+  UNIT_RE.lastIndex = 0;
+  while ((m = UNIT_RE.exec(text)) !== null) {
+    const n = Number(m[1]);
+    const factor = UNIT_FACTORS[m[2]];
+    const value = n * factor;
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (!expected.some((e) => Math.abs(e.value - value) / value < 1e-9)) {
+      expected.push({ raw: m[0], value });
+    }
+  }
+  if (expected.length === 0) return null;
+
+  const constants = (formula.match(NUM_LITERAL_RE) ?? []).map(Number).filter((v) => Number.isFinite(v) && v > 0);
+
+  for (const e of expected) {
+    const hit = constants.some((c) => c >= e.value * 0.5 && c <= e.value * 1.5);
+    if (!hit) return `需求中「${e.raw}」应换算为 ${e.value}，但公式未出现该量级数值`;
+  }
+  return null;
+}
+
 function buildSystemPrompt(meta) {
   const fieldsLine = meta.fields.join('、');
   const unitsLine = Object.entries(meta.units).map(([k, v]) => `${k}=${v}`).join('，');
@@ -695,6 +724,34 @@ test('parseSelectNLAnalysis: 缺少 timeframe 默认 D', () => {
   assert.equal(r.timeframe, 'D');
 });
 
+test('findMagnitudeMismatch: 200亿 公式 2e11 报错', () => {
+  const a = { restatement: '流通市值大于200亿元', conditions: ['流通市值大于200亿元'], logic: '1', timeframe: 'D' };
+  const r = findMagnitudeMismatch(a, 'FLOAT_MV > 2e11');
+  assert.match(r, /200亿/);
+  assert.match(r, /20000000000/);
+});
+
+test('findMagnitudeMismatch: 200亿 公式 2e10 通过', () => {
+  const a = { restatement: '流通市值大于200亿元', conditions: ['流通市值大于200亿元'], logic: '1', timeframe: 'D' };
+  assert.equal(findMagnitudeMismatch(a, 'FLOAT_MV > 2e10'), null);
+});
+
+test('findMagnitudeMismatch: 5000万 公式 5e9 报错 / 5e7 通过', () => {
+  const a = { restatement: '总市值大于5000万', conditions: ['总市值大于5000万'], logic: '1', timeframe: 'D' };
+  assert.match(findMagnitudeMismatch(a, 'TOTAL_MV > 5e9'), /5000万/);
+  assert.equal(findMagnitudeMismatch(a, 'TOTAL_MV > 5e7'), null);
+});
+
+test('findMagnitudeMismatch: 无单位短语返回 null', () => {
+  const a = { restatement: '市盈率低于20', conditions: ['市盈率低于20'], logic: '1', timeframe: 'D' };
+  assert.equal(findMagnitudeMismatch(a, 'PE_TTM < 20'), null);
+});
+
+test('findMagnitudeMismatch: 长整型写法 20000000000 也命中', () => {
+  const a = { restatement: '总市值大于100亿', conditions: ['总市值大于100亿'], logic: '1', timeframe: 'D' };
+  assert.equal(findMagnitudeMismatch(a, 'TOTAL_MV > 10000000000'), null);
+});
+
 test('buildAnalyzePrompt: 强调不翻译公式且输出 JSON 契约', () => {
   const p = buildAnalyzePrompt(META);
   assert.match(p, /不要直接输出公式/);
@@ -717,4 +774,5 @@ test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
   const src = readFileSync(join(__dirname, '..', 'src', 'lib', 'selectNL.ts'), 'utf8');
   assert.match(src, /export function parseSelectNLAnalysis/);
   assert.match(src, /export function buildAnalyzePrompt/);
+  assert.match(src, /export function findMagnitudeMismatch/);
 });
