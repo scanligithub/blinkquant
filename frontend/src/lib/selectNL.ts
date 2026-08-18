@@ -348,6 +348,8 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '5) 绝对偏差/偏离/乖离：用 ABS(序列) 比较（如 ABS(CLOSE - MA(CLOSE,20)) > 2），禁止展开成 OR 双向不等式。',
     '6) 较高者/较大值/较小值：用 MAX(A,B)/MIN(A,B) 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）；',
     '   禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（MA(MAX(...),N)、REF(MAX(...),1) 均非法）。',
+    '7) 距上次站上/跌破均线等「距上次」类条件：BARSLAST 的条件必须是简单比较式（如 BARSLAST(CLOSE > MA(CLOSE,20)) 站上 / BARSLAST(CLOSE < MA(CLOSE,20)) 跌破）；',
+    '   禁止把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST 的条件（BARSLAST(CROSS_UP(...))、BARSLAST(CROSS_DOWN(...)) 均非法）。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -478,7 +480,8 @@ export function buildRepairSystemSuffix(): string {
     '- 若上次误用 BARSLAST 表达新高/新低/振幅，改为 HHV/LLV 或 (HIGH-LOW)/CLOSE；',
     '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))；',
     '- 若上次把绝对偏差/偏离展开成 OR 双向不等式，改为 ABS(值A - 值B) > N 形式；',
-    '- 若上次把 MAX/MIN 写进 MA/REF/HHV/LLV/SUM 等 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)），改为用 MAX/MIN 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）。',
+    '- 若上次把 MAX/MIN 写进 MA/REF/HHV/LLV/SUM 等 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)），改为用 MAX/MIN 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）；',
+    '- 若上次把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST/COUNT 的条件参数，改为简单比较式（如 BARSLAST(CLOSE < MA(CLOSE,20)) > 5）。',
   ].join('\n');
 }
 
