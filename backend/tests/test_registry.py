@@ -295,8 +295,8 @@ class TestRegistry(unittest.TestCase):
         self.assertGreater(got[-1], 0.0)
 
     def test_aroon_down_monotonic_rise(self):
-        # 回归：修复前单调上行序列 AROON_DOWN 全为 null；窗口低点恒为窗口首根（min_periods=1 保证首根锚点成立）
-        # 锚点仅在第 0 根触发 → barslast=期数差，第 5 根适配衰减为 0.0（TDX 语义一致）
+        # 回归：修复前单调上行序列 AROON_DOWN 全为 null（后改用 min_periods=1 又因旧锚点外溢衰减为 0）
+        # 正确语义：窗口内最末极值距今天数，单调上行末窗口低点在窗口首根 → (5-4)/5*100=20
         df = pl.DataFrame({
             "code": ["sh.600000"] * 6,
             "high": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
@@ -304,10 +304,10 @@ class TestRegistry(unittest.TestCase):
         })
         down = INDICATORS["AROON_DOWN"]["func"](5)
         got = df.with_columns(down.alias("d")).select("d").to_series().to_list()
-        # 实测 [100, 80, 60, 40, 20, 0]：第 5 根 0.0（非修复前全 null 的 None）
-        expected = [100.0, 80.0, 60.0, 40.0, 20.0, 0.0]
-        for g, e in zip(got, expected):
-            self.assertAlmostEqual(g, e, places=6)
+        # 前 n-1 行 undefined（None）；row4 与 row5 窗口低点均在窗口首根 → 20
+        self.assertEqual(got[:4], [None] * 4)
+        self.assertAlmostEqual(got[4], 20.0, places=6)
+        self.assertAlmostEqual(got[5], 20.0, places=6)
 
 if __name__ == "__main__":
     unittest.main()

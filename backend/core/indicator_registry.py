@@ -190,16 +190,34 @@ def _sar():
     return pl.struct(["high", "low", "open", "close"]).map_batches(_sar_from_hloc).over("code")
 
 
+def _aroon_from_hl(s, n: int, up: bool):
+    """单 code 组的 Aroon：窗口内最后一次极值距今天数 → 100*(n-bars_since)/n。
+
+    bars_since = (n-1) - j（j 为窗口内极值 0 基位置，最末一个匹配）；前 n-1 行不足窗口返回 None。
+    """
+    ext = s.struct.field("high" if up else "low").to_list()
+    k = len(ext)
+    out = [None] * k
+    for i in range(k):
+        if i < n - 1:
+            continue
+        w = ext[i - n + 1:i + 1]
+        m = max(w) if up else min(w)
+        for j in range(n - 1, -1, -1):
+            if w[j] == m:
+                out[i] = 100.0 * (n - (n - 1 - j)) / n
+                break
+    return pl.Series("a", out, dtype=pl.Float64)
+
+
 def _aroon_up(n: int):
-    """阿隆上升：100×(N-BARSLAST(H==HHV(H,N)))/N（固定用HIGH）"""
-    cond = pl.col("high") == pl.col("high").rolling_max(window_size=n, min_periods=1).over("code")
-    return 100.0 * (n - barslast(cond)) / n
+    """阿隆上升：100×(N-BARSLAST(H==HHV(H,N)))/N，窗口内最后一次新高（固定用HIGH）"""
+    return pl.struct(["high"]).map_batches(lambda s: _aroon_from_hl(s, n, True)).over("code")
 
 
 def _aroon_down(n: int):
-    """阿隆下降：100×(N-BARSLAST(L==LLV(L,N)))/N（固定用LOW）"""
-    cond = pl.col("low") == pl.col("low").rolling_min(window_size=n, min_periods=1).over("code")
-    return 100.0 * (n - barslast(cond)) / n
+    """阿隆下降：100×(N-BARSLAST(L==LLV(L,N)))/N，窗口内最后一次新低（固定用LOW）"""
+    return pl.struct(["low"]).map_batches(lambda s: _aroon_from_hl(s, n, False)).over("code")
 
 
 def _trix(n: int):
