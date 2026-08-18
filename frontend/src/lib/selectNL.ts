@@ -350,6 +350,7 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '   禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（MA(MAX(...),N)、REF(MAX(...),1) 均非法）。',
     '7) 距上次站上/跌破均线等「距上次」类条件：BARSLAST 的条件必须是简单比较式（如 BARSLAST(CLOSE > MA(CLOSE,20)) 站上 / BARSLAST(CLOSE < MA(CLOSE,20)) 跌破）；',
     '   禁止把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST 的条件（BARSLAST(CROSS_UP(...))、BARSLAST(CROSS_DOWN(...)) 均非法）。',
+    '8) MACD 金叉/死叉：用 CROSS_UP(MACD_DIF(f,s), MACD_DEA(f,s,si)) / CROSS_DOWN(...)；MACD 柱>0 用 MACD_HIST(f,s,si) > 0。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',

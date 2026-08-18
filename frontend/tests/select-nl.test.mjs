@@ -15,12 +15,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ---- 复制自 src/lib/selectNL.ts（保持与实现一致）----
 const META = {
   fields: ['CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'AMOUNT', 'PCT_CHG', 'S_CLOSE', 'PE_TTM', 'PB_MRQ', 'FORECAST_YOY', 'IS_FORECAST_GOOD', 'IS_FORECAST_BAD', 'TOTAL_SHARES', 'FLOAT_SHARES', 'TOTAL_MV', 'FLOAT_MV', 'TURN'],
-  indicators: ['ABS', 'ATR', 'BARSLAST', 'BOLL_LOWER', 'BOLL_UPPER', 'COUNT', 'CROSS_DOWN', 'CROSS_UP', 'EMA', 'HHV', 'KDJ_D', 'KDJ_K', 'LLV', 'MA', 'MAX', 'MIN', 'REF', 'ROC', 'RSI', 'STD', 'SUM'],
+  indicators: ['ABS', 'ATR', 'BARSLAST', 'BOLL_LOWER', 'BOLL_UPPER', 'COUNT', 'CROSS_DOWN', 'CROSS_UP', 'EMA', 'HHV', 'KDJ_D', 'KDJ_K', 'LLV', 'MA', 'MACD_DEA', 'MACD_DIF', 'MACD_HIST', 'MAX', 'MIN', 'REF', 'ROC', 'RSI', 'STD', 'SUM'],
   timeframes: ['D', 'W', 'M'],
   units: { TOTAL_MV: '元', FLOAT_MV: '元', TOTAL_SHARES: '股', FLOAT_SHARES: '股', AMOUNT: '元', VOL: '股', PE_TTM: '无量纲(倍)', PB_MRQ: '无量纲(倍)', TURN: '百分比(%)', FORECAST_YOY: '百分比(%)', PCT_CHG: '百分比(%)', S_CLOSE: '指数点位' },
-  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10', 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))', 'SUM(AMOUNT, 5) > 5e9', 'CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))', 'CLOSE > BOLL_UPPER(CLOSE, 20, 2)'],
-  signatures: { MA: ['field', 'pos_int'], EMA: ['field', 'pos_int'], STD: ['field', 'pos_int'], ROC: ['field', 'pos_int'], REF: ['field', 'pos_int'], HHV: ['field', 'pos_int'], LLV: ['field', 'pos_int'], SUM: ['field', 'pos_int'], CROSS_UP: ['series', 'series'], CROSS_DOWN: ['series', 'series'], MAX: ['series', 'series'], MIN: ['series', 'series'], ABS: ['series'], COUNT: ['cond', 'pos_int'], BARSLAST: ['cond'], ATR: ['pos_int'], RSI: ['series', 'pos_int'], BOLL_UPPER: ['series', 'pos_int', 'pos_int'], BOLL_LOWER: ['series', 'pos_int', 'pos_int'], KDJ_K: ['pos_int', 'pos_int'], KDJ_D: ['pos_int', 'pos_int'] },
-  descriptions: { MA: 'N日简单移动平均', EMA: 'N日指数移动平均', STD: 'N日标准差', ROC: 'N日变动率(%)', REF: 'N日前值', HHV: 'N周期内最高值', LLV: 'N周期内最低值', SUM: 'N周期内求和', CROSS_UP: '上穿（今日A>B且昨日A<=B）', CROSS_DOWN: '下穿（今日A<B且昨日A>=B）', MAX: '取两序列较大值', MIN: '取两序列较小值', ABS: '绝对值', COUNT: 'N周期内条件成立次数', BARSLAST: '距上次条件成立周期数', ATR: 'N日真实波幅均值（最高最低与昨收的最大差距，简化版）', RSI: 'N日相对强弱（涨跌幅均值比，简化版）', BOLL_UPPER: '布林上轨（N日均价 + K倍N日标准差）', BOLL_LOWER: '布林下轨（N日均价 - K倍N日标准差）', KDJ_K: 'KDJ随机指标K值（固定用HIGH/LOW/CLOSE，简化版）', KDJ_D: 'KDJ随机指标D值（固定用HIGH/LOW/CLOSE，简化版）' },
+  example_queries: ['CLOSE > MA(CLOSE, 20)', 'PE_TTM < 20 AND TOTAL_MV > 1e10', 'CROSS_UP(MA(CLOSE, 20), MA(CLOSE, 60))', 'SUM(AMOUNT, 5) > 5e9', 'CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))', 'CLOSE > BOLL_UPPER(CLOSE, 20, 2)', 'CROSS_UP(MACD_DIF(12, 26), MACD_DEA(12, 26, 9))'],
+  signatures: { MA: ['field', 'pos_int'], EMA: ['field', 'pos_int'], STD: ['field', 'pos_int'], ROC: ['field', 'pos_int'], REF: ['field', 'pos_int'], HHV: ['field', 'pos_int'], LLV: ['field', 'pos_int'], SUM: ['field', 'pos_int'], CROSS_UP: ['series', 'series'], CROSS_DOWN: ['series', 'series'], MAX: ['series', 'series'], MIN: ['series', 'series'], ABS: ['series'], COUNT: ['cond', 'pos_int'], BARSLAST: ['cond'], ATR: ['pos_int'], RSI: ['series', 'pos_int'], BOLL_UPPER: ['series', 'pos_int', 'pos_int'], BOLL_LOWER: ['series', 'pos_int', 'pos_int'], KDJ_K: ['pos_int', 'pos_int'], KDJ_D: ['pos_int', 'pos_int'], MACD_DIF: ['pos_int', 'pos_int'], MACD_DEA: ['pos_int', 'pos_int', 'pos_int'], MACD_HIST: ['pos_int', 'pos_int', 'pos_int'] },
+  descriptions: { MA: 'N日简单移动平均', EMA: 'N日指数移动平均', STD: 'N日标准差', ROC: 'N日变动率(%)', REF: 'N日前值', HHV: 'N周期内最高值', LLV: 'N周期内最低值', SUM: 'N周期内求和', CROSS_UP: '上穿（今日A>B且昨日A<=B）', CROSS_DOWN: '下穿（今日A<B且昨日A>=B）', MAX: '取两序列较大值', MIN: '取两序列较小值', ABS: '绝对值', COUNT: 'N周期内条件成立次数', BARSLAST: '距上次条件成立周期数', ATR: 'N日真实波幅均值（最高最低与昨收的最大差距，简化版）', RSI: 'N日相对强弱（涨跌幅均值比，简化版）', BOLL_UPPER: '布林上轨（N日均价 + K倍N日标准差）', BOLL_LOWER: '布林下轨（N日均价 - K倍N日标准差）', KDJ_K: 'KDJ随机指标K值（固定用HIGH/LOW/CLOSE，简化版）', KDJ_D: 'KDJ随机指标D值（固定用HIGH/LOW/CLOSE，简化版）', MACD_DIF: 'MACD快慢线差（EMA(CLOSE,fast) - EMA(CLOSE,slow)，固定用CLOSE）', MACD_DEA: 'MACD信号线（DIF的signal期EMA，固定用CLOSE）', MACD_HIST: 'MACD柱（2 × (DIF - DEA)，固定用CLOSE）' },
 };
 const MAX_FORMULA_LENGTH = 500;
 const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/;
@@ -473,6 +473,7 @@ function buildSystemPrompt(meta) {
     '   禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（MA(MAX(...),N)、REF(MAX(...),1) 均非法）。',
     '7) 距上次站上/跌破均线等「距上次」类条件：BARSLAST 的条件必须是简单比较式（如 BARSLAST(CLOSE > MA(CLOSE,20)) 站上 / BARSLAST(CLOSE < MA(CLOSE,20)) 跌破）；',
     '   禁止把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST 的条件（BARSLAST(CROSS_UP(...))、BARSLAST(CROSS_DOWN(...)) 均非法）。',
+    '8) MACD 金叉/死叉：用 CROSS_UP(MACD_DIF(f,s), MACD_DEA(f,s,si)) / CROSS_DOWN(...)；MACD 柱>0 用 MACD_HIST(f,s,si) > 0。',
     '',
     '周期 timeframe 只能是 ' + meta.timeframes.join('/') + '。',
     '',
@@ -649,6 +650,26 @@ test('validateFormula: KDJ 金叉通过', () => {
   assert.equal(r.ok, true);
 });
 
+test('validateFormula: MACD 金叉通过', () => {
+  const r = validateFormula(META, 'CROSS_UP(MACD_DIF(12, 26), MACD_DEA(12, 26, 9))');
+  assert.equal(r.ok, true);
+});
+
+test('validateFormula: MACD DIF/DEA/柱 单值比较通过', () => {
+  assert.equal(validateFormula(META, 'MACD_DIF(12, 26) > 0').ok, true);
+  assert.equal(validateFormula(META, 'MACD_DEA(12, 26, 9) < 0').ok, true);
+  assert.equal(validateFormula(META, 'MACD_HIST(12, 26, 9) > 0').ok, true);
+});
+
+test('validateFormula: MACD 参数个数错误拒绝', () => {
+  const r = validateFormula(META, 'MACD_DIF(12) > 0');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /MACD_DIF/);
+  const r2 = validateFormula(META, 'MACD_DEA(12, 26) > 0');
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /MACD_DEA/);
+});
+
 test('validateFormula: BOLL 突破通过', () => {
   assert.equal(validateFormula(META, 'CLOSE > BOLL_UPPER(CLOSE, 20, 2)').ok, true);
 });
@@ -715,6 +736,14 @@ test('buildSystemPrompt: 包含单位换算规则(亿→1e8)', () => {
   assert.match(p, /1e10/);
   assert.match(p, /5000万=5e7/);
   assert.match(p, /200亿=2e10/);
+});
+
+test('buildSystemPrompt: 含 MACD 算子说明与金叉示例', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /MACD_DIF/);
+  assert.match(p, /MACD_DEA/);
+  assert.match(p, /MACD_HIST/);
+  assert.match(p, /CROSS_UP\(MACD_DIF/);
 });
 
 test('buildSystemPrompt: 禁止 REF 嵌套调用 + COUNT 条件正例', () => {

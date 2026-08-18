@@ -41,6 +41,26 @@ def _kdj_rsv(n: int):
     return (pl.col("close") - low_min) / (high_max - low_min) * 100
 
 
+def _ema(col, n: int):
+    return col.ewm_mean(span=n, adjust=False).over("code")
+
+
+def _macd_dif(fast: int, slow: int):
+    """DIF = EMA(CLOSE, fast) - EMA(CLOSE, slow)（固定用 CLOSE 列）"""
+    return _ema(pl.col("close"), fast) - _ema(pl.col("close"), slow)
+
+
+def _macd_dea(fast: int, slow: int, signal: int):
+    """DEA = EMA(DIF, signal)"""
+    return _ema(_macd_dif(fast, slow), signal)
+
+
+def _macd_hist(fast: int, slow: int, signal: int):
+    """MACD 柱 = 2 * (DIF - DEA)"""
+    dif = _macd_dif(fast, slow)
+    return (dif - _macd_dea(fast, slow, signal)) * 2
+
+
 INDICATORS = {
     # ---- window 型（签名 [field, pos_int]，Hot-JIT 挂载）----
     "MA":  {"func": lambda c, n: c.rolling_mean(window_size=n).over("code"),            "window": True, "signature": ["field", "pos_int"]},
@@ -81,6 +101,13 @@ INDICATORS = {
     "KDJ_D": {"func": lambda n, m: _kdj_rsv(n).rolling_mean(window_size=m).over("code")
             .rolling_mean(window_size=m).over("code"),
         "window": False, "signature": ["pos_int", "pos_int"]},
+    # ---- MACD 三分量（固定用 CLOSE，慢路径实时计算）----
+    "MACD_DIF": {"func": lambda fast, slow: _macd_dif(fast, slow),
+        "window": False, "signature": ["pos_int", "pos_int"]},
+    "MACD_DEA": {"func": lambda fast, slow, signal: _macd_dea(fast, slow, signal),
+        "window": False, "signature": ["pos_int", "pos_int", "pos_int"]},
+    "MACD_HIST": {"func": lambda fast, slow, signal: _macd_hist(fast, slow, signal),
+        "window": False, "signature": ["pos_int", "pos_int", "pos_int"]},
 }
 
 # 字段白名单：必须与 security.py 现有 fields 键集逐项一致（防 drift）
@@ -111,6 +138,9 @@ DESCRIPTIONS = {
     "ATR": "N日真实波幅均值（最高最低与昨收的最大差距，简化版）", "RSI": "N日相对强弱（涨跌幅均值比，简化版）",
     "BOLL_UPPER": "布林上轨（N日均价 + K倍N日标准差）", "BOLL_LOWER": "布林下轨（N日均价 - K倍N日标准差）",
     "KDJ_K": "KDJ随机指标K值（固定用HIGH/LOW/CLOSE，简化版）", "KDJ_D": "KDJ随机指标D值（固定用HIGH/LOW/CLOSE，简化版）",
+    "MACD_DIF": "MACD快慢线差（EMA(CLOSE,fast) - EMA(CLOSE,slow)，固定用CLOSE）",
+    "MACD_DEA": "MACD信号线（DIF的signal期EMA，固定用CLOSE）",
+    "MACD_HIST": "MACD柱（2 × (DIF - DEA)，固定用CLOSE）",
 }
 
 EXAMPLE_QUERIES = [
@@ -120,6 +150,7 @@ EXAMPLE_QUERIES = [
     "SUM(AMOUNT, 5) > 5e9",
     "CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))",
     "CLOSE > BOLL_UPPER(CLOSE, 20, 2)",
+    "CROSS_UP(MACD_DIF(12, 26), MACD_DEA(12, 26, 9))",
 ]
 
 TIMEFRAMES = ["D", "W", "M"]
