@@ -1244,3 +1244,68 @@ test('formatCoverageMatrix: 输出含总数与缺失项', () => {
   assert.match(s, /缺: OPEN/);
   assert.match(s, /算子: 1\/1/);
 });
+
+// ---- 新增 23 算子：公式校验 + 提示词联动 ----
+test('new-indicators: 零参算子 OBV()/SAR()/BBI()/UO() 语法通过', () => {
+  for (const f of ['OBV() > 0', 'CLOSE > SAR()', 'BBI() < CLOSE', 'UO() > 50']) {
+    const r = validateFormula(META, f);
+    assert.deepEqual(r, { ok: true }, f);
+  }
+});
+
+test('new-indicators: 单值算子比较通过', () => {
+  const ok = [
+    'DMI_PDI(14) > DMI_MDI(14)',
+    'DMI_ADX(14) > 25',
+    'WR(14) > 80',
+    'CCI(14) > 100',
+    'MFI(14) < 20',
+    'AROON_UP(14) > 80',
+    'TRIX(12) > 0',
+    'VWAP(20) < CLOSE',
+    'BIAS(20) > 5',
+    'KDJ_J(9, 3) > 100',
+    'PPO(12, 26) > 0',
+    'VR(14) > 150',
+    'PSY(12) > 60',
+    'CR(20) > 100',
+  ];
+  for (const f of ok) {
+    const r = validateFormula(META, f);
+    assert.deepEqual(r, { ok: true }, f);
+  }
+});
+
+test('new-indicators: series 参数算子通过', () => {
+  const ok = [
+    'CLOSE > BOLL_MID(CLOSE, 20)',
+    'CLOSE > DEMA(CLOSE, 20)',
+    'CLOSE > TEMA(CLOSE, 20)',
+  ];
+  for (const f of ok) {
+    const r = validateFormula(META, f);
+    assert.deepEqual(r, { ok: true }, f);
+  }
+});
+
+test('new-indicators: 参数个数错误拒绝', () => {
+  for (const f of ['OBV(20) > 0', 'SAR(14) < CLOSE', 'DMI_PDI() > 10', 'CCI(14, 20) > 0', 'WR(14, 5) > 50']) {
+    const r = validateFormula(META, f);
+    assert.equal(r.ok, false, f);
+  }
+});
+
+test('new-indicators: 金叉组合通过', () => {
+  const f = 'CROSS_UP(DMI_PDI(14), DMI_MDI(14))';
+  const r = validateFormula(META, f);
+  assert.deepEqual(r, { ok: true }, f);
+});
+
+test('new-indicators: buildSystemPrompt 含新算子说明与零参写法', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /DMI_PDI/);
+  assert.match(p, /WR\(/);
+  assert.match(p, /SAR\(\)/);
+  assert.match(p, /OBV\(\)/);
+  assert.match(p, /BOLL_MID/);
+});
