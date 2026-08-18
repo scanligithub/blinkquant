@@ -518,6 +518,7 @@ test('new-indicators: 单值算子比较通过', () => {
     'CCI(14) > 100',
     'MFI(14) < 20',
     'AROON_UP(14) > 80',
+    'AROON_DOWN(14) < 20',
     'TRIX(12) > 0',
     'VWAP(20) < CLOSE',
     'BIAS(20) > 5',
