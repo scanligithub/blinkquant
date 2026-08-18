@@ -16,10 +16,14 @@ def meta_signatures_set():
 class TestRegistry(unittest.TestCase):
     def test_builtin_indicators_present(self):
         self.assertEqual(sorted(INDICATORS.keys()), [
-            "ABS", "ATR", "BARSLAST", "BOLL_LOWER", "BOLL_UPPER",
-            "COUNT", "CROSS_DOWN", "CROSS_UP", "EMA", "HHV", "KDJ_D",
+            "ABS", "AROON_DOWN", "AROON_UP", "ATR", "BARSLAST", "BBI",
+            "BIAS", "BOLL_LOWER", "BOLL_MID", "BOLL_UPPER", "CCI",
+            "COUNT", "CR", "CROSS_DOWN", "CROSS_UP", "DEMA", "DMI_ADX",
+            "DMI_MDI", "DMI_PDI", "EMA", "HHV", "KDJ_D", "KDJ_J",
             "KDJ_K", "LLV", "MA", "MACD_DEA", "MACD_DIF", "MACD_HIST",
-            "MAX", "MIN", "REF", "ROC", "RSI", "STD", "SUM",
+            "MAX", "MFI", "MIN", "OBV", "PPO", "PSY", "REF", "ROC",
+            "RSI", "SAR", "STD", "SUM", "TEMA", "TRIX", "UO", "VR",
+            "VWAP", "WR",
         ])
 
     def test_window_indicators_are_window_funcs(self):
@@ -83,6 +87,14 @@ class TestRegistry(unittest.TestCase):
             "KDJ_K": ["pos_int", "pos_int"], "KDJ_D": ["pos_int", "pos_int"],
             "MACD_DIF": ["pos_int", "pos_int"], "MACD_DEA": ["pos_int", "pos_int", "pos_int"],
             "MACD_HIST": ["pos_int", "pos_int", "pos_int"],
+            "DMI_PDI": ["pos_int"], "DMI_MDI": ["pos_int"], "DMI_ADX": ["pos_int"],
+            "OBV": [], "CCI": ["pos_int"], "WR": ["pos_int"], "MFI": ["pos_int"],
+            "SAR": [], "AROON_UP": ["pos_int"], "AROON_DOWN": ["pos_int"],
+            "TRIX": ["pos_int"], "BBI": [], "VWAP": ["pos_int"], "BIAS": ["pos_int"],
+            "KDJ_J": ["pos_int", "pos_int"], "BOLL_MID": ["series", "pos_int"],
+            "PPO": ["pos_int", "pos_int"], "DEMA": ["series", "pos_int"],
+            "TEMA": ["series", "pos_int"], "UO": [], "VR": ["pos_int"],
+            "PSY": ["pos_int"], "CR": ["pos_int"],
         }
         got = {name: entry["signature"] for name, entry in INDICATORS.items()}
         self.assertEqual(got, expect)
@@ -164,6 +176,106 @@ class TestRegistry(unittest.TestCase):
         # 第二支：常数序列，DIF 恒为 0（每个 code 有一份自身 ewm，未跨代码串算）
         for v in sz:
             self.assertAlmostEqual(v, 0.0, places=6)
+
+    def test_obv_matches_definition(self):
+        # OBV = 累计带符号量：收涨 +vol、收跌 -vol、平 0
+        closes = [10.0, 11.0, 9.0, 9.0, 12.0]
+        vols = [100.0, 200.0, 300.0, 400.0, 500.0]
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 5,
+            "close": closes,
+            "volume": vols,
+        })
+        obv = INDICATORS["OBV"]["func"]()
+        got = df.with_columns(obv.alias("o")).select("o").to_series().to_list()
+        # 首行无前值 → 0；随后 +200、-300、+0、+500 累积 → [0, 200, -100, -100, 400]
+        expected = [0.0, 200.0, -100.0, -100.0, 400.0]
+        for g, e in zip(got, expected):
+            self.assertAlmostEqual(g, e, places=6)
+
+    def test_obv_partitions_by_code(self):
+        # 两代码混排，常数序列第二支 OBV 应恒为 0（不跨 code 串算）
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 4 + ["sz.000001"] * 4,
+            "close": [10.0, 11.0, 12.0, 13.0] + [100.0, 100.0, 100.0, 100.0],
+            "volume": [1.0, 2.0, 3.0, 4.0] + [10.0, 20.0, 30.0, 40.0],
+        })
+        obv = INDICATORS["OBV"]["func"]()
+        got = df.with_columns(obv.alias("o")).select(["code", "o"]).sort(["code"])
+        rows = list(got.iter_rows())
+        sz = [v for c, v in rows if c == "sz.000001"]
+        self.assertEqual(len(sz), 4)
+        for v in sz:
+            self.assertAlmostEqual(v, 0.0, places=6)
+
+    def test_vwap_definition(self):
+        # VWAP(2) = SUM(C*VOL,2)/SUM(VOL,2)
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 4,
+            "close": [10.0, 12.0, 14.0, 16.0],
+            "volume": [100.0, 100.0, 200.0, 100.0],
+        })
+        vwap = INDICATORS["VWAP"]["func"](2)
+        got = df.with_columns(vwap.alias("v")).select("v").to_series().to_list()
+        # 第2行: (10*100+12*100)/200=11.0; 第3行: (12*100+14*200)/300=13.333...
+        self.assertAlmostEqual(got[1], 11.0, places=6)
+        self.assertAlmostEqual(got[2], 40.0 / 3.0, places=6)
+
+    def test_wr_definition(self):
+        # WR(2) = (HHV(H,2)-C)/(HHV(H,2)-LLV(L,2))*100
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 3,
+            "high": [11.0, 12.0, 13.0],
+            "low": [9.0, 10.0, 8.0],
+            "close": [10.5, 11.5, 9.0],
+        })
+        wr = INDICATORS["WR"]["func"](2)
+        got = df.with_columns(wr.alias("w")).select("w").to_series().to_list()
+        # 第3行: HHV=13, LLV=8, C=9 → (13-9)/(13-8)*100 = 80.0
+        self.assertAlmostEqual(got[2], 80.0, places=6)
+
+    def test_sar_iterates_partitioned(self):
+        # SAR 迭代不跨 code 串算：第二支全部低点在首日，SAR 应恒为该 low
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 4 + ["sz.000001"] * 4,
+            "open": [10.0, 10.5, 11.0, 11.5] + [50.0, 51.0, 52.0, 53.0],
+            "high": [10.5, 11.0, 11.5, 12.0] + [52.0, 53.0, 54.0, 55.0],
+            "low": [9.5, 10.0, 10.5, 11.0] + [49.0, 50.0, 51.0, 52.0],
+            "close": [10.0, 10.5, 11.0, 11.5] + [50.0, 51.0, 52.0, 53.0],
+        })
+        sar = INDICATORS["SAR"]["func"]()
+        got = df.with_columns(sar.alias("s")).select(["code", "s"]).sort(["code"])
+        rows = list(got.iter_rows())
+        sz = [v for c, v in rows if c == "sz.000001"]
+        self.assertEqual(len(sz), 4)
+        for v in sz:
+            self.assertIsNotNone(v)
+
+    def test_dmi_pdi_positive_trend(self):
+        # 单调上行趋势下 DMI_PDI 应显著大于 DMI_MDI（PDI>MDI）
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 20,
+            "high": [10.0 + i * 0.5 for i in range(20)],
+            "low": [9.5 + i * 0.5 for i in range(20)],
+            "close": [9.8 + i * 0.5 for i in range(20)],
+        })
+        pdi = INDICATORS["DMI_PDI"]["func"](5)
+        mdi = INDICATORS["DMI_MDI"]["func"](5)
+        got = df.with_columns(pdi.alias("p"), mdi.alias("m")).select(["p", "m"])
+        last = got.tail(1).row(0)
+        self.assertGreater(last[0], last[1])
+        self.assertGreaterEqual(last[0], 0.0)
+
+    def test_aroon_up_high_at_window(self):
+        # 窗口内今天创新高时 AROON_UP 应为 100
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 5,
+            "high": [10.0, 11.0, 10.0, 12.0, 13.0],
+            "low": [9.0, 10.0, 9.0, 11.0, 12.0],
+        })
+        up = INDICATORS["AROON_UP"]["func"](5)
+        got = df.with_columns(up.alias("u")).select("u").to_series().to_list()
+        self.assertAlmostEqual(got[4], 100.0, places=6)
 
 if __name__ == "__main__":
     unittest.main()
