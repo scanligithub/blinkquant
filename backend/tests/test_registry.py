@@ -325,5 +325,20 @@ class TestRegistry(unittest.TestCase):
         self.assertAlmostEqual(got[4], 20.0, places=6)
         self.assertAlmostEqual(got[5], 20.0, places=6)
 
+    def test_aroon_up_null_bar_no_crash(self):
+        # 回归：修复前 _aroon_from_hl 对含 None 的窗口 max()/min() 抛 TypeError
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 7,
+            # 第 3 行停牌（high 为 None），其余正常
+            "high": [10.0, 11.0, None, 13.0, 13.0, 12.0, 14.0],
+            "low": [9.0, 10.0, None, 12.0, 12.0, 11.0, 13.0],
+        })
+        up = INDICATORS["AROON_UP"]["func"](5)
+        got = df.with_columns(up.alias("u")).select("u").to_series().to_list()
+        self.assertEqual(len(got), 7)
+        for v in got:
+            if v is not None:
+                self.assertTrue(0.0 <= v <= 100.0, f"AROON out of range: {v}")
+
 if __name__ == "__main__":
     unittest.main()
