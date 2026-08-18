@@ -279,5 +279,35 @@ class TestRegistry(unittest.TestCase):
         self.assertAlmostEqual(got[4], 100.0, places=6)
         self.assertAlmostEqual(got[5], 80.0, places=6)
 
+    def test_dmi_adx_not_nan_in_trend(self):
+        # 回归：修复前 DMI_ADX 因首行 0/0=NaN 被 ewm 全串传染为 NaN
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 20,
+            "high": [10.0 + i * 0.5 for i in range(20)],
+            "low": [9.5 + i * 0.5 for i in range(20)],
+            "close": [9.8 + i * 0.5 for i in range(20)],
+        })
+        adx = INDICATORS["DMI_ADX"]["func"](5)
+        got = df.with_columns(adx.alias("a")).select("a").to_series().to_list()
+        for v in got:
+            self.assertIsNotNone(v)
+            self.assertFalse(v != v, f"ADX must not be NaN, got {v}")
+        self.assertGreater(got[-1], 0.0)
+
+    def test_aroon_down_monotonic_rise(self):
+        # 回归：修复前单调上行序列 AROON_DOWN 全为 null；窗口低点恒为窗口首根（min_periods=1 保证首根锚点成立）
+        # 锚点仅在第 0 根触发 → barslast=期数差，第 5 根适配衰减为 0.0（TDX 语义一致）
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 6,
+            "high": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+            "low": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+        })
+        down = INDICATORS["AROON_DOWN"]["func"](5)
+        got = df.with_columns(down.alias("d")).select("d").to_series().to_list()
+        # 实测 [100, 80, 60, 40, 20, 0]：第 5 根 0.0（非修复前全 null 的 None）
+        expected = [100.0, 80.0, 60.0, 40.0, 20.0, 0.0]
+        for g, e in zip(got, expected):
+            self.assertAlmostEqual(g, e, places=6)
+
 if __name__ == "__main__":
     unittest.main()

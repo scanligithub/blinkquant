@@ -67,12 +67,14 @@ def _wilder(col, n: int):
 
 
 def _dmi_tr():
+    """DMI 真实波幅 TR：max(H-L, |H-前收|, |L-前收|)（固定用 HIGH/LOW/CLOSE）"""
     high, low, close = pl.col("high"), pl.col("low"), pl.col("close")
     prev_c = close.shift(1).over("code")
     return pl.max_horizontal(high - low, (high - prev_c).abs(), (low - prev_c).abs())
 
 
 def _dmi_dm_plus():
+    """+DM 上升动向：今高>前高 且 今高-前高>前低-今低"""
     high, low = pl.col("high"), pl.col("low")
     prev_h, prev_l = high.shift(1).over("code"), low.shift(1).over("code")
     dm = high - prev_h
@@ -80,6 +82,7 @@ def _dmi_dm_plus():
 
 
 def _dmi_dm_minus():
+    """-DM 下降动向：前低>今低 且 前低-今低>今高-前高"""
     high, low = pl.col("high"), pl.col("low")
     prev_h, prev_l = high.shift(1).over("code"), low.shift(1).over("code")
     dm = prev_l - low
@@ -87,18 +90,21 @@ def _dmi_dm_minus():
 
 
 def _dmi_di(sign: str, n: int):
+    """±DI：100 × Wilder平滑(DM) / Wilder平滑(TR)（sign='p'/'m'）"""
     tr_s = _wilder(_dmi_tr(), n)
     dm_s = _wilder(_dmi_dm_plus() if sign == "p" else _dmi_dm_minus(), n)
     return 100.0 * dm_s / tr_s
 
 
 def _dmi_adx(n: int):
+    """ADX：Wilder平滑(100×|PDI-MDI|/(PDI+MDI))，分母为 0 时置 0 防 NaN"""
     pdi, mdi = _dmi_di("p", n), _dmi_di("m", n)
-    dx = 100.0 * (pdi - mdi).abs() / (pdi + mdi)
+    dx = pl.when((pdi + mdi) > 0).then(100.0 * (pdi - mdi).abs() / (pdi + mdi)).otherwise(0.0)
     return _wilder(dx, n)
 
 
 def _obv():
+    """能量潮：收涨累计+VOL、收跌累计-VOL、平收0（固定用 CLOSE/VOL）"""
     close, vol = pl.col("close"), pl.col("volume")
     prev_c = close.shift(1).over("code")
     signed = pl.when(close > prev_c).then(vol).when(close < prev_c).then(-vol).otherwise(0.0)
@@ -106,6 +112,7 @@ def _obv():
 
 
 def _cci(n: int):
+    """CCI 顺势指标：(TP-MA(TP,n))/(0.015×MD(TP,n))（固定用HIGH/LOW/CLOSE）"""
     tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
     ma_tp = tp.rolling_mean(window_size=n).over("code")
     md = (tp - ma_tp).abs().rolling_mean(window_size=n).over("code")
@@ -113,12 +120,14 @@ def _cci(n: int):
 
 
 def _wr(n: int):
+    """威廉指标 WR：(HHV(H,n)-C)/(HHV(H,n)-LLV(L,n))×100（固定用HIGH/LOW/CLOSE）"""
     high_max = pl.col("high").rolling_max(window_size=n).over("code")
     low_min = pl.col("low").rolling_min(window_size=n).over("code")
     return (high_max - pl.col("close")) / (high_max - low_min) * 100.0
 
 
 def _mfi(n: int):
+    """资金流量 MFI：100-100/(1+正流量/负流量)（固定用HIGH/LOW/CLOSE/VOL）"""
     tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
     mf = tp * pl.col("volume")
     prev_tp = tp.shift(1).over("code")
@@ -128,70 +137,80 @@ def _mfi(n: int):
 
 
 def _sar_from_hloc(s):
-    """SAR 迭代（afStep=0.02, afMax=0.2）。s 为单 code 组的 struct Series，按时间序。"""
-    h = s.struct.field("high").to_list()
-    l = s.struct.field("low").to_list()
-    o = s.struct.field("open").to_list()
-    c = s.struct.field("close").to_list()
-    n = len(h)
+    """SAR 迭代（afStep=0.02, afMax=0.2）。s 为单 code 组的 struct Series，按时间序；含 None（停牌日）行沿用前值。"""
+    high = s.struct.field("high").to_list()
+    low = s.struct.field("low").to_list()
+    open = s.struct.field("open").to_list()
+    close = s.struct.field("close").to_list()
+    n = len(high)
     out = [0.0] * n
     if n == 0:
         return pl.Series("sar", out, dtype=pl.Float64)
-    sar, ep, af, is_up = 0.0, h[0], 0.02, True
+    ep, af, is_up = high[0], 0.02, True
     for i in range(n):
+        if None in (high[i], low[i], open[i], close[i]):
+            out[i] = out[i - 1] if i else 0.0
+            continue
         if i < 2:
-            out[i] = l[i]
+            out[i] = low[i]
             if i == 1:
-                sar, ep = l[0], h[0]
-                is_up = c[1] > o[1]
+                ep = high[0] if high[0] is not None else high[1]
+                is_up = close[1] > open[1]
                 if not is_up:
-                    sar, ep = h[0], l[0]
+                    ep = low[0] if low[0] is not None else low[1]
             continue
         prev_sar = out[i - 1]
+        if ep is None:
+            ep = high[i] if is_up else low[i]
         new_sar = prev_sar + af * (ep - prev_sar)
         if is_up:
-            if l[i] < new_sar:
+            if low[i] < new_sar:
                 new_sar = ep
-            if h[i] > ep:
-                ep = h[i]
+            if high[i] > ep:
+                ep = high[i]
                 af = min(af + 0.02, 0.2)
-            if l[i] < out[i - 2]:
-                is_up, ep, af = False, l[i], 0.02
+            if low[i] < out[i - 2]:
+                is_up, ep, af = False, low[i], 0.02
                 new_sar = out[i - 1]
         else:
-            if h[i] > new_sar:
+            if high[i] > new_sar:
                 new_sar = ep
-            if l[i] < ep:
-                ep = l[i]
+            if low[i] < ep:
+                ep = low[i]
                 af = min(af + 0.02, 0.2)
-            if h[i] > out[i - 2]:
-                is_up, ep, af = True, h[i], 0.02
+            if high[i] > out[i - 2]:
+                is_up, ep, af = True, high[i], 0.02
                 new_sar = out[i - 1]
         out[i] = new_sar
     return pl.Series("sar", out, dtype=pl.Float64)
 
 
 def _sar():
+    """抛物线停损 SAR：map_batches 逐 code 组迭代（固定0.02/0.2，固定用H/L/O/C）"""
     return pl.struct(["high", "low", "open", "close"]).map_batches(_sar_from_hloc).over("code")
 
 
 def _aroon_up(n: int):
-    cond = pl.col("high") == pl.col("high").rolling_max(window_size=n).over("code")
+    """阿隆上升：100×(N-BARSLAST(H==HHV(H,N)))/N（固定用HIGH）"""
+    cond = pl.col("high") == pl.col("high").rolling_max(window_size=n, min_periods=1).over("code")
     return 100.0 * (n - barslast(cond)) / n
 
 
 def _aroon_down(n: int):
-    cond = pl.col("low") == pl.col("low").rolling_min(window_size=n).over("code")
+    """阿隆下降：100×(N-BARSLAST(L==LLV(L,N)))/N（固定用LOW）"""
+    cond = pl.col("low") == pl.col("low").rolling_min(window_size=n, min_periods=1).over("code")
     return 100.0 * (n - barslast(cond)) / n
 
 
 def _trix(n: int):
+    """TRIX：EMA³(CLOSE) 的逐期变动率 ×100（固定用CLOSE）"""
     e3 = _ema(_ema(_ema(pl.col("close"), n), n), n)
     prev = e3.shift(1).over("code")
     return (e3 - prev) / prev * 100.0
 
 
 def _bbi():
+    """多空指标：(MA3+MA6+MA12+MA24)/4（固定用CLOSE）"""
     c = pl.col("close")
     return (c.rolling_mean(window_size=3).over("code")
             + c.rolling_mean(window_size=6).over("code")
@@ -200,41 +219,49 @@ def _bbi():
 
 
 def _vwap(n: int):
+    """N日量价均价：SUM(C×VOL,n)/SUM(VOL,n)"""
     return ((pl.col("close") * pl.col("volume")).rolling_sum(window_size=n).over("code")
             / pl.col("volume").rolling_sum(window_size=n).over("code"))
 
 
 def _bias(c, n: int):
+    """乖离率：(C-MA(C,n))/MA(C,n)×100"""
     ma = c.rolling_mean(window_size=n).over("code")
     return (c - ma) / ma * 100.0
 
 
 def _kdj_j(n: int, m: int):
+    """KDJ J 值：3K-2D，K=D=RSV 的 m 期均值"""
     k = _kdj_rsv(n).rolling_mean(window_size=m).over("code")
     d = k.rolling_mean(window_size=m).over("code")
     return 3.0 * k - 2.0 * d
 
 
 def _boll_mid(c, n: int):
+    """布林带中轨：N日简单均值"""
     return c.rolling_mean(window_size=n).over("code")
 
 
 def _ppo(f: int, s: int):
+    """PPO：100×(EMA(C,f)-EMA(C,s))/EMA(C,s)"""
     ef, es = _ema(pl.col("close"), f), _ema(pl.col("close"), s)
     return (ef - es) / es * 100.0
 
 
 def _dema(c, n: int):
+    """双重指数均线：2×EMA(C,n)-EMA(EMA(C,n),n)"""
     e = _ema(c, n)
     return 2.0 * e - _ema(e, n)
 
 
 def _tema(c, n: int):
+    """三重指数均线：3×EMA-3×EMA²+EMA³"""
     e1, e2 = _ema(c, n), _ema(_ema(c, n), n)
     return 3.0 * e1 - 3.0 * e2 + _ema(e2, n)
 
 
 def _uo():
+    """终极摆动指标：100×(4·BP7+2·BP14+BP28)/7（固定7/14/28窗口）"""
     prev_c = pl.col("close").shift(1).over("code")
     bp = pl.col("close") - pl.min_horizontal(pl.col("low"), prev_c)
     tr = pl.max_horizontal(pl.col("high"), prev_c) - pl.min_horizontal(pl.col("low"), prev_c)
@@ -245,6 +272,7 @@ def _uo():
 
 
 def _vr(n: int):
+    """量比：100×(上量+0.5平量)/(下量+0.5平量)"""
     prev_c = pl.col("close").shift(1).over("code")
     vol = pl.col("volume")
     up = pl.when(pl.col("close") > prev_c).then(vol).otherwise(0.0).rolling_sum(window_size=n).over("code")
@@ -254,11 +282,13 @@ def _vr(n: int):
 
 
 def _psy(n: int):
+    """心理线：N日上涨天数占比×100"""
     cond = pl.col("close") > pl.col("close").shift(1).over("code")
     return cond.cast(pl.Int32).rolling_sum(window_size=n).over("code") / n * 100.0
 
 
 def _cr(n: int):
+    """能量指标：N日上涨/下跌中间价动量比×100"""
     mid = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
     prev_mid = mid.shift(1).over("code")
     pm = pl.when(pl.col("high") - prev_mid > 0).then(pl.col("high") - prev_mid).otherwise(0.0)
