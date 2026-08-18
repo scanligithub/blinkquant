@@ -9,7 +9,7 @@ export const FIELD_GEN = {
   OPEN: { q: '开盘价大于昨日收盘价的股票', sub: ['OPEN'] },
   HIGH: { q: '当日最高价大于20日均线的股票', sub: ['HIGH'] },
   LOW: { q: '当日最低价小于20日均线的股票', sub: ['LOW'] },
-  VOL: { q: '成交量大于100万手的股票', sub: ['VOL'] },
+  VOL: { q: '成交量大于100万股的股票', sub: ['VOL'] },
   AMOUNT: { q: '成交额大于5亿的股票', sub: ['AMOUNT'] },
   PCT_CHG: { q: '当日涨幅大于3%的股票', sub: ['PCT_CHG'] },
   S_CLOSE: { q: '指数收盘点位高于3000的股票', sub: ['S_CLOSE'], note: '指数点位字段' },
