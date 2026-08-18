@@ -499,7 +499,7 @@ git commit -m "feat(backend): 注册表补齐 23 个常规量化平台指标"
 **Files:**
 - Modify: `frontend/tests/select-nl.test.mjs`
 
-- [ ] **Step 1: 在测试文件末尾追加新用例**（置于 guard 测试之前、coverage 测试之后均可；建议追加到文件最后 `} )` 之后新 test 块）
+- [x] **Step 1: 在测试文件末尾追加新用例**（置于 guard 测试之前、coverage 测试之后均可；建议追加到文件最后 `} )` 之后新 test 块）
 
 ```javascript
 // ---- 新增 23 算子：公式校验 + 提示词联动 ----
@@ -569,10 +569,12 @@ test('new-indicators: buildSystemPrompt 含新算子说明与零参写法', () =
 });
 ```
 
-- [ ] **Step 2: 运行确认 RED**
+- [x] **Step 2: 运行确认 RED**
 
 Run: `node --test tests/select-nl.test.mjs`（frontend 工作目录）
 Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败——因为 META 副本还没有新算子）。
+
+> 评审修复：补齐 `AROON_DOWN` 覆盖（`new-indicators: 单值算子比较通过` 与计划同步）。当前 `100 pass / 5 fail`（5 个 `new-indicators:*` 因 META 未同步而红）。
 
 ---
 
