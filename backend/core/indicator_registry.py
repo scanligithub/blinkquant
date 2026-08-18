@@ -61,6 +61,211 @@ def _macd_hist(fast: int, slow: int, signal: int):
     return (dif - _macd_dea(fast, slow, signal)) * 2
 
 
+def _wilder(col, n: int):
+    """Wilder 平滑：SMMA_t = ((n-1)*SMMA_{t-1} + val_t)/n ≡ ewm(alpha=1/n)"""
+    return col.ewm_mean(alpha=1 / n, adjust=False).over("code")
+
+
+def _dmi_tr():
+    high, low, close = pl.col("high"), pl.col("low"), pl.col("close")
+    prev_c = close.shift(1).over("code")
+    return pl.max_horizontal(high - low, (high - prev_c).abs(), (low - prev_c).abs())
+
+
+def _dmi_dm_plus():
+    high, low = pl.col("high"), pl.col("low")
+    prev_h, prev_l = high.shift(1).over("code"), low.shift(1).over("code")
+    dm = high - prev_h
+    return pl.when((dm > 0) & (dm > prev_l - low)).then(dm).otherwise(0.0)
+
+
+def _dmi_dm_minus():
+    high, low = pl.col("high"), pl.col("low")
+    prev_h, prev_l = high.shift(1).over("code"), low.shift(1).over("code")
+    dm = prev_l - low
+    return pl.when((dm > 0) & (dm > high - prev_h)).then(dm).otherwise(0.0)
+
+
+def _dmi_di(sign: str, n: int):
+    tr_s = _wilder(_dmi_tr(), n)
+    dm_s = _wilder(_dmi_dm_plus() if sign == "p" else _dmi_dm_minus(), n)
+    return 100.0 * dm_s / tr_s
+
+
+def _dmi_adx(n: int):
+    pdi, mdi = _dmi_di("p", n), _dmi_di("m", n)
+    dx = 100.0 * (pdi - mdi).abs() / (pdi + mdi)
+    return _wilder(dx, n)
+
+
+def _obv():
+    close, vol = pl.col("close"), pl.col("volume")
+    prev_c = close.shift(1).over("code")
+    signed = pl.when(close > prev_c).then(vol).when(close < prev_c).then(-vol).otherwise(0.0)
+    return signed.cum_sum().over("code")
+
+
+def _cci(n: int):
+    tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    ma_tp = tp.rolling_mean(window_size=n).over("code")
+    md = (tp - ma_tp).abs().rolling_mean(window_size=n).over("code")
+    return (tp - ma_tp) / (0.015 * md)
+
+
+def _wr(n: int):
+    high_max = pl.col("high").rolling_max(window_size=n).over("code")
+    low_min = pl.col("low").rolling_min(window_size=n).over("code")
+    return (high_max - pl.col("close")) / (high_max - low_min) * 100.0
+
+
+def _mfi(n: int):
+    tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    mf = tp * pl.col("volume")
+    prev_tp = tp.shift(1).over("code")
+    pos = pl.when(tp > prev_tp).then(mf).otherwise(0.0).rolling_sum(window_size=n).over("code")
+    neg = pl.when(tp < prev_tp).then(mf).otherwise(0.0).rolling_sum(window_size=n).over("code")
+    return 100.0 - 100.0 / (1.0 + pos / neg)
+
+
+def _sar_from_hloc(s):
+    """SAR 迭代（afStep=0.02, afMax=0.2）。s 为单 code 组的 struct Series，按时间序。"""
+    h = s.struct.field("high").to_list()
+    l = s.struct.field("low").to_list()
+    o = s.struct.field("open").to_list()
+    c = s.struct.field("close").to_list()
+    n = len(h)
+    out = [0.0] * n
+    if n == 0:
+        return pl.Series("sar", out, dtype=pl.Float64)
+    sar, ep, af, is_up = 0.0, h[0], 0.02, True
+    for i in range(n):
+        if i < 2:
+            out[i] = l[i]
+            if i == 1:
+                sar, ep = l[0], h[0]
+                is_up = c[1] > o[1]
+                if not is_up:
+                    sar, ep = h[0], l[0]
+            continue
+        prev_sar = out[i - 1]
+        new_sar = prev_sar + af * (ep - prev_sar)
+        if is_up:
+            if l[i] < new_sar:
+                new_sar = ep
+            if h[i] > ep:
+                ep = h[i]
+                af = min(af + 0.02, 0.2)
+            if l[i] < out[i - 2]:
+                is_up, ep, af = False, l[i], 0.02
+                new_sar = out[i - 1]
+        else:
+            if h[i] > new_sar:
+                new_sar = ep
+            if l[i] < ep:
+                ep = l[i]
+                af = min(af + 0.02, 0.2)
+            if h[i] > out[i - 2]:
+                is_up, ep, af = True, h[i], 0.02
+                new_sar = out[i - 1]
+        out[i] = new_sar
+    return pl.Series("sar", out, dtype=pl.Float64)
+
+
+def _sar():
+    return pl.struct(["high", "low", "open", "close"]).map_batches(_sar_from_hloc).over("code")
+
+
+def _aroon_up(n: int):
+    cond = pl.col("high") == pl.col("high").rolling_max(window_size=n).over("code")
+    return 100.0 * (n - barslast(cond)) / n
+
+
+def _aroon_down(n: int):
+    cond = pl.col("low") == pl.col("low").rolling_min(window_size=n).over("code")
+    return 100.0 * (n - barslast(cond)) / n
+
+
+def _trix(n: int):
+    e3 = _ema(_ema(_ema(pl.col("close"), n), n), n)
+    prev = e3.shift(1).over("code")
+    return (e3 - prev) / prev * 100.0
+
+
+def _bbi():
+    c = pl.col("close")
+    return (c.rolling_mean(window_size=3).over("code")
+            + c.rolling_mean(window_size=6).over("code")
+            + c.rolling_mean(window_size=12).over("code")
+            + c.rolling_mean(window_size=24).over("code")) / 4.0
+
+
+def _vwap(n: int):
+    return ((pl.col("close") * pl.col("volume")).rolling_sum(window_size=n).over("code")
+            / pl.col("volume").rolling_sum(window_size=n).over("code"))
+
+
+def _bias(c, n: int):
+    ma = c.rolling_mean(window_size=n).over("code")
+    return (c - ma) / ma * 100.0
+
+
+def _kdj_j(n: int, m: int):
+    k = _kdj_rsv(n).rolling_mean(window_size=m).over("code")
+    d = k.rolling_mean(window_size=m).over("code")
+    return 3.0 * k - 2.0 * d
+
+
+def _boll_mid(c, n: int):
+    return c.rolling_mean(window_size=n).over("code")
+
+
+def _ppo(f: int, s: int):
+    ef, es = _ema(pl.col("close"), f), _ema(pl.col("close"), s)
+    return (ef - es) / es * 100.0
+
+
+def _dema(c, n: int):
+    e = _ema(c, n)
+    return 2.0 * e - _ema(e, n)
+
+
+def _tema(c, n: int):
+    e1, e2 = _ema(c, n), _ema(_ema(c, n), n)
+    return 3.0 * e1 - 3.0 * e2 + _ema(e2, n)
+
+
+def _uo():
+    prev_c = pl.col("close").shift(1).over("code")
+    bp = pl.col("close") - pl.min_horizontal(pl.col("low"), prev_c)
+    tr = pl.max_horizontal(pl.col("high"), prev_c) - pl.min_horizontal(pl.col("low"), prev_c)
+    avg7 = bp.rolling_sum(window_size=7).over("code") / tr.rolling_sum(window_size=7).over("code")
+    avg14 = bp.rolling_sum(window_size=14).over("code") / tr.rolling_sum(window_size=14).over("code")
+    avg28 = bp.rolling_sum(window_size=28).over("code") / tr.rolling_sum(window_size=28).over("code")
+    return 100.0 * (4.0 * avg7 + 2.0 * avg14 + avg28) / 7.0
+
+
+def _vr(n: int):
+    prev_c = pl.col("close").shift(1).over("code")
+    vol = pl.col("volume")
+    up = pl.when(pl.col("close") > prev_c).then(vol).otherwise(0.0).rolling_sum(window_size=n).over("code")
+    dn = pl.when(pl.col("close") < prev_c).then(vol).otherwise(0.0).rolling_sum(window_size=n).over("code")
+    fl = pl.when(pl.col("close") == prev_c).then(vol).otherwise(0.0).rolling_sum(window_size=n).over("code")
+    return (up + 0.5 * fl) / (dn + 0.5 * fl) * 100.0
+
+
+def _psy(n: int):
+    cond = pl.col("close") > pl.col("close").shift(1).over("code")
+    return cond.cast(pl.Int32).rolling_sum(window_size=n).over("code") / n * 100.0
+
+
+def _cr(n: int):
+    mid = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    prev_mid = mid.shift(1).over("code")
+    pm = pl.when(pl.col("high") - prev_mid > 0).then(pl.col("high") - prev_mid).otherwise(0.0)
+    pn = pl.when(prev_mid - pl.col("low") > 0).then(prev_mid - pl.col("low")).otherwise(0.0)
+    return pm.rolling_sum(window_size=n).over("code") / pn.rolling_sum(window_size=n).over("code") * 100.0
+
+
 INDICATORS = {
     # ---- window 型（签名 [field, pos_int]，Hot-JIT 挂载）----
     "MA":  {"func": lambda c, n: c.rolling_mean(window_size=n).over("code"),            "window": True, "signature": ["field", "pos_int"]},
@@ -108,6 +313,30 @@ INDICATORS = {
         "window": False, "signature": ["pos_int", "pos_int", "pos_int"]},
     "MACD_HIST": {"func": lambda fast, slow, signal: _macd_hist(fast, slow, signal),
         "window": False, "signature": ["pos_int", "pos_int", "pos_int"]},
+    # ---- 常规量化平台指标补齐（慢路径实时计算）----
+    "DMI_PDI": {"func": lambda n: _dmi_di("p", n), "window": False, "signature": ["pos_int"]},
+    "DMI_MDI": {"func": lambda n: _dmi_di("m", n), "window": False, "signature": ["pos_int"]},
+    "DMI_ADX": {"func": _dmi_adx, "window": False, "signature": ["pos_int"]},
+    "OBV": {"func": _obv, "window": False, "signature": []},
+    "CCI": {"func": _cci, "window": False, "signature": ["pos_int"]},
+    "WR": {"func": _wr, "window": False, "signature": ["pos_int"]},
+    "MFI": {"func": _mfi, "window": False, "signature": ["pos_int"]},
+    "SAR": {"func": _sar, "window": False, "signature": []},
+    "AROON_UP": {"func": _aroon_up, "window": False, "signature": ["pos_int"]},
+    "AROON_DOWN": {"func": _aroon_down, "window": False, "signature": ["pos_int"]},
+    "TRIX": {"func": _trix, "window": False, "signature": ["pos_int"]},
+    "BBI": {"func": _bbi, "window": False, "signature": []},
+    "VWAP": {"func": _vwap, "window": False, "signature": ["pos_int"]},
+    "BIAS": {"func": lambda n: _bias(pl.col("close"), n), "window": False, "signature": ["pos_int"]},
+    "KDJ_J": {"func": _kdj_j, "window": False, "signature": ["pos_int", "pos_int"]},
+    "BOLL_MID": {"func": _boll_mid, "window": False, "signature": ["series", "pos_int"]},
+    "PPO": {"func": _ppo, "window": False, "signature": ["pos_int", "pos_int"]},
+    "DEMA": {"func": _dema, "window": False, "signature": ["series", "pos_int"]},
+    "TEMA": {"func": _tema, "window": False, "signature": ["series", "pos_int"]},
+    "UO": {"func": _uo, "window": False, "signature": []},
+    "VR": {"func": _vr, "window": False, "signature": ["pos_int"]},
+    "PSY": {"func": _psy, "window": False, "signature": ["pos_int"]},
+    "CR": {"func": _cr, "window": False, "signature": ["pos_int"]},
 }
 
 # 字段白名单：必须与 security.py 现有 fields 键集逐项一致（防 drift）
@@ -141,6 +370,29 @@ DESCRIPTIONS = {
     "MACD_DIF": "MACD快慢线差（EMA(CLOSE,fast) - EMA(CLOSE,slow)，固定用CLOSE）",
     "MACD_DEA": "MACD信号线（DIF的signal期EMA，固定用CLOSE）",
     "MACD_HIST": "MACD柱（2 × (DIF - DEA)，固定用CLOSE）",
+    "DMI_PDI": "+DI上升趋向指标（N日，固定用HIGH/LOW/CLOSE）",
+    "DMI_MDI": "-DI下降趋向指标（N日，固定用HIGH/LOW/CLOSE）",
+    "DMI_ADX": "ADX趋向平均线（N日，固定用HIGH/LOW/CLOSE）",
+    "OBV": "能量潮（累计量：收涨+量/收跌-量，固定用CLOSE/VOL）",
+    "CCI": "顺势指标CCI（N日，固定用HIGH/LOW/CLOSE）",
+    "WR": "威廉指标WR（N日，固定用HIGH/LOW/CLOSE，>80超买/<20超卖）",
+    "MFI": "资金流量指数MFI（N日，固定用HIGH/LOW/CLOSE/VOL）",
+    "SAR": "抛物线停损SAR（固定0.02/0.2，固定用HIGH/LOW/CLOSE）",
+    "AROON_UP": "阿隆上升（N日新高比例，固定用HIGH）",
+    "AROON_DOWN": "阿隆下降（N日新低比例，固定用LOW）",
+    "TRIX": "三重指数均线变动率（N日，固定用CLOSE）",
+    "BBI": "多空指标（3/6/12/24日均线均值，固定用CLOSE）",
+    "VWAP": "N日量价均价（SUM(C*VOL,n)/SUM(VOL,n)）",
+    "BIAS": "N日乖离率（(C-MA(C,n))/MA(C,n)*100）",
+    "KDJ_J": "KDJ随机指标J值（3K-2D，固定用HIGH/LOW/CLOSE）",
+    "BOLL_MID": "布林带中轨（N日均价）",
+    "PPO": "价格振荡百分比（(EMA(C,f)-EMA(C,s))/EMA(C,s)*100）",
+    "DEMA": "双重指数均线（2*EMA-EMA(EMA)）",
+    "TEMA": "三重指数均线（3*EMA-3*EMA(EMA)+EMA(EMA(EMA))）",
+    "UO": "终极摆动指标（固定7/14/28窗口，固定用HIGH/LOW/CLOSE）",
+    "VR": "N日量比（(上涨量+0.5平盘量)/(下跌量+0.5平盘量)*100）",
+    "PSY": "N日心理线（上涨天数占比*100）",
+    "CR": "N日能量指标（上涨中间价动量/下跌中间价动量*100）",
 }
 
 EXAMPLE_QUERIES = [
@@ -151,6 +403,11 @@ EXAMPLE_QUERIES = [
     "CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))",
     "CLOSE > BOLL_UPPER(CLOSE, 20, 2)",
     "CROSS_UP(MACD_DIF(12, 26), MACD_DEA(12, 26, 9))",
+    "CROSS_UP(DMI_PDI(14), DMI_MDI(14))",
+    "WR(14) > 80",
+    "CCI(14) > 100",
+    "MFI(14) < 20",
+    "CLOSE > SAR()",
 ]
 
 TIMEFRAMES = ["D", "W", "M"]
