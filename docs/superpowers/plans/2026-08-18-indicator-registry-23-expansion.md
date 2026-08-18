@@ -150,10 +150,10 @@
         got = df.with_columns(sar.alias("s")).select(["code", "s"]).sort(["code"])
         rows = list(got.iter_rows())
         sz = [v for c, v in rows if c == "sz.000001"]
-        # 第二支单调上行，SAR 首值=low[0]=49.0 且全程不越过当前 low 以下（迭代稳定）
+        # 第二支单调上行，SAR 首值=low[0]=49.0，且全程不越过当前 low（迭代稳定）
         self.assertEqual(len(sz), 4)
-        for v in sz:
-            self.assertIsNotNone(v)
+        # 精确值：独立参照实现实测 [49, 50, 50, 50.08]；若跨 code 泄漏应为 [10.1, 12.6, 15.9, 19.7]
+        self.assertEqual([round(v, 2) for v in sz], [49.0, 50.0, 50.0, 50.08])
 
     def test_dmi_pdi_positive_trend(self):
         # 单调上行趋势下 DMI_PDI 应显著大于 DMI_MDI（PDI>MDI）
@@ -171,15 +171,16 @@
         self.assertGreaterEqual(last[0], 0.0)
 
     def test_aroon_up_high_at_window(self):
-        # 窗口内今天创新高时 AROON_UP 应为 100
+        # 窗口内今天创新高时 AROON_UP 应为 100；max 距今天 1 根时应为 80（可判别恒 100 假实现）
         df = pl.DataFrame({
-            "code": ["sh.600000"] * 5,
-            "high": [10.0, 11.0, 10.0, 12.0, 13.0],
-            "low": [9.0, 10.0, 9.0, 11.0, 12.0],
+            "code": ["sh.600000"] * 6,
+            "high": [10.0, 11.0, 12.0, 13.0, 13.0, 12.0],
+            "low": [9.0, 10.0, 11.0, 12.0, 12.0, 11.0],
         })
         up = INDICATORS["AROON_UP"]["func"](5)
         got = df.with_columns(up.alias("u")).select("u").to_series().to_list()
         self.assertAlmostEqual(got[4], 100.0, places=6)
+        self.assertAlmostEqual(got[5], 80.0, places=6)
 ```
 
 - [ ] **Step 4: 运行确认 RED（存在性/签名两类失败）**
@@ -419,7 +420,7 @@ def _cr(n: int):
     "TRIX": {"func": _trix, "window": False, "signature": ["pos_int"]},
     "BBI": {"func": _bbi, "window": False, "signature": []},
     "VWAP": {"func": _vwap, "window": False, "signature": ["pos_int"]},
-    "BIAS": {"func": _bias, "window": False, "signature": ["series", "pos_int"]},
+    "BIAS": {"func": lambda n: _bias(pl.col("close"), n), "window": False, "signature": ["pos_int"]},
     "KDJ_J": {"func": _kdj_j, "window": False, "signature": ["pos_int", "pos_int"]},
     "BOLL_MID": {"func": _boll_mid, "window": False, "signature": ["series", "pos_int"]},
     "PPO": {"func": _ppo, "window": False, "signature": ["pos_int", "pos_int"]},
@@ -588,7 +589,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
 在 `MACD_HIST: ['pos_int', 'pos_int', 'pos_int']` 后追加：
 
 ```javascript
-, DMI_PDI: ['pos_int'], DMI_MDI: ['pos_int'], DMI_ADX: ['pos_int'], OBV: [], CCI: ['pos_int'], WR: ['pos_int'], MFI: ['pos_int'], SAR: [], AROON_UP: ['pos_int'], AROON_DOWN: ['pos_int'], TRIX: ['pos_int'], BBI: [], VWAP: ['pos_int'], BIAS: ['series', 'pos_int'], KDJ_J: ['pos_int', 'pos_int'], BOLL_MID: ['series', 'pos_int'], PPO: ['pos_int', 'pos_int'], DEMA: ['series', 'pos_int'], TEMA: ['series', 'pos_int'], UO: [], VR: ['pos_int'], PSY: ['pos_int'], CR: ['pos_int']
+, DMI_PDI: ['pos_int'], DMI_MDI: ['pos_int'], DMI_ADX: ['pos_int'], OBV: [], CCI: ['pos_int'], WR: ['pos_int'], MFI: ['pos_int'], SAR: [], AROON_UP: ['pos_int'], AROON_DOWN: ['pos_int'], TRIX: ['pos_int'], BBI: [], VWAP: ['pos_int'], BIAS: ['pos_int'], KDJ_J: ['pos_int', 'pos_int'], BOLL_MID: ['series', 'pos_int'], PPO: ['pos_int', 'pos_int'], DEMA: ['series', 'pos_int'], TEMA: ['series', 'pos_int'], UO: [], VR: ['pos_int'], PSY: ['pos_int'], CR: ['pos_int']
 ```
 
 （注意：该行已以 `}` 结尾，需把 ` }` 前的内容扩展；保持同一对象字面量语法正确。）

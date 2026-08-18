@@ -248,8 +248,9 @@ class TestRegistry(unittest.TestCase):
         rows = list(got.iter_rows())
         sz = [v for c, v in rows if c == "sz.000001"]
         self.assertEqual(len(sz), 4)
-        for v in sz:
-            self.assertIsNotNone(v)
+        # 精确值（独立参照实现实测）：单调上行、L0=49 → [49, 50, 50, 50.08]；
+        # 若跨 code 泄漏应为 [10.1, 12.6, 15.9, 19.7]，可判别真
+        self.assertEqual([round(v, 2) for v in sz], [49.0, 50.0, 50.0, 50.08])
 
     def test_dmi_pdi_positive_trend(self):
         # 单调上行趋势下 DMI_PDI 应显著大于 DMI_MDI（PDI>MDI）
@@ -267,15 +268,16 @@ class TestRegistry(unittest.TestCase):
         self.assertGreaterEqual(last[0], 0.0)
 
     def test_aroon_up_high_at_window(self):
-        # 窗口内今天创新高时 AROON_UP 应为 100
+        # 窗口内今天创新高时 AROON_UP 应为 100；max 距今天 1 根时应为 80（判别恒 100 假实现）
         df = pl.DataFrame({
-            "code": ["sh.600000"] * 5,
-            "high": [10.0, 11.0, 10.0, 12.0, 13.0],
-            "low": [9.0, 10.0, 9.0, 11.0, 12.0],
+            "code": ["sh.600000"] * 6,
+            "high": [10.0, 11.0, 12.0, 13.0, 13.0, 12.0],
+            "low": [9.0, 10.0, 11.0, 12.0, 12.0, 11.0],
         })
         up = INDICATORS["AROON_UP"]["func"](5)
         got = df.with_columns(up.alias("u")).select("u").to_series().to_list()
         self.assertAlmostEqual(got[4], 100.0, places=6)
+        self.assertAlmostEqual(got[5], 80.0, places=6)
 
 if __name__ == "__main__":
     unittest.main()
