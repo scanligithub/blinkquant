@@ -27,7 +27,7 @@
 **Files:**
 - Modify: `backend/tests/test_registry.py`
 
-- [ ] **Step 1: 更新 `test_builtin_indicators_present` 期望 47 项全列表**
+- [x] **Step 1: 更新 `test_builtin_indicators_present` 期望 47 项全列表**
 
 将 `backend/tests/test_registry.py:17-23` 的期望列表替换为：
 
@@ -45,7 +45,7 @@
         ])
 ```
 
-- [ ] **Step 2: 更新 `test_signatures_match_expected` 期望全签名**
+- [x] **Step 2: 更新 `test_signatures_match_expected` 期望全签名**
 
 将 `backend/tests/test_registry.py:72-88` 的 `expect` 字典整体替换为：
 
@@ -77,7 +77,7 @@
         self.assertEqual(got, expect)
 ```
 
-- [ ] **Step 3: 新增数学定义/partition 测试**（追加到文件末尾、`if __name__` 之前）
+- [x] **Step 3: 新增数学定义/partition 测试**（追加到文件末尾、`if __name__` 之前）
 
 ```python
     def test_obv_matches_definition(self):
@@ -183,10 +183,12 @@
         self.assertAlmostEqual(got[5], 80.0, places=6)
 ```
 
-- [ ] **Step 4: 运行确认 RED（存在性/签名两类失败）**
+- [x] **Step 4: 运行确认 RED（存在性/签名两类失败）**
 
 Run: `python -m unittest discover -s tests -k test_builtin_indicators_present`（backend 工作目录）
 Expected: FAIL（实际 24 项，期望 47 项）。签名测试同理 FAIL。
+
+> 已提交 `43df005`（RED 测试）+ `550cce9`（评审后收紧 SAR/AROON 精确断言、修正 BIAS 签名）。当前全量：`Ran 20 tests … failures=2, errors=7`（全为预期 RED）。
 
 ---
 
@@ -195,7 +197,7 @@ Expected: FAIL（实际 24 项，期望 47 项）。签名测试同理 FAIL。
 **Files:**
 - Modify: `backend/core/indicator_registry.py`
 
-- [ ] **Step 1: 新增模块级 helper 函数**（放在 `_macd_hist` 之后、`INDICATORS` 之前）
+- [x] **Step 1: 新增模块级 helper 函数**（放在 `_macd_hist` 之后、`INDICATORS` 之前）
 
 ```python
 def _wilder(col, n: int):
@@ -403,7 +405,7 @@ def _cr(n: int):
     return pm.rolling_sum(window_size=n).over("code") / pn.rolling_sum(window_size=n).over("code") * 100.0
 ```
 
-- [ ] **Step 2: 在 `INDICATORS` 字典 `MACD_HIST` 条目后追加 23 条**
+- [x] **Step 2: 在 `INDICATORS` 字典 `MACD_HIST` 条目后追加 23 条**
 
 ```python
     # ---- 常规量化平台指标补齐（慢路径实时计算）----
@@ -432,7 +434,7 @@ def _cr(n: int):
     "CR": {"func": _cr, "window": False, "signature": ["pos_int"]},
 ```
 
-- [ ] **Step 3: `DESCRIPTIONS` 追加 23 条中文说明**
+- [x] **Step 3: `DESCRIPTIONS` 追加 23 条中文说明**
 
 在 `DESCRIPTIONS` 字典 `MACD_HIST` 键后追加：
 
@@ -462,7 +464,7 @@ def _cr(n: int):
     "CR": "N日能量指标（上涨中间价动量/下跌中间价动量*100）",
 ```
 
-- [ ] **Step 4: `EXAMPLE_QUERIES` 追加 5 条代表例**
+- [x] **Step 4: `EXAMPLE_QUERIES` 追加 5 条代表例**
 
 在 `EXAMPLE_QUERIES` 列表 `MACD_HIST` 示例后追加：
 
@@ -474,17 +476,21 @@ def _cr(n: int):
     "CLOSE > SAR()",
 ```
 
-- [ ] **Step 5: 运行测试确认 GREEN**
+- [x] **Step 5: 运行测试确认 GREEN**
 
 Run: `python -m unittest discover -s tests -v`（backend 工作目录）
 Expected: 全部 PASS（13 个 registry 测试 + 6 个新增数学测试）。
 
-- [ ] **Step 6: Commit**
+> 评审驱动的修复：DMI_ADX NaN 传播（0/0 + polars NaN>0 陷阱）、AROON 单调趋势全 null/旧锚点外溢衰减、SAR/AROON 空值容错；追加 ADX/AROON Down/AROON 空值回归测试。当前 `Ran 98 tests ... OK`。
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/core/indicator_registry.py backend/tests/test_registry.py
 git commit -m "feat(backend): 注册表补齐 23 个常规量化平台指标"
 ```
+
+> 实际提交：`c95710c`（实现）+ `05c34ce`/`5806e0c`/`52337db`（评审修复）+ `54bcd96`（回归测试）。
 
 ---
 
