@@ -332,6 +332,12 @@ function buildHardConstraintSuffix(analysis) {
   if (/布林|BOLL/i.test(text)) {
     lines.push('硬约束：布林相关禁止 REF(BOLL_UPPER/LOWER(...), n)；上破/下破用 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。');
   }
+  if (/绝对偏差|偏离|乖离/.test(text)) {
+    lines.push('硬约束：本需求含绝对偏差/偏离，禁止展开成 OR 双向不等式；请用 ABS(值A - 值B) 或 ABS(值A - 值B) > N 比较。');
+  }
+  if (/较高者|较大值|取较大|较小值|较低者|取较小/.test(text)) {
+    lines.push('硬约束：本需求含「较高者/较大值/较小值」，请用 MAX(参数A, 参数B) 或 MIN(参数A, 参数B)；禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（如 MA(MAX(...),N)、REF(MAX(...),1) 非法）。');
+  }
   return lines.length ? '\n' + lines.join('\n') : '';
 }
 
@@ -359,7 +365,9 @@ function buildRepairSystemSuffix() {
     '- 禁止引入未列出的算子；禁止 REF/MA/HHV/LLV/SUM 等 window 函数的第一参写成函数调用；',
     '- BARSLAST 只能有 1 个 cond 参数；COUNT 必须是 COUNT(cond, N)；',
     '- 若上次误用 BARSLAST 表达新高/新低/振幅，改为 HHV/LLV 或 (HIGH-LOW)/CLOSE；',
-    '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。',
+    '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))；',
+    '- 若上次把绝对偏差/偏离展开成 OR 双向不等式，改为 ABS(值A - 值B) > N 形式；',
+    '- 若上次把 MAX/MIN 写进 MA/REF/HHV/LLV/SUM 等 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)），改为用 MAX/MIN 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）。',
   ].join('\n');
 }
 
@@ -393,6 +401,34 @@ function trySafeBollRefRewrite(formula) {
     return formula.replace(down[0], `CROSS_DOWN(CLOSE, ${inner})`);
   }
   return null;
+}
+
+function trySafeAbsAbsRewrite(formula) {
+  const parts = splitBoolTopLevel(formula);
+  if (parts.length !== 2) return null;
+  const leftM =
+    /^([A-Z_][A-Z0-9_]*)\s*>=\s*((?:[A-Z_][A-Z0-9_]*\s*\([^)]*\))|[A-Z_][A-Z0-9_]*)\s*\+\s*(\d+(?:\.\d+)?)$/.exec(
+      parts[0]
+    );
+  if (!leftM) return null;
+  const [, x, base, n] = leftM;
+  const rightM = new RegExp(
+    `^${escapeRegExp(x)}\\s*<=\\s*${escapeRegExp(base)}\\s*-\\s*${escapeRegExp(n)}$`
+  ).exec(parts[1]);
+  if (!rightM) return null;
+  const rewritten = `ABS(${x} - ${base}) > ${n}`;
+  let depth = 0;
+  for (const ch of rewritten) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (depth < 0) return null;
+  }
+  if (depth !== 0) return null;
+  return rewritten;
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function buildSystemPrompt(meta) {
@@ -431,6 +467,9 @@ function buildSystemPrompt(meta) {
     '         CLOSE < BOLL_LOWER(CLOSE,20,2) 或 CROSS_DOWN(CLOSE, BOLL_LOWER(CLOSE,20,2))',
     '   错误: REF(BOLL_UPPER(...),1)、REF(BOLL_LOWER(...),1)',
     '4) 不要用未在清单中的算子；不要为「昨天的均线/布林」去写 REF(指标调用,1)。',
+    '5) 绝对偏差/偏离/乖离：用 ABS(序列) 比较（如 ABS(CLOSE - MA(CLOSE,20)) > 2），禁止展开成 OR 双向不等式。',
+    '6) 较高者/较大值/较小值：用 MAX(A,B)/MIN(A,B) 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）；',
+    '   禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（MA(MAX(...),N)、REF(MAX(...),1) 均非法）。',
     '',
     '周期 timeframe 只能是 ' + meta.timeframes.join('/') + '。',
     '',
@@ -718,6 +757,29 @@ test('buildHardConstraintSuffix: 无关键词返回空串', () => {
   assert.equal(buildHardConstraintSuffix(a), '');
 });
 
+test('buildHardConstraintSuffix: 绝对偏差触发 ABS 约束', () => {
+  const a = { restatement: '收盘价距20日均线绝对偏差大于2元', conditions: ['收盘价距20日均线绝对偏差大于2元'], logic: '1', timeframe: 'D' };
+  const s = buildHardConstraintSuffix(a);
+  assert.match(s, /绝对偏差|偏离/);
+  assert.match(s, /ABS/);
+  // 含禁止 OR 展开的引导
+  assert.match(s, /OR|展开/);
+});
+
+test('buildHardConstraintSuffix: 较高者/较小值触发 MAX/MIN 约束', () => {
+  const a = { restatement: '今日开盘价与收盘价中的较高者上穿20日均线', conditions: ['今日开盘价与收盘价中的较高者上穿20日均线'], logic: '1', timeframe: 'D' };
+  const s = buildHardConstraintSuffix(a);
+  assert.match(s, /较高者/);
+  assert.match(s, /MAX/);
+  const b = { restatement: '开盘价与收盘价取较小值后小于昨日最低价', conditions: ['开盘价与收盘价取较小值后小于昨日最低价'], logic: '1', timeframe: 'D' };
+  assert.match(buildHardConstraintSuffix(b), /MIN/);
+});
+
+test('buildHardConstraintSuffix: 普通对比约束不误伤无关键词排序', () => {
+  const a = { restatement: '连续5天上涨', conditions: ['连续5天上涨'], logic: '1', timeframe: 'D' };
+  assert.doesNotMatch(buildHardConstraintSuffix(a), /比较高|取较小值|较小者|较高者/);
+});
+
 test('buildTranslateUserMessage: 含复述/条件/逻辑/周期/硬约束', () => {
   const a = { restatement: '创5日新高', conditions: ['收盘价创5日新高'], logic: '1', timeframe: 'D' };
   const m = buildTranslateUserMessage(a);
@@ -734,6 +796,16 @@ test('buildRepairSystemSuffix: 修复模式规则与签名约束', () => {
   assert.match(s, /HHV\/LLV/);
 });
 
+test('buildRepairSystemSuffix: 含 ABS/MAX 嵌套与展开修复规则', () => {
+  const s = buildRepairSystemSuffix();
+  // ABS：禁止 OR 双向展开，鼓励 ABS(序列) 形式
+  assert.match(s, /ABS/);
+  assert.match(s, /OR|展开|双向/);
+  // MAX：禁止把 MAX/MIN 作为外层 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)）
+  assert.match(s, /绝对值|绝对偏差|偏离/);
+  assert.match(s, /MAX|MIN/);
+});
+
 test('buildRepairUserMessage: 含非法公式与原因', () => {
   const a = { restatement: 'x', conditions: ['y'], logic: '1', timeframe: 'D' };
   const m = buildRepairUserMessage(a, 'BARSLAST(CLOSE, 5)', '函数 BARSLAST 必须恰好 1 个参数');
@@ -746,6 +818,24 @@ test('trySafeBollRefRewrite: 仅改 BOLL 突破形态不改 REF(MA)', () => {
   const r = trySafeBollRefRewrite(f);
   assert.ok(r && r.includes('CROSS_UP(CLOSE, BOLL_UPPER(CLOSE, 20, 2))'));
   assert.equal(trySafeBollRefRewrite('CLOSE > REF(MA(CLOSE, 20), 1)'), null);
+});
+
+test('trySafeAbsAbsRewrite: OR 双向展开转 ABS(差值)', () => {
+  // 弱模型把 ABS 展开成双向不等式时的确定性还原
+  const f = 'CLOSE >= MA(CLOSE, 20) + 2 OR CLOSE <= MA(CLOSE, 20) - 2';
+  const r = trySafeAbsAbsRewrite(f);
+  assert.ok(r, '应收敛为 ABS 形式');
+  assert.match(r, /ABS/);
+  assert.doesNotMatch(r, /OR/);
+  // 验证收敛结果可通过公式校验（序列形式）
+  const v = validateFormula(META, r);
+  assert.equal(v.ok, true, `收敛公式校验失败: ${v.reason}`);
+});
+
+test('trySafeAbsAbsRewrite: 非双向展开不误改', () => {
+  assert.equal(trySafeAbsAbsRewrite('CLOSE > MA(CLOSE, 20)'), null);
+  assert.equal(trySafeAbsAbsRewrite('CLOSE >= MA(CLOSE, 20) + 2 OR PE_TTM < 20'), null);
+  assert.equal(trySafeAbsAbsRewrite('OPEN > CLOSE AND CLOSE >= LOW'), null);
 });
 
 test('checkRateLimit: 允许窗口内请求', () => {
@@ -1046,6 +1136,22 @@ test('buildCoverageCases: 注册表新增无生成器的项计入未覆盖', () 
   assert.deepEqual(out.cases, []);
   assert.deepEqual(out.uncoveredFields, ['NOVEL_FIELD']);
   assert.deepEqual(out.uncoveredInds, ['NOVEL_IND']);
+});
+
+test('buildCoverageCases: sub_any 不参与覆盖判定（多解算子仍生成专属用例）', () => {
+  const meta = {
+    fields: ['CLOSE'],
+    indicators: ['COUNT', 'REF'],
+    timeframes: ['D', 'W', 'M'],
+    units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const existing = [
+    { cid: 'x', q: '收盘价大于10元的股票', sub: ['CLOSE'], tf: 'D' },
+    { cid: 'y', q: '连续5天收盘价上涨的股票', sub_any: ['COUNT(', 'REF(CLOSE'], tf: 'D' },
+  ];
+  const out = buildCoverageCases(meta, existing);
+  const cids = out.cases.map((c) => c.cid).sort();
+  assert.deepEqual(cids, ['gI_COUNT', 'gI_REF']);
 });
 
 test('computeCoverageMatrix: 从公式反推字段/算子覆盖与缺失', () => {

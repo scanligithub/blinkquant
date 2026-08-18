@@ -12,6 +12,7 @@ import {
   buildRepairSystemSuffix,
   buildRepairUserMessage,
   trySafeBollRefRewrite,
+  trySafeAbsAbsRewrite,
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -85,8 +86,9 @@ export async function POST(req: NextRequest) {
       } catch {
         return { kind: 'invalid', reason: 'AI 翻译输出格式异常，请返回确认语义或换种说法' };
       }
-      // 安全 BOLL 改写（零 token），成功后直接过检则省一次 repair
-      const rewritten = trySafeBollRefRewrite(parsed.formula);
+      // 安全 BOLL 改写 / ABS 双向展开还原（零 token），成功后直接过检则省一次 repair
+      let rewritten = trySafeBollRefRewrite(parsed.formula);
+      if (!rewritten) rewritten = trySafeAbsAbsRewrite(parsed.formula);
       if (rewritten) parsed = { ...parsed, formula: rewritten };
       const validation = validateFormula(meta, parsed.formula);
       if (validation.ok === false) {

@@ -29,7 +29,7 @@ export const FIELD_GEN = {
 export const IND_GEN = {
   ABS: { q: '收盘价距20日均线绝对偏差大于2元的股票', sub: ['ABS'] },
   ATR: { q: '14日真实波幅均值大于3的股票', sub: ['ATR'] },
-  BARSLAST: { q: '距上次突破20日均线不超过3天的股票', sub: ['BARSLAST'] },
+  BARSLAST: { q: '上一次收盘价跌破20日均线距离现在已超过5天的股票', sub: ['BARSLAST'] },
   BOLL_LOWER: { q: '收盘价跌破布林下轨的股票', sub: ['BOLL_LOWER'] },
   BOLL_UPPER: { q: '收盘价突破布林上轨的股票', sub: ['BOLL_UPPER'] },
   COUNT: { q: '近5日收盘价站上20日均线的天数不少于3天的股票', sub: ['COUNT'] },
@@ -41,7 +41,7 @@ export const IND_GEN = {
   KDJ_K: { q: 'KDJ的K值大于80的股票', sub: ['KDJ_K'] },
   LLV: { q: '创20日新低的股票', sub: ['LLV'] },
   MA: { q: '收盘价站上20日均线的股票', sub: ['MA'] },
-  MAX: { q: '开盘价与收盘价取较大值后大于昨日最高价的股票', sub: ['MAX'] },
+  MAX: { q: '今日开盘价与收盘价中的较高者上穿20日均线的股票', sub: ['MAX'] },
   MIN: { q: '开盘价与收盘价取较小值后小于昨日最低价的股票', sub: ['MIN'] },
   REF: { q: '今日收盘价高于昨日收盘价的股票', sub: ['REF'] },
   ROC: { q: '5日变动率大于5%的股票', sub: ['ROC'] },
@@ -51,12 +51,14 @@ export const IND_GEN = {
 };
 
 // 现有用例断言 token 前缀匹配任意注册表字段/算子，判定该字段/算子已被手工用例覆盖。
+// 注意：sub_any（多解，如 COUNT/REF 任选其一）不参与覆盖判定——否则模型只落一个解时
+// 另一算子在若干轮随机中可能一直无专属用例，导致矩阵缺漏。故 sub_any 仅在执行时校验。
 function coveredTokens(meta, existingCases) {
   const coveredFields = new Set();
   const coveredInds = new Set();
   const allTokens = [...meta.fields, ...meta.indicators];
   for (const c of existingCases) {
-    for (const s of [...(c.sub || []), ...(c.sub_any || [])]) {
+    for (const s of c.sub || []) {
       const up = String(s).toUpperCase();
       for (const tok of allTokens) {
         if (up.startsWith(tok)) {

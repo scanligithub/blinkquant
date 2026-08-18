@@ -124,28 +124,42 @@ async function translate(cookie, analysis) {
   return { status: res.status, json };
 }
 
-// 瞬时 5xx（502/504，NVIDIA LLM 偶发过载）自动重试；业务 4xx 与 429 不重试
-const RETRY_MAX = 3;
-const RETRY_DELAY_MS = 3000;
+// 瞬时 5xx（502/504，NVIDIA LLM 偶发过载）自动退避重试；业务 4xx 与 429 不重试。
+// 高频连发会放大 NVIDIA 网关瞬时过载（实测约 50% 502），故全局限速：
+// 相邻请求至少间隔 MIN_INTERVAL_MS，减轻瞬时并发压力。
+const RETRY_DELAYS_MS = [4000, 8000, 16000];
+const MIN_INTERVAL_MS = 1500;
+
+let lastReqAt = 0;
+async function throttle() {
+  const now = Date.now();
+  const wait = lastReqAt ? Math.max(0, MIN_INTERVAL_MS - (now - lastReqAt)) : 0;
+  if (wait > 0) await sleep(wait);
+  lastReqAt = Date.now();
+}
 
 async function analyzeWithRetry(cookie, query) {
   let last;
-  for (let attempt = 0; attempt < RETRY_MAX; attempt++) {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    await throttle();
     last = await analyze(cookie, query);
-    if (!(last.status >= 500) || attempt === RETRY_MAX - 1) return last;
-    console.log(`       (analyze ${last.status}，等待重试 ${attempt + 1}/${RETRY_MAX - 1}…)`);
-    await sleep(RETRY_DELAY_MS);
+    if (!(last.status >= 500) || attempt === RETRY_DELAYS_MS.length) return last;
+    const delay = RETRY_DELAYS_MS[attempt];
+    console.log(`       (analyze ${last.status}，退避重试 ${attempt + 1}/${RETRY_DELAYS_MS.length}, ${delay}ms…)`);
+    await sleep(delay);
   }
   return last;
 }
 
 async function translateWithRetry(cookie, analysis) {
   let last;
-  for (let attempt = 0; attempt < RETRY_MAX; attempt++) {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    await throttle();
     last = await translate(cookie, analysis);
-    if (!(last.status >= 500) || attempt === RETRY_MAX - 1) return last;
-    console.log(`       (translate ${last.status}，等待重试 ${attempt + 1}/${RETRY_MAX - 1}…)`);
-    await sleep(RETRY_DELAY_MS);
+    if (!(last.status >= 500) || attempt === RETRY_DELAYS_MS.length) return last;
+    const delay = RETRY_DELAYS_MS[attempt];
+    console.log(`       (translate ${last.status}，退避重试 ${attempt + 1}/${RETRY_DELAYS_MS.length}, ${delay}ms…)`);
+    await sleep(delay);
   }
   return last;
 }
@@ -185,7 +199,6 @@ async function run() {
     try {
       // 第一步: 语义分析
       const ana = await analyzeWithRetry(cookie, c.q);
-      await sleep(80);
       if (ana.status !== 200 || !ana.json?.data) {
         r.reason = `analyze HTTP ${ana.status}: ${ana.json?.error || ''}`;
         results.push(r); fail += 1;
@@ -211,7 +224,6 @@ async function run() {
 
       // 第二步: 公式翻译（模拟"确认"）
       const tr = await translateWithRetry(cookie, data);
-      await sleep(120);
       if (tr.status !== 200 || !tr.json?.data) {
         r.reason = `translate HTTP ${tr.status}: ${tr.json?.error || ''}`;
         results.push(r); fail += 1;

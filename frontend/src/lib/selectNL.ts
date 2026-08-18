@@ -345,6 +345,9 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '         CLOSE < BOLL_LOWER(CLOSE,20,2) 或 CROSS_DOWN(CLOSE, BOLL_LOWER(CLOSE,20,2))',
     '   错误: REF(BOLL_UPPER(...),1)、REF(BOLL_LOWER(...),1)',
     '4) 不要用未在清单中的算子；不要为「昨天的均线/布林」去写 REF(指标调用,1)。',
+    '5) 绝对偏差/偏离/乖离：用 ABS(序列) 比较（如 ABS(CLOSE - MA(CLOSE,20)) > 2），禁止展开成 OR 双向不等式。',
+    '6) 较高者/较大值/较小值：用 MAX(A,B)/MIN(A,B) 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）；',
+    '   禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（MA(MAX(...),N)、REF(MAX(...),1) 均非法）。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -440,6 +443,12 @@ export function buildHardConstraintSuffix(analysis: AnalyzeResult): string {
   if (/布林|BOLL/i.test(text)) {
     lines.push('硬约束：布林相关禁止 REF(BOLL_UPPER/LOWER(...), n)；上破/下破用 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。');
   }
+  if (/绝对偏差|偏离|乖离/.test(text)) {
+    lines.push('硬约束：本需求含绝对偏差/偏离，禁止展开成 OR 双向不等式；请用 ABS(值A - 值B) 或 ABS(值A - 值B) > N 比较。');
+  }
+  if (/较高者|较大值|取较大|较小值|较低者|取较小/.test(text)) {
+    lines.push('硬约束：本需求含「较高者/较大值/较小值」，请用 MAX(参数A, 参数B) 或 MIN(参数A, 参数B)；禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（如 MA(MAX(...),N)、REF(MAX(...),1) 非法）。');
+  }
   return lines.length ? '\n' + lines.join('\n') : '';
 }
 
@@ -467,7 +476,9 @@ export function buildRepairSystemSuffix(): string {
     '- 禁止引入未列出的算子；禁止 REF/MA/HHV/LLV/SUM 等 window 函数的第一参写成函数调用；',
     '- BARSLAST 只能有 1 个 cond 参数；COUNT 必须是 COUNT(cond, N)；',
     '- 若上次误用 BARSLAST 表达新高/新低/振幅，改为 HHV/LLV 或 (HIGH-LOW)/CLOSE；',
-    '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))。',
+    '- 若上次写成 REF(BOLL_*(...),1)，改为 CLOSE 与 BOLL_* 比较或 CROSS_UP/CROSS_DOWN(CLOSE, BOLL_*(...))；',
+    '- 若上次把绝对偏差/偏离展开成 OR 双向不等式，改为 ABS(值A - 值B) > N 形式；',
+    '- 若上次把 MAX/MIN 写进 MA/REF/HHV/LLV/SUM 等 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)），改为用 MAX/MIN 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）。',
   ].join('\n');
 }
 
@@ -505,6 +516,38 @@ export function trySafeBollRefRewrite(formula: string): string | null {
     return formula.replace(down[0], `CROSS_DOWN(CLOSE, ${inner})`);
   }
   return null;
+}
+
+// 确定性还原：弱模型把「绝对偏差」误展开成双向不等式（如 CLOSE >= MA+2 OR CLOSE <= MA-2），
+// 收敛回 ABS(差值) 形式。
+// 仅同一左值 X、同一基准 B、同一阈值 N，且 OR 两侧 = X>=(B+N) 与 X<=(B-N) 精确匹配时改写；
+// B 为字段或单层函数调用（含嵌套括号）。任一不符即返回 null，不误改其他 OR 组合。
+export function trySafeAbsAbsRewrite(formula: string): string | null {
+  const parts = splitBoolTopLevel(formula);
+  if (parts.length !== 2) return null;
+  const leftM =
+    /^([A-Z_][A-Z0-9_]*)\s*>=\s*((?:[A-Z_][A-Z0-9_]*\s*\([^)]*\))|[A-Z_][A-Z0-9_]*)\s*\+\s*(\d+(?:\.\d+)?)$/.exec(
+      parts[0]
+    );
+  if (!leftM) return null;
+  const [, x, base, n] = leftM;
+  const rightM = new RegExp(
+    `^${escapeRegExp(x)}\\s*<=\\s*${escapeRegExp(base)}\\s*-\\s*${escapeRegExp(n)}$`
+  ).exec(parts[1]);
+  if (!rightM) return null;
+  const rewritten = `ABS(${x} - ${base}) > ${n}`;
+  let depth = 0;
+  for (const ch of rewritten) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (depth < 0) return null;
+  }
+  if (depth !== 0) return null;
+  return rewritten;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function buildAnalyzePrompt(meta: NLMeta): string {
