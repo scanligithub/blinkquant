@@ -294,6 +294,22 @@ class TestRegistry(unittest.TestCase):
             self.assertFalse(v != v, f"ADX must not be NaN, got {v}")
         self.assertGreater(got[-1], 0.0)
 
+    def test_dmi_adx_flat_or_zero_range_first_bar(self):
+        # 回归：修复前 TR=0 时 100*0/0=NaN 且 NaN>0 在 polars 为 True，NaN 经 ewm 传染全列
+        df = pl.DataFrame({
+            "code": ["sh.600000"] * 20,
+            # 首根零波幅 H=L=C=10，随后 19 根单调上行
+            "high": [10.0] + [10.5 + i * 0.5 for i in range(19)],
+            "low": [10.0] + [9.8 + i * 0.5 for i in range(19)],
+            "close": [10.0] + [10.2 + i * 0.5 for i in range(19)],
+        })
+        adx = INDICATORS["DMI_ADX"]["func"](5)
+        got = df.with_columns(adx.alias("a")).select("a").to_series().to_list()
+        for v in got:
+            self.assertIsNotNone(v)
+            self.assertFalse(v != v, f"ADX must not be NaN, got {v}")
+        self.assertGreater(got[-1], 0.0)
+
     def test_aroon_down_monotonic_rise(self):
         # 回归：修复前单调上行序列 AROON_DOWN 全为 null（后改用 min_periods=1 又因旧锚点外溢衰减为 0）
         # 正确语义：窗口内最末极值距今天数，单调上行末窗口低点在窗口首根 → (5-4)/5*100=20

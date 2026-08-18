@@ -97,9 +97,10 @@ def _dmi_di(sign: str, n: int):
 
 
 def _dmi_adx(n: int):
-    """ADX：Wilder平滑(100×|PDI-MDI|/(PDI+MDI))，分母为 0 时置 0 防 NaN"""
+    """ADX：Wilder平滑(100×|PDI-MDI|/(PDI+MDI))，分母为 0/NaN 时置 0 防 NaN"""
     pdi, mdi = _dmi_di("p", n), _dmi_di("m", n)
-    dx = pl.when((pdi + mdi) > 0).then(100.0 * (pdi - mdi).abs() / (pdi + mdi)).otherwise(0.0)
+    denom = pdi + mdi
+    dx = pl.when(denom.is_finite() & (denom > 0)).then(100.0 * (pdi - mdi).abs() / denom).otherwise(0.0)
     return _wilder(dx, n)
 
 
@@ -193,7 +194,8 @@ def _sar():
 def _aroon_from_hl(s, n: int, up: bool):
     """单 code 组的 Aroon：窗口内最后一次极值距今天数 → 100*(n-bars_since)/n。
 
-    bars_since = (n-1) - j（j 为窗口内极值 0 基位置，最末一个匹配）；前 n-1 行不足窗口返回 None。
+    bars_since = (n-1) - pos（pos 为窗口内极值 0 基位置，最末一个匹配）；前 n-1 行不足窗口返回 None。
+    窗口内含 None（停牌日）时跳过该值；整窗无有效值时沿用上一行输出。
     """
     ext = s.struct.field("high" if up else "low").to_list()
     k = len(ext)
@@ -201,11 +203,15 @@ def _aroon_from_hl(s, n: int, up: bool):
     for i in range(k):
         if i < n - 1:
             continue
-        w = ext[i - n + 1:i + 1]
-        m = max(w) if up else min(w)
-        for j in range(n - 1, -1, -1):
-            if w[j] == m:
-                out[i] = 100.0 * (n - (n - 1 - j)) / n
+        window = ext[i - n + 1:i + 1]
+        valid = [v for v in window if v is not None]
+        if not valid:
+            out[i] = out[i - 1]
+            continue
+        extreme = max(valid) if up else min(valid)
+        for pos in range(n - 1, -1, -1):
+            if window[pos] == extreme:
+                out[i] = 100.0 * (n - (n - 1 - pos)) / n
                 break
     return pl.Series("a", out, dtype=pl.Float64)
 
