@@ -679,27 +679,35 @@ Expected: 全量 PASS（含新 6 个用例，select-nl 总数 ~105）。
 
 ## Task 5: 全量验证 + TSC
 
-- [ ] **Step 1: 后端全量**
+- [x] **Step 1: 后端全量**
 
 Run: `python -m unittest discover -s tests`（backend 工作目录）
 Expected: 全部 PASS（registry 13 + 新增 6 + 其余后端测试）。
 
-- [ ] **Step 2: 前端 9 套件全量**
+> 实测：`Ran 98 tests ... OK`
 
-Run: `node --test tests`（frontend 工作目录）
+- [x] **Step 2: 前端 9 套件全量**
+
+Run: `node --test tests/**/*.mjs`（frontend 工作目录）
 Expected: 全部 PASS。
 
-- [ ] **Step 3: TSC 类型检查**
+> 实测：`171 pass / 0 fail`
+
+- [x] **Step 3: TSC 类型检查**
 
 Run: `npx --yes -p typescript@5.3.3 tsc --noEmit --noResolve --skipLibCheck --jsx preserve --esModuleInterop src/lib/selectNL.ts`
 Expected: 无错误输出。
 
-- [ ] **Step 4: 提交**
+> 实测：无错误（退出码 0）
+
+- [x] **Step 4: 提交**
 
 ```bash
 git add frontend/tests/select-nl.test.mjs frontend/scripts/nl-coverage.mjs frontend/src/lib/selectNL.ts
 git commit -m "feat(frontend): 同步 23 新算子 META/覆盖生成器/提示词易错模式"
 ```
+
+> 已提交 `9a065da`；docs 计划更新 `21f9bb1`。
 
 ---
 
