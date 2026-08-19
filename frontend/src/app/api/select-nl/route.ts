@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
       // 安全 BOLL 改写 / ABS 双向展开还原 / 数值穿越收敛（零 token），成功后直接过检则省一次 repair
       let rewritten = trySafeBollRefRewrite(parsed.formula);
       if (!rewritten) rewritten = trySafeAbsAbsRewrite(parsed.formula);
-      if (!rewritten) rewritten = trySafeNumericCrossRewrite(parsed.formula);
+      if (!rewritten) rewritten = trySafeNumericCrossRewrite(parsed.formula, analysis);
       if (rewritten) parsed = { ...parsed, formula: rewritten };
       const validation = validateFormula(meta, parsed.formula);
       if (validation.ok === false) {

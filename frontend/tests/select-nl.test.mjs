@@ -434,27 +434,42 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// 确定性还原：弱模型把「CCI 上穿/突破 N」误写成 CROSS_UP(X, MA(N,1)) 或 X>N AND REF(X,1)<=N，
-// 收敛回直接比较 X > N / X < N（提示词已指明 CCI 突破用 CCI(N) > 100）。
-// 仅 X 为单值字段/算子调用、N 为数值字面量时改写；形态不精确匹配即返回 null，不误改其他公式。
-function trySafeNumericCrossRewrite(formula) {
-  const m1 = formula.match(
-    /^CROSS_UP\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
-  );
+// 确定性还原：弱模型把「CCI 上穿/突破 N」误写成 CROSS_UP(X, MA(N,1))、CROSS_UP(X, MA(X,1)) 或
+// X>N AND REF(X,1)<=N，收敛回直接比较 X > N / X < N（提示词已指明 CCI 突破用 CCI(N) > 100）。
+// 仅 X 为单值字段/算子调用时改写；N 来自公式字面量，或退化为 MA(X,1) 时从已确认分析恢复阈值；
+// 形态与阈值任一不满足即返回 null，不误改其他公式。
+function trySafeNumericCrossRewrite(formula, analysis) {
+  const x = '([A-Z_][A-Z0-9_]*\\s*\\([^)]*\\)|[A-Z_][A-Z0-9_]*)';
+  const n = '([0-9]+(?:\\.[0-9]+)?)';
+  const m1 = formula.match(new RegExp(`^CROSS_UP\\s*\\(\\s*${x}\\s*,\\s*MA\\s*\\(\\s*${n}\\s*,\\s*1\\s*\\)\\s*\\)$`, 'i'));
   if (m1) return `${m1[1]} > ${m1[2]}`;
-  const m2 = formula.match(
-    /^CROSS_DOWN\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
-  );
+  const m2 = formula.match(new RegExp(`^CROSS_DOWN\\s*\\(\\s*${x}\\s*,\\s*MA\\s*\\(\\s*${n}\\s*,\\s*1\\s*\\)\\s*\\)$`, 'i'));
   if (m2) return `${m2[1]} < ${m2[2]}`;
-  const m3 = formula.match(
-    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*>\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*<=\s*\2$/i
-  );
+  // 弱模型把数值线误写成同序列：CROSS_UP(CCI(14), MA(CCI(14), 1))，从已确认分析恢复阈值
+  const xcall = '([A-Z_][A-Z0-9_]*\\s*\\([^)]*\\))';
+  const mUp = formula.match(new RegExp(`^CROSS_UP\\s*\\(\\s*${xcall}\\s*,\\s*MA\\s*\\(\\s*\\1\\s*,\\s*1\\s*\\)\\s*\\)$`, 'i'));
+  if (mUp) {
+    const lvl = numericLevelFromAnalysis(analysis);
+    if (lvl !== null) return `${mUp[1]} > ${lvl}`;
+  }
+  const mDn = formula.match(new RegExp(`^CROSS_DOWN\\s*\\(\\s*${xcall}\\s*,\\s*MA\\s*\\(\\s*\\1\\s*,\\s*1\\s*\\)\\s*\\)$`, 'i'));
+  if (mDn) {
+    const lvl = numericLevelFromAnalysis(analysis);
+    if (lvl !== null) return `${mDn[1]} < ${lvl}`;
+  }
+  const m3 = formula.match(new RegExp(`^${x}\\s*>\\s*${n}\\s+AND\\s+REF\\s*\\(\\s*\\1\\s*,\\s*1\\s*\\)\\s*<=\\s*\\2$`, 'i'));
   if (m3) return `${m3[1]} > ${m3[2]}`;
-  const m4 = formula.match(
-    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*<\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*>=\s*\2$/i
-  );
+  const m4 = formula.match(new RegExp(`^${x}\\s*<\\s*${n}\\s+AND\\s+REF\\s*\\(\\s*\\1\\s*,\\s*1\\s*\\)\\s*>=\\s*\\2$`, 'i'));
   if (m4) return `${m4[1]} < ${m4[2]}`;
   return null;
+}
+
+// 从已确认分析（conditions+restatement）提取突破方向后的数值阈值；无则返回 null。
+function numericLevelFromAnalysis(analysis) {
+  if (!analysis) return null;
+  const text = [...(analysis.conditions || []), analysis.restatement || ''].join(' ');
+  const m = text.match(/(?:突破|上穿|上破|下穿|下破|大于|小于|高于|低于|>|<)\s*(\d+(?:\.\d+)?)/);
+  return m ? m[1] : null;
 }
 
 function buildSystemPrompt(meta) {
@@ -930,6 +945,24 @@ test('trySafeNumericCrossRewrite: 非穿越数值线不误改', () => {
   assert.equal(trySafeNumericCrossRewrite('CCI(14) > 100'), null);
   assert.equal(trySafeNumericCrossRewrite('CROSS_UP(MA(CLOSE,5), MA(CLOSE,30))'), null);
   assert.equal(trySafeNumericCrossRewrite('CLOSE > MA(CLOSE, 20) OR PE_TTM < 15'), null);
+});
+
+test('trySafeNumericCrossRewrite: CROSS_UP(X, MA(X,1)) 从已确认分析恢复阈值', () => {
+  const analysis = {
+    restatement: '用户想要筛选 14 日 CCI 向上突破 100 的股票。',
+    conditions: ['14日CCI指标上穿100（今日CCI>100且昨日CCI<=100）'],
+    logic: '1', timeframe: 'D',
+  };
+  const r = trySafeNumericCrossRewrite('CROSS_UP(CCI(14), MA(CCI(14), 1))', analysis);
+  assert.equal(r, 'CCI(14) > 100');
+  const v = validateFormula(META, r);
+  assert.equal(v.ok, true, `收敛公式校验失败: ${v.reason}`);
+});
+
+test('trySafeNumericCrossRewrite: 无分析或阈值缺失不改写', () => {
+  const analysis = { conditions: ['CCI走强'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeNumericCrossRewrite('CROSS_UP(CCI(14), MA(CCI(14), 1))', analysis), null);
+  assert.equal(trySafeNumericCrossRewrite('CROSS_UP(CCI(14), MA(CCI(14), 1))', undefined), null);
 });
 
 test('checkRateLimit: 允许窗口内请求', () => {
