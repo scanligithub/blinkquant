@@ -585,7 +585,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
 - Modify: `frontend/scripts/nl-coverage.mjs`
 - Modify: `frontend/src/lib/selectNL.ts`
 
-- [ ] **Step 1: 更新测试文件 `META.indicators`（第 18 行）**
+- [x] **Step 1: 更新测试文件 `META.indicators`（第 18 行）**
 
 替换为（sorted 全 47 项，与 Task 1 后端列表一致）：
 
@@ -593,7 +593,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
   indicators: ['ABS', 'AROON_DOWN', 'AROON_UP', 'ATR', 'BARSLAST', 'BBI', 'BIAS', 'BOLL_LOWER', 'BOLL_MID', 'BOLL_UPPER', 'CCI', 'COUNT', 'CR', 'CROSS_DOWN', 'CROSS_UP', 'DEMA', 'DMI_ADX', 'DMI_MDI', 'DMI_PDI', 'EMA', 'HHV', 'KDJ_D', 'KDJ_J', 'KDJ_K', 'LLV', 'MA', 'MACD_DEA', 'MACD_DIF', 'MACD_HIST', 'MAX', 'MFI', 'MIN', 'OBV', 'PPO', 'PSY', 'REF', 'ROC', 'RSI', 'SAR', 'STD', 'SUM', 'TEMA', 'TRIX', 'UO', 'VR', 'VWAP', 'WR'],
 ```
 
-- [ ] **Step 2: 更新测试文件 `META.signatures`（第 22 行）**
+- [x] **Step 2: 更新测试文件 `META.signatures`（第 22 行）**
 
 在 `MACD_HIST: ['pos_int', 'pos_int', 'pos_int']` 后追加：
 
@@ -603,7 +603,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
 
 （注意：该行已以 `}` 结尾，需把 ` }` 前的内容扩展；保持同一对象字面量语法正确。）
 
-- [ ] **Step 3: 更新测试文件 `META.descriptions`（第 23 行）**
+- [x] **Step 3: 更新测试文件 `META.descriptions`（第 23 行）**
 
 在 `MACD_HIST: '...'` 后追加 23 条（中文说明与 Task 2 Step 3 逐字节一致）：
 
@@ -611,7 +611,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
 , DMI_PDI: '+DI上升趋向指标（N日，固定用HIGH/LOW/CLOSE）', DMI_MDI: '-DI下降趋向指标（N日，固定用HIGH/LOW/CLOSE）', DMI_ADX: 'ADX趋向平均线（N日，固定用HIGH/LOW/CLOSE）', OBV: '能量潮（累计量：收涨+量/收跌-量，固定用CLOSE/VOL）', CCI: '顺势指标CCI（N日，固定用HIGH/LOW/CLOSE）', WR: '威廉指标WR（N日，固定用HIGH/LOW/CLOSE，>80超买/<20超卖）', MFI: '资金流量指数MFI（N日，固定用HIGH/LOW/CLOSE/VOL）', SAR: '抛物线停损SAR（固定0.02/0.2，固定用HIGH/LOW/CLOSE）', AROON_UP: '阿隆上升（N日新高比例，固定用HIGH）', AROON_DOWN: '阿隆下降（N日新低比例，固定用LOW）', TRIX: '三重指数均线变动率（N日，固定用CLOSE）', BBI: '多空指标（3/6/12/24日均线均值，固定用CLOSE）', VWAP: 'N日量价均价（SUM(C*VOL,n)/SUM(VOL,n)）', BIAS: 'N日乖离率（(C-MA(C,n))/MA(C,n)*100）', KDJ_J: 'KDJ随机指标J值（3K-2D，固定用HIGH/LOW/CLOSE）', BOLL_MID: '布林带中轨（N日均价）', PPO: '价格振荡百分比（(EMA(C,f)-EMA(C,s))/EMA(C,s)*100）', DEMA: '双重指数均线（2*EMA-EMA(EMA)）', TEMA: '三重指数均线（3*EMA-3*EMA(EMA)+EMA(EMA(EMA))）', UO: '终极摆动指标（固定7/14/28窗口，固定用HIGH/LOW/CLOSE）', VR: 'N日量比（(上涨量+0.5平盘量)/(下跌量+0.5平盘量)*100）', PSY: 'N日心理线（上涨天数占比*100）', CR: 'N日能量指标（上涨中间价动量/下跌中间价动量*100）'
 ```
 
-- [ ] **Step 4: 更新测试文件 `META.example_queries`（第 21 行）**
+- [x] **Step 4: 更新测试文件 `META.example_queries`（第 21 行）**
 
 在 `'CROSS_UP(MACD_DIF(12, 26), MACD_DEA(12, 26, 9))'` 后追加：
 
@@ -619,7 +619,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
 , 'CROSS_UP(DMI_PDI(14), DMI_MDI(14))', 'WR(14) > 80', 'CCI(14) > 100', 'MFI(14) < 20', 'CLOSE > SAR()'
 ```
 
-- [ ] **Step 5: `nl-coverage.mjs` 的 `IND_GEN` 追加 23 条**（在 `WR` 之前按字母序插入，或直接加在对象内任意位置）
+- [x] **Step 5: `nl-coverage.mjs` 的 `IND_GEN` 追加 23 条**（在 `WR` 之前按字母序插入，或直接加在对象内任意位置）
 
 ```javascript
   AROON_DOWN: { q: '阿隆下降大于50的股票', sub: ['AROON_DOWN'] },
@@ -647,7 +647,7 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
   WR: { q: '14日威廉指标大于80的股票', sub: ['WR'] },
 ```
 
-- [ ] **Step 6: `selectNL.ts` 易错模式追加第 9 条**（在 `buildSystemPrompt` 的 `8) MACD 金叉/死叉...` 行后追加）
+- [x] **Step 6: `selectNL.ts` 易错模式追加第 9 条**（在 `buildSystemPrompt` 的 `8) MACD 金叉/死叉...` 行后追加）
 
 ```typescript
     '9) DMI/ADX 金叉：用 CROSS_UP(DMI_PDI(N), DMI_MDI(N))；ADX 强弱用 DMI_ADX(N) > 25 直接比较。',
@@ -655,21 +655,25 @@ Expected: 新用例 FAIL（`OBV` 未注册 / `SAR` 未注册 等校验失败—�
     '11) CCI 突破用 CCI(N) > 100；WR 超买 WR(N) > 80、超卖 WR(N) < 20；MFI 用 MFI(N) < 20。',
 ```
 
-- [ ] **Step 7: `buildRepairSystemSuffix` 追加 2 条规则**（在 `selectNL.ts` 该函数规则数组末尾 `'- 若上次把 CROSS_UP...'` 后追加）
+- [x] **Step 7: `buildRepairSystemSuffix` 追加 2 条规则**（在 `selectNL.ts` 该函数规则数组末尾 `'- 若上次把 CROSS_UP...'` 后追加）
 
 ```typescript
     '- 若上次写了裸名 OBV/BBI/SAR/UO 或漏了括号，改为带括号调用（OBV()/BBI()/SAR()/UO()）；',
     '- 若上次把 CROSS_UP/CROSS_DOWN 用于 DMI，参数应为 DMI_PDI(N)/DMI_MDI(N)；',
 ```
 
-- [ ] **Step 8: 同步 `select-nl.test.mjs` 内嵌的 `buildSystemPrompt` / `buildRepairSystemSuffix` 副本**
+- [x] **Step 8: 同步 `select-nl.test.mjs` 内嵌的 `buildSystemPrompt` / `buildRepairSystemSuffix` 副本**
 
 在测试文件中找到复制的 `buildSystemPrompt`（含 `易错模式` 文本，约第 452 行）与复制的 `buildRepairSystemSuffix`（约第 989-1026 行区域），执行与 Step 6/Step 7 完全相同的文本追加（第 9/10/11 条 + 2 条 repair 规则）。测试副本必须与 `src/lib/selectNL.ts` 文本一致。
 
-- [ ] **Step 9: 运行确认 GREEN**
+- [x] **Step 9: 运行确认 GREEN**
 
-Run: `node --test tests/select-nl.test.mjs`（frontend 工作目录）
+Run: `node --test tests/**/*.mjs`（frontend 工作目录）
 Expected: 全量 PASS（含新 6 个用例，select-nl 总数 ~105）。
+
+> 当前 `select-nl.test.mjs: 105 pass`；`tests/**/*.mjs: 171 pass`。
+
+- [ ] **Step 10: Commit** (handled by implementer)
 
 ---
 
