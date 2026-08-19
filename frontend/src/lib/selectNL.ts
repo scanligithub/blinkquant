@@ -351,6 +351,9 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '7) 距上次站上/跌破均线等「距上次」类条件：BARSLAST 的条件必须是简单比较式（如 BARSLAST(CLOSE > MA(CLOSE,20)) 站上 / BARSLAST(CLOSE < MA(CLOSE,20)) 跌破）；',
     '   禁止把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST 的条件（BARSLAST(CROSS_UP(...))、BARSLAST(CROSS_DOWN(...)) 均非法）。',
     '8) MACD 金叉/死叉：用 CROSS_UP(MACD_DIF(f,s), MACD_DEA(f,s,si)) / CROSS_DOWN(...)；MACD 柱>0 用 MACD_HIST(f,s,si) > 0。',
+    '9) DMI/ADX 金叉：用 CROSS_UP(DMI_PDI(N), DMI_MDI(N))；ADX 强弱用 DMI_ADX(N) > 25 直接比较。',
+    '10) 零参算子必须写括号：OBV()、BBI()、SAR()、UO()，禁止写裸名 OBV/BBI/SAR/UO。',
+    '11) CCI 突破用 CCI(N) > 100；WR 超买 WR(N) > 80、超卖 WR(N) < 20；MFI 用 MFI(N) < 20。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -483,6 +486,8 @@ export function buildRepairSystemSuffix(): string {
     '- 若上次把绝对偏差/偏离展开成 OR 双向不等式，改为 ABS(值A - 值B) > N 形式；',
     '- 若上次把 MAX/MIN 写进 MA/REF/HHV/LLV/SUM 等 window 函数参数（如 MA(MAX(...),N)、REF(MAX(...),1)），改为用 MAX/MIN 直接比较（如 CROSS_UP(MAX(OPEN,CLOSE), MA(CLOSE,20))）；',
     '- 若上次把 CROSS_UP/CROSS_DOWN 函数调用作为 BARSLAST/COUNT 的条件参数，改为简单比较式（如 BARSLAST(CLOSE < MA(CLOSE,20)) > 5）。',
+    '- 若上次写了裸名 OBV/BBI/SAR/UO 或漏了括号，改为带括号调用（OBV()/BBI()/SAR()/UO()）；',
+    '- 若上次把 CROSS_UP/CROSS_DOWN 用于 DMI，参数应为 DMI_PDI(N)/DMI_MDI(N)；',
   ].join('\n');
 }
 
