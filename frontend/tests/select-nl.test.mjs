@@ -434,6 +434,29 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// 确定性还原：弱模型把「CCI 上穿/突破 N」误写成 CROSS_UP(X, MA(N,1)) 或 X>N AND REF(X,1)<=N，
+// 收敛回直接比较 X > N / X < N（提示词已指明 CCI 突破用 CCI(N) > 100）。
+// 仅 X 为单值字段/算子调用、N 为数值字面量时改写；形态不精确匹配即返回 null，不误改其他公式。
+function trySafeNumericCrossRewrite(formula) {
+  const m1 = formula.match(
+    /^CROSS_UP\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
+  );
+  if (m1) return `${m1[1]} > ${m1[2]}`;
+  const m2 = formula.match(
+    /^CROSS_DOWN\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
+  );
+  if (m2) return `${m2[1]} < ${m2[2]}`;
+  const m3 = formula.match(
+    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*>\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*<=\s*\2$/i
+  );
+  if (m3) return `${m3[1]} > ${m3[2]}`;
+  const m4 = formula.match(
+    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*<\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*>=\s*\2$/i
+  );
+  if (m4) return `${m4[1]} < ${m4[2]}`;
+  return null;
+}
+
 function buildSystemPrompt(meta) {
   const fieldsLine = meta.fields.join('、');
   const unitsLine = Object.entries(meta.units).map(([k, v]) => `${k}=${v}`).join('，');
@@ -891,6 +914,24 @@ test('trySafeAbsAbsRewrite: 非双向展开不误改', () => {
   assert.equal(trySafeAbsAbsRewrite('OPEN > CLOSE AND CLOSE >= LOW'), null);
 });
 
+test('trySafeNumericCrossRewrite: CROSS_UP(X, MA(N,1)) 收敛为 X > N', () => {
+  const r = trySafeNumericCrossRewrite('CROSS_UP(CCI(14), MA(100, 1))');
+  assert.equal(r, 'CCI(14) > 100');
+  const v = validateFormula(META, r);
+  assert.equal(v.ok, true, `收敛公式校验失败: ${v.reason}`);
+});
+
+test('trySafeNumericCrossRewrite: 上穿/下穿 REF 形态收敛', () => {
+  assert.equal(trySafeNumericCrossRewrite('CCI(14) > 100 AND REF(CCI(14), 1) <= 100'), 'CCI(14) > 100');
+  assert.equal(trySafeNumericCrossRewrite('WR(14) < 20 AND REF(WR(14), 1) >= 20'), 'WR(14) < 20');
+});
+
+test('trySafeNumericCrossRewrite: 非穿越数值线不误改', () => {
+  assert.equal(trySafeNumericCrossRewrite('CCI(14) > 100'), null);
+  assert.equal(trySafeNumericCrossRewrite('CROSS_UP(MA(CLOSE,5), MA(CLOSE,30))'), null);
+  assert.equal(trySafeNumericCrossRewrite('CLOSE > MA(CLOSE, 20) OR PE_TTM < 15'), null);
+});
+
 test('checkRateLimit: 允许窗口内请求', () => {
   const store = new Map();
   recordRequest(store, 'k', 0);
@@ -1152,6 +1193,7 @@ test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
   assert.match(src, /export function buildRepairSystemSuffix/);
   assert.match(src, /export function buildRepairUserMessage/);
   assert.match(src, /export function trySafeBollRefRewrite/);
+  assert.match(src, /export function trySafeNumericCrossRewrite/);
 });
 
 // ---- 注册表全覆盖：生成器与覆盖矩阵（import scripts/nl-coverage.mjs，纯 .mjs 无需复制）----
@@ -1205,6 +1247,23 @@ test('buildCoverageCases: sub_any 不参与覆盖判定（多解算子仍生成�
   const out = buildCoverageCases(meta, existing);
   const cids = out.cases.map((c) => c.cid).sort();
   assert.deepEqual(cids, ['gI_COUNT', 'gI_REF']);
+});
+
+test('buildCoverageCases: 令牌前缀不误判（CROSS_UP 不覆盖 CR）', () => {
+  const meta = {
+    fields: ['CLOSE'],
+    indicators: ['CR', 'CROSS_UP', 'CROSS_DOWN'],
+    timeframes: ['D', 'W', 'M'],
+    units: {}, example_queries: [], signatures: {}, descriptions: {},
+  };
+  const existing = [
+    { cid: 'i3', q: '5日均线上穿30日均线的股票', sub: ['CROSS_UP'], tf: 'D' },
+    { cid: 'x', q: '5日均线下穿30日均线的股票', sub: ['CROSS_DOWN'], tf: 'D' },
+  ];
+  const out = buildCoverageCases(meta, existing);
+  const cids = out.cases.map((c) => c.cid);
+  assert.ok(cids.includes('gI_CR'), 'CR 应生成专属用例，而非被 CROSS_UP 前缀覆盖判定跳过');
+  assert.deepEqual(out.uncoveredInds, []);
 });
 
 test('computeCoverageMatrix: 从公式反推字段/算子覆盖与缺失', () => {

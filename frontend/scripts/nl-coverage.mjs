@@ -87,7 +87,8 @@ function coveredTokens(meta, existingCases) {
     for (const s of c.sub || []) {
       const up = String(s).toUpperCase();
       for (const tok of allTokens) {
-        if (up.startsWith(tok)) {
+        // 按令牌边界匹配：'MA(' 命中 MA，但 'CROSS_UP' 不命中 CR/CROSS
+        if (up === tok || up.startsWith(tok) && !/[A-Z0-9_]/.test(up[tok.length])) {
           if (meta.fields.includes(tok)) coveredFields.add(tok);
           else coveredInds.add(tok);
         }

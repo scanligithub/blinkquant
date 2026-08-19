@@ -559,6 +559,29 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// 确定性还原：弱模型把「CCI 上穿/突破 N」误写成 CROSS_UP(X, MA(N,1)) 或 X>N AND REF(X,1)<=N，
+// 收敛回直接比较 X > N / X < N（提示词已指明 CCI 突破用 CCI(N) > 100）。
+// 仅 X 为单值字段/算子调用、N 为数值字面量时改写；形态不精确匹配即返回 null，不误改其他公式。
+export function trySafeNumericCrossRewrite(formula: string): string | null {
+  const m1 = formula.match(
+    /^CROSS_UP\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
+  );
+  if (m1) return `${m1[1]} > ${m1[2]}`;
+  const m2 = formula.match(
+    /^CROSS_DOWN\s*\(\s*([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*,\s*MA\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*1\s*\)\s*\)$/i
+  );
+  if (m2) return `${m2[1]} < ${m2[2]}`;
+  const m3 = formula.match(
+    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*>\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*<=\s*\2$/i
+  );
+  if (m3) return `${m3[1]} > ${m3[2]}`;
+  const m4 = formula.match(
+    /^([A-Z_][A-Z0-9_]*\s*\([^)]*\)|[A-Z_][A-Z0-9_]*)\s*<\s*(\d+(?:\.\d+)?)\s+AND\s+REF\s*\(\s*\1\s*,\s*1\s*\)\s*>=\s*\2$/i
+  );
+  if (m4) return `${m4[1]} < ${m4[2]}`;
+  return null;
+}
+
 export function buildAnalyzePrompt(meta: NLMeta): string {
   const fieldsLine = meta.fields.join('、');
   const unitsLine = Object.entries(meta.units)
