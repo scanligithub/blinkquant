@@ -1,6 +1,6 @@
 # BlinkQuant 自然语言选股使用说明书
 
-> 版本：依据注册表全覆盖测试（50/50 用例全过，字段 18/18 + 算子 21/21）撰写
+> 版本：依据线上全覆盖测试（`node scripts/nl-test.mjs`，字段 18/18 + 算子 47/47 全过）撰写
 > 适用范围：线上环境（Vercel 前后端 + Hugging Face Space 数据节点），主模型 `nvidia/nemotron-3-ultra-550b-a55b`
 
 ## 一、功能概述
@@ -82,16 +82,16 @@
 
 **常见换算陷阱**：5000 万 = 5e7（不是 5e9）；200 亿 = 2e10（不是 2e11）。系统内置「量级校验」：如果语义里出现「X 亿/万」，而公式里没有出现对应量级的数值常量，翻译会被判为非法并自动重试一次来纠正。
 
-## 四、支持的算子（21 个）
+## 四、支持的算子（47 个）
 
-以下 21 个算子为当前全集。形参说明：`field` = 白名单字段；`pos_int` = 1–500 正整数；`series` = 字段或一层指标调用；`cond` = 布尔比较式（`> >= < <=` 及 `AND/OR` 组合）。
+以下 47 个算子为当前全集。形参说明：`field` = 白名单字段；`pos_int` = 1–500 正整数；`series` = 字段或一层指标调用；`cond` = 布尔比较式（`> >= < <=` 及 `AND/OR` 组合）。
 
 ### 4.1 窗口类（`field, pos_int`）
 
 | 算子 | 签名 | 含义 | 已验证口语示例 |
 |------|------|------|---------------|
 | `MA` | `MA(field, N)` | N 日简单移动平均 | 收盘价站上 20 日均线 → `CLOSE > MA(CLOSE, 20)` |
-| `EMA` | `EMA(field, N)` | N 日指数移动平均 | 收盘价站上 20 日指数均线 → `CROSS_UP(CLOSE, EMA(CLOSE, 20))` |
+| `EMA` | `EMA(field, N)` | N 日指数移动平均 | 收盘价站上 20 日指数均线 → `CLOSE > EMA(CLOSE, 20)` |
 | `STD` | `STD(field, N)` | N 日标准差 | 20 日收盘价标准差大于 2 → `STD(CLOSE, 20) > 2` |
 | `ROC` | `ROC(field, N)` | N 日变动率(%) | 5 日变动率大于 5% → `ROC(CLOSE, 5) > 5` |
 | `REF` | `REF(field, N)` | N 日前值 | 今日收盘价高于昨日 → `CLOSE > REF(CLOSE, 1)` |
@@ -115,6 +115,7 @@
 - `CROSS_UP/CROSS_DOWN/MAX/MIN` 参数可嵌套**一层**指标调用（如 `CROSS_UP(MA(CLOSE,20), MA(CLOSE,60))`），禁止更深嵌套。
 - 禁止把 `MAX/MIN` 作为外层 `MA/REF/HHV/LLV/SUM` 的窗口参数（`MA(MAX(...),N)`、`REF(MAX(...),1)` 均非法）。
 - 口语中的「偏高者/较大值/较低者/取较小」→ 正确映射 `MAX/MIN`；**绝对偏差/偏离/乖离** → 用 `ABS(序列)` 比较，禁止展开成 `A>B+N OR A<B-N` 双向不等式（系统会自动把这种展开还原为 `ABS(...)` 形式）。
+- **穿越数值线的口语（突破/上穿 100 这类）**：公式语言无法表达「上穿数值」本身，系统内置确定性改写（`trySafeNumericCrossRewrite`），`CROSS_UP(X, MA(N,1))` → `X > N`、`X>N AND REF(X,1)<=N` → `X > N` 等非法形态会被自动改写为合法比较式，见 4.4 的 `CCI` 示例。
 
 ### 4.3 条件统计类（`cond`）
 
@@ -130,14 +131,47 @@
 
 ### 4.4 复合指标（单值 / 固定内部列）
 
+所有复合指标参数为 `pos_int`（或 `field, pos_int`），固定使用内部列计算，口语未指定周期时按通用默认值。
+
 | 算子 | 签名 | 含义 | 已验证口语示例 |
 |------|------|------|---------------|
 | `ATR` | `ATR(N)` | N 日真实波幅均值（最高/最低/昨收最大差距，简化版） | 14 日真实波幅均值大于 3 → `ATR(14) > 3` |
 | `RSI` | `RSI(field, N)` | N 日相对强弱（涨跌幅均值比，简化版） | 14 日 RSI 大于 70 → `RSI(CLOSE, 14) > 70` |
 | `BOLL_UPPER` | `BOLL_UPPER(field, N, K)` | 布林上轨：N 日均价 + K×N 日标准差 | 收盘价突破布林上轨 → `CLOSE > BOLL_UPPER(CLOSE, 20, 2)` 或 `CROSS_UP(CLOSE, BOLL_UPPER(CLOSE, 20, 2))` |
 | `BOLL_LOWER` | `BOLL_LOWER(field, N, K)` | 布林下轨：N 日均价 − K×N 日标准差 | 收盘价跌破布林下轨 → `CLOSE < BOLL_LOWER(CLOSE, 20, 2)` 或 `CROSS_DOWN(CLOSE, BOLL_LOWER(CLOSE, 20, 2))` |
+| `BOLL_MID` | `BOLL_MID(field, N)` | 布林带中轨（N 日均价） | 收盘价高于布林中轨 → `CLOSE > BOLL_MID(CLOSE, 20)` |
 | `KDJ_K` | `KDJ_K(N, M)` | KDJ 随机指标 K 值（固定用 HIGH/LOW/CLOSE，简化版） | KDJ 的 K 值大于 80 → `KDJ_K(9, 3) > 80` |
 | `KDJ_D` | `KDJ_D(N, M)` | KDJ 随机指标 D 值（固定用 HIGH/LOW/CLOSE，简化版） | KDJ 的 D 值大于 80 → `KDJ_D(9, 3) > 80` |
+| `KDJ_J` | `KDJ_J(N, M)` | KDJ 随机指标 J 值（3K − 2D，固定用 HIGH/LOW/CLOSE） | KDJ 的 J 值大于 100 → `KDJ_J(9, 3) > 100` |
+| `MACD_DIF` | `MACD_DIF(fast, slow)` | MACD 快慢线差（EMA(CLOSE,fast) − EMA(CLOSE,slow)，固定用 CLOSE） | MACD 的 DIF 值大于 0 → `MACD_DIF(12, 26) > 0` |
+| `MACD_DEA` | `MACD_DEA(fast, slow, signal)` | MACD 信号线（DIF 的 signal 期 EMA，固定用 CLOSE） | MACD 的 DEA 值大于 0 → `MACD_DEA(12, 26, 9) > 0` |
+| `MACD_HIST` | `MACD_HIST(fast, slow, signal)` | MACD 柱（2 × (DIF − DEA)，固定用 CLOSE） | MACD 柱大于 0 → `MACD_HIST(12, 26, 9) > 0` |
+| `DMI_PDI` | `DMI_PDI(N)` | +DI 上升趋向指标（N 日，固定用 HIGH/LOW/CLOSE） | 14 日 +DI 大于 -DI → `DMI_PDI(14) > DMI_MDI(14)` |
+| `DMI_MDI` | `DMI_MDI(N)` | -DI 下降趋向指标（N 日，固定用 HIGH/LOW/CLOSE） | 14 日 -DI 小于 20 → `DMI_MDI(14) < 20` |
+| `DMI_ADX` | `DMI_ADX(N)` | ADX 趋向平均线（N 日，固定用 HIGH/LOW/CLOSE） | 14 日 ADX 大于 25 → `DMI_ADX(14) > 25` |
+| `OBV` | `OBV()` | 能量潮（累计量：收涨+量/收跌−量，固定用 CLOSE/VOL） | 能量潮 OBV 大于 0 → `OBV() > 0` |
+| `CCI` | `CCI(N)` | 顺势指标 CCI（N 日，固定用 HIGH/LOW/CLOSE） | 14 日 CCI 突破 100 → `CCI(14) > 100` |
+| `WR` | `WR(N)` | 威廉指标 WR（N 日，固定用 HIGH/LOW/CLOSE，>80 超买/<20 超卖） | 14 日威廉指标大于 80 → `WR(14) > 80` |
+| `MFI` | `MFI(N)` | 资金流量指数 MFI（N 日，固定用 HIGH/LOW/CLOSE/VOL） | 14 日资金流量指数小于 20 → `MFI(14) < 20` |
+| `SAR` | `SAR()` | 抛物线停损 SAR（固定 0.02/0.2，固定用 HIGH/LOW/CLOSE） | 收盘价站上抛物线 SAR → `CLOSE > SAR()` |
+| `AROON_UP` | `AROON_UP(N)` | 阿隆上升（N 日新高比例，固定用 HIGH） | 阿隆上升大于 80 → `AROON_UP(14) > 80` |
+| `AROON_DOWN` | `AROON_DOWN(N)` | 阿隆下降（N 日新低比例，固定用 LOW） | 阿隆下降大于 50 → `AROON_DOWN(14) > 50` |
+| `TRIX` | `TRIX(N)` | 三重指数均线变动率（N 日，固定用 CLOSE） | 12 日 TRIX 大于 0 → `TRIX(12) > 0` |
+| `BBI` | `BBI()` | 多空指标（3/6/12/24 日均线均值，固定用 CLOSE） | 收盘价站上多空指标 → `CLOSE > BBI()` |
+| `VWAP` | `VWAP(N)` | N 日量价均价（SUM(C×VOL,n)/SUM(VOL,n)） | 收盘价低于 20 日量价均价 → `CLOSE < VWAP(20)` |
+| `BIAS` | `BIAS(N)` | N 日乖离率（(C−MA(C,n))/MA(C,n)×100） | 20 日乖离率大于 5% → `BIAS(20) > 5` |
+| `PPO` | `PPO(fast, slow)` | 价格振荡百分比（(EMA(C,f)−EMA(C,s))/EMA(C,s)×100） | 价格振荡 PPO 大于 0 → `PPO(12, 26) > 0` |
+| `DEMA` | `DEMA(field, N)` | 双重指数均线（2×EMA − EMA(EMA)） | 收盘价站上 20 日双重指数均线 → `CLOSE > DEMA(CLOSE, 20)` |
+| `TEMA` | `TEMA(field, N)` | 三重指数均线（3×EMA − 3×EMA(EMA) + EMA(EMA(EMA))） | 收盘价站上 20 日三重指数均线 → `CLOSE > TEMA(CLOSE, 20)` |
+| `UO` | `UO()` | 终极摆动指标（固定 7/14/28 窗口，固定用 HIGH/LOW/CLOSE） | 终极摆动指标大于 50 → `UO() > 50` |
+| `VR` | `VR(N)` | N 日量比（(上涨量+0.5平盘量)/(下跌量+0.5平盘量)×100） | 14 日量比大于 150 → `VR(14) > 150` |
+| `PSY` | `PSY(N)` | N 日心理线（上涨天数占比×100） | 12 日心理线大于 60 → `PSY(12) > 60` |
+| `CR` | `CR(N)` | N 日能量指标（上涨中间价动量/下跌中间价动量×100） | 20 日能量指标大于 100 → `CR(20) > 100` |
+
+**规则约束（重要）**：
+- **零参算子必须写括号**：`OBV()`、`BBI()`、`SAR()`、`UO()`，禁止写裸名 `OBV/BBI/SAR/UO`。
+- **穿越数值线（突破/上穿/下穿 + 数值）**：如「CCI 突破 100」「14 日 CCI 上穿 100」→ 统一收敛为 `CCI(14) > 100`。系统内置 `trySafeNumericCrossRewrite` 确定性改写兜底，把模型常产出的非法形态（`CROSS_UP(CCI(14), MA(100,1))`、`CROSS_UP(CCI(14), MA(CCI(14),1))`、`CCI(14)>100 AND REF(CCI(14),1)<=100`）改写为 `CCI(14) > 100`。
+- MACD 标准参数 12/26/9；KDJ 标准参数 9/3；DMI/CCI/WR/MFI/ATR 等常用 14 日。口语未指定参数时模型按默认值生成。
 
 ## 五、易混淆表述速查
 
@@ -150,6 +184,11 @@
 | 绝对偏差：`CLOSE > MA+2 OR CLOSE < MA-2` | `ABS(CLOSE - MA(CLOSE,20)) > 2` | 用 `ABS(序列)` 比较 |
 | 较高者上穿：`MA(MAX(...), N)` | `CROSS_UP(MAX(A, B), MA(CLOSE,N))` | `MAX/MIN` 直接参与比较，不嵌进窗口 |
 | KDJ 金叉 | `CROSS_UP(KDJ_K(9, 3), KDJ_D(9, 3))` | 标准形态 |
+| MACD 金叉/死叉 | `CROSS_UP(MACD_DIF(12,26), MACD_DEA(12,26,9))` / `CROSS_DOWN(...)` | 固定标准参数 12/26/9 |
+| DMI 金叉 | `CROSS_UP(DMI_PDI(N), DMI_MDI(N))` | 参数 N 取 14 |
+| CCI 突破 100：`CROSS_UP(CCI(14), MA(100,1))` | `CCI(14) > 100` | 穿越数值线统一收敛为「指标 > 数值」（系统自动改写） |
+| 零参指标：裸名 `OBV/BBI/SAR/UO` | `OBV()` `BBI()` `SAR()` `UO()` | 零参算子必须写括号 |
+| 布林轨/均线「昨值」：`REF(BOLL_UPPER(...),1)` | `CLOSE > BOLL_UPPER(CLOSE,20,2)` 或 `CROSS_UP(CLOSE, BOLL_UPPER(CLOSE,20,2))` | 禁止引用昨日指标值 |
 
 ## 六、组合条件与逻辑
 
@@ -182,5 +221,5 @@
 本说明书中各「已验证口语示例」来自线上全覆盖测试（`node scripts/nl-test.mjs`），覆盖矩阵：
 
 - **字段 18/18**：价格类、量额类、涨跌/换手、指数点位、估值（PE/PB）、业绩预测、股本/市值全部覆盖。
-- **算子 21/21**：窗口类 8 个 + 交叉/极值 5 个 + 条件统计 2 个 + 复合指标 6 个全部覆盖。
-- **边界与歧义**：新高/新低、N 日振幅、OR 优先级、单位换算（亿/万/万亿）、近 N 日窗口突破、周线/月线周期、组合条件（AND/OR 混用）均有专门用例验证通过。
+- **算子 47/47**：窗口类 8 个 + 交叉/极值 5 个 + 条件统计 2 个 + 复合指标 32 个全部覆盖。
+- **边界与歧义**：新高/新低、N 日振幅、OR 优先级、单位换算（亿/万/万亿）、近 N 日窗口突破、周线/月线周期、组合条件（AND/OR 混用）、穿越数值线（CCI 突破 100）、覆盖缺口算子（CR 20 日能量指标）均有专门用例验证通过。
