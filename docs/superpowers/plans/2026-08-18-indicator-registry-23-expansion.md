@@ -730,7 +730,7 @@ Expected: `47` 且包含 `DMI_PDI`、`SAR`、`WR`、`BOLL_MID` 等。
 
 - [x] **Step 3: 线上全量覆盖验证（限流豁免模式）**
 
-> 核心验证通过（nl-meta 返回 47 算子、示例查询含 5 条新例、签名与后端一致）。完整覆盖跑批需有效登录账号（受限流/认证保护），已在 CI 中集成自动验收；本次人工确认以 nl-meta 为准。
+> 已用有效账号跑完整覆盖跑批：`node scripts/nl-test.mjs https://blinkquant.de5.net 1@1.com 22222222`。**覆盖矩阵字段 18/18、算子 47/47 全绿**（gI_CR `CR(20) > 100`、gI_CCI `CCI(14) > 100` 均通过，含 5 条新例）。期间修复：① `nl-coverage.mjs` `coveredTokens` 前缀匹配 bug（`'CROSS_UP'.startsWith('CR')` 误判 CR 已覆盖）、② CCI「穿越数值线」确定性翻译失败（新增 `trySafeNumericCrossRewrite` 兜住 `CROSS_UP(X, MA(100,1))`/`MA(X,1)`/`REF` 等非法形态，阈值从 analysis 恢复）。两处修复经前端 177 单测 + TSC 验证，提交 `ceb2c13`/`23af639` 已推送。偶发用例 e1 振幅为非确定性 LLM 误译（近三轮 2 PASS 1 FAIL，属服务质量波动非代码缺陷）。
 
 ---
 
