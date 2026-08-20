@@ -5,6 +5,19 @@ from typing import Any
 from .data_manager import data_manager
 from .indicator_registry import INDICATORS, FIELDS, WINDOW_NAMES
 
+def _limit_up_pct_expr():
+    """按 code 前缀计算每行涨停幅度：科创(688/689)/创业(30*) → 20，北交所(bj.*) → 30，其余(沪深主板) → 10。
+
+    2026-07-06 起主板 ST 亦 10%（与普通股一致），故仅按代码判板别即可。
+    """
+    return pl.when(
+        pl.col("code").str.starts_with("sh.688")
+        | pl.col("code").str.starts_with("sh.689")
+        | pl.col("code").str.starts_with("sz.30")
+    ).then(pl.lit(20.0)).when(
+        pl.col("code").str.starts_with("bj.")
+    ).then(pl.lit(30.0)).otherwise(pl.lit(10.0))
+
 def _require_whitelist_field(node: ast.AST) -> str:
     """参数必须是白名单字段名的 ast.Name。返回大写字段名。"""
     if not isinstance(node, ast.Name):
@@ -103,6 +116,7 @@ class BlinkParser:
             'TOTAL_MV': pl.col('total_mv'),
             'FLOAT_MV': pl.col('float_mv'),
             'TURN': pl.col('turn'),
+            'LIMIT_UP_PCT': _limit_up_pct_expr(),
         }
         # 当前解析上下文
         self.current_df = None

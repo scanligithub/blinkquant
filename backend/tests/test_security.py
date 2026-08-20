@@ -452,5 +452,40 @@ class TestArithSplitHelpers(unittest.TestCase):
         self.assertEqual(_strip_outer_parens("((A))"), "A")
 
 
+class TestLimitUpPct(unittest.TestCase):
+    def _df(self):
+        return pl.DataFrame({
+            "date": ["2024-01-02"] * 5,
+            "code": ["sh.600000", "sh.688001", "sz.300001", "sz.000001", "bj.830001"],
+            "close": [10.0] * 5,
+            "pctChg": [10.0, 15.0, 20.0, 10.0, 30.0],
+        })
+
+    def test_limit_up_pct_derived_from_code_prefix(self):
+        df = self._df()
+        blink_parser.current_df = df
+        node = parse_call("LIMIT_UP_PCT")
+        expr = blink_parser._visit(node)
+        vals = df.with_columns(expr.alias("lup")).select(pl.col("lup")).to_series().to_list()
+        self.assertEqual(vals, [10.0, 20.0, 20.0, 10.0, 30.0])
+
+    def test_limit_up_translation(self):
+        df = self._df()
+        blink_parser.current_df = df
+        # 涨停：主板 pctChg=10 通过（sh.600000/sz.000001）；科创 pctChg=15 拒绝；创业 pctChg=20 通过；北交 30 通过
+        expr = blink_parser.parse_expression("PCT_CHG >= LIMIT_UP_PCT")
+        out = df.with_columns(expr.alias("hit")).filter(pl.col("hit")).select("code").to_series().to_list()
+        self.assertEqual(out, ["sh.600000", "sz.300001", "sz.000001", "bj.830001"])
+
+    def test_limit_down_translation(self):
+        df = self._df()
+        blink_parser.current_df = df
+        expr = blink_parser.parse_expression("PCT_CHG <= 0 - LIMIT_UP_PCT")
+        df2 = df.with_columns((pl.col("pctChg") * -1.0).alias("pctChg"))
+        out = df2.with_columns(expr.alias("hit")).filter(pl.col("hit")).select("code").to_series().to_list()
+        # 所有 pctChg 已取反：-10<=-10(main) / -15<=-20? no / -20<=-20(kc) / -10<=-10 / -30<=-30(bj)
+        self.assertEqual(out, ["sh.600000", "sz.300001", "sz.000001", "bj.830001"])
+
+
 if __name__ == "__main__":
     unittest.main()
