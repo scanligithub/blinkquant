@@ -1475,3 +1475,11 @@ test('new-indicators: buildSystemPrompt 含新算子说明与零参写法', () =
   assert.match(p, /OBV\(\)/);
   assert.match(p, /BOLL_MID/);
 });
+
+test('buildCoverageCases: LIMIT_UP_PCT 字段有生成器可生成', () => {
+  const out = buildCoverageCases({ fields: ['LIMIT_UP_PCT'], indicators: [], timeframes: ['D'], units: {}, example_queries: [], signatures: {}, descriptions: {} }, []);
+  const c = out.cases[0];
+  assert.equal(c.cid, 'gF_LIMIT_UP_PCT');
+  assert.deepEqual(c.sub, ['LIMIT_UP_PCT']);
+  assert.deepEqual(out.uncoveredFields, []);
+});

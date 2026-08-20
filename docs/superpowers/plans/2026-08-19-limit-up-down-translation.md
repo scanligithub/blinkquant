@@ -443,8 +443,10 @@ test('buildCoverageCases: LIMIT_UP_PCT 字段有生成器可生成', () => {
   // ===== 类别 6: 按板别涨停/跌停 =====
   { cid: 'l1', cat: '涨停', q: '涨停的股票', sub: ['LIMIT_UP_PCT'], tf: 'D' },
   { cid: 'l2', cat: '跌停', q: '跌停的股票', sub: ['LIMIT_UP_PCT'], tf: 'D' },
-  { cid: 'l3', cat: '涨停', q: '涨停或跌停的股票', sub: ['LIMIT_UP_PCT', 'AND'], sub_any: ['OR'], tf: 'D' },
+  { cid: 'l3', cat: '涨停', q: '涨停或跌停的股票', sub: ['LIMIT_UP_PCT'], sub_any: ['OR'], tf: 'D' },
 ```
+
+> 修正记录：l3 的 `sub` 原写作 `['LIMIT_UP_PCT', 'AND']`，但 OR 组合公式（`PCT_CHG >= LIMIT_UP_PCT OR PCT_CHG <= 0 - LIMIT_UP_PCT`）不含 `AND`，该断言必失败；已改为仅断言 `LIMIT_UP_PCT` 存在 + `OR` 任一命中（nl-test.mjs 支持 `sub` 与 `sub_any` 同时断言）。
 
 > 注：`l3` 的 `sub`/`sub_any` 组合需检查 nl-test.mjs 的断言逻辑（`sub_any` 存在时怎样匹配）。若该脚本只认 `sub`，则 `l3` 用 `sub_any: ['OR']` 并仅断言公式含 `LIMIT_UP_PCT`。
 

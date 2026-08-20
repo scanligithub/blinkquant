@@ -23,6 +23,7 @@ export const FIELD_GEN = {
   TOTAL_MV: { q: '总市值大于100亿的股票', sub: ['TOTAL_MV'] },
   FLOAT_MV: { q: '流通市值大于200亿的股票', sub: ['FLOAT_MV'] },
   TURN: { q: '换手率大于5%的股票', sub: ['TURN'] },
+  LIMIT_UP_PCT: { q: '涨停的股票', sub: ['LIMIT_UP_PCT'] },
 };
 
 // 算子生成器：为每个算子写最佳口语查询。
