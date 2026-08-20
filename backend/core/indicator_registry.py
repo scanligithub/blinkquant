@@ -398,6 +398,7 @@ FIELDS = [
     "CLOSE", "OPEN", "HIGH", "LOW", "VOL", "AMOUNT", "PCT_CHG", "S_CLOSE",
     "PE_TTM", "PB_MRQ", "FORECAST_YOY", "IS_FORECAST_GOOD", "IS_FORECAST_BAD",
     "TOTAL_SHARES", "FLOAT_SHARES", "TOTAL_MV", "FLOAT_MV", "TURN",
+    "LIMIT_UP_PCT",
 ]
 
 # 单位标注：用于 LLM 提示词与前端展示（覆盖全部白名单字段）
@@ -408,6 +409,7 @@ UNITS = {
     "PE_TTM": "无量纲(倍)", "PB_MRQ": "无量纲(倍)", "TURN": "百分比(%)",
     "FORECAST_YOY": "百分比(%)", "PCT_CHG": "百分比(%)", "S_CLOSE": "指数点位",
     "IS_FORECAST_GOOD": "布尔标记(0/1)", "IS_FORECAST_BAD": "布尔标记(0/1)",
+    "LIMIT_UP_PCT": "百分比(%)",
 }
 
 # 算子中文说明：用于 LLM 提示词（value 会拼入 buildSystemPrompt）
@@ -462,6 +464,7 @@ EXAMPLE_QUERIES = [
     "CCI(14) > 100",
     "MFI(14) < 20",
     "CLOSE > SAR()",
+    "PCT_CHG >= LIMIT_UP_PCT",
 ]
 
 TIMEFRAMES = ["D", "W", "M"]
