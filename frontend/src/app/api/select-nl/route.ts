@@ -14,6 +14,7 @@ import {
   trySafeBollRefRewrite,
   trySafeAbsAbsRewrite,
   trySafeNumericCrossRewrite,
+  trySafeLimitUpDownRewrite,
   type AnalyzeResult,
   type SelectNLResult,
 } from '@/lib/selectNL';
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest) {
       let rewritten = trySafeBollRefRewrite(parsed.formula);
       if (!rewritten) rewritten = trySafeAbsAbsRewrite(parsed.formula);
       if (!rewritten) rewritten = trySafeNumericCrossRewrite(parsed.formula, analysis);
+      if (!rewritten) rewritten = trySafeLimitUpDownRewrite(parsed.formula, analysis);
       if (rewritten) parsed = { ...parsed, formula: rewritten };
       const validation = validateFormula(meta, parsed.formula);
       if (validation.ok === false) {
