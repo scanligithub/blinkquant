@@ -14,7 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---- 复制自 src/lib/selectNL.ts（保持与实现一致）----
 const META = {
-  fields: ['CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'AMOUNT', 'PCT_CHG', 'S_CLOSE', 'PE_TTM', 'PB_MRQ', 'FORECAST_YOY', 'IS_FORECAST_GOOD', 'IS_FORECAST_BAD', 'TOTAL_SHARES', 'FLOAT_SHARES', 'TOTAL_MV', 'FLOAT_MV', 'TURN'],
+  fields: ['CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'AMOUNT', 'PCT_CHG', 'S_CLOSE', 'PE_TTM', 'PB_MRQ', 'FORECAST_YOY', 'IS_FORECAST_GOOD', 'IS_FORECAST_BAD', 'TOTAL_SHARES', 'FLOAT_SHARES', 'TOTAL_MV', 'FLOAT_MV', 'TURN', 'LIMIT_UP_PCT'],
   indicators: ['ABS', 'AROON_DOWN', 'AROON_UP', 'ATR', 'BARSLAST', 'BBI', 'BIAS', 'BOLL_LOWER', 'BOLL_MID', 'BOLL_UPPER', 'CCI', 'COUNT', 'CR', 'CROSS_DOWN', 'CROSS_UP', 'DEMA', 'DMI_ADX', 'DMI_MDI', 'DMI_PDI', 'EMA', 'HHV', 'KDJ_D', 'KDJ_J', 'KDJ_K', 'LLV', 'MA', 'MACD_DEA', 'MACD_DIF', 'MACD_HIST', 'MAX', 'MFI', 'MIN', 'OBV', 'PPO', 'PSY', 'REF', 'ROC', 'RSI', 'SAR', 'STD', 'SUM', 'TEMA', 'TRIX', 'UO', 'VR', 'VWAP', 'WR'],
   timeframes: ['D', 'W', 'M'],
   units: { TOTAL_MV: '元', FLOAT_MV: '元', TOTAL_SHARES: '股', FLOAT_SHARES: '股', AMOUNT: '元', VOL: '股', PE_TTM: '无量纲(倍)', PB_MRQ: '无量纲(倍)', TURN: '百分比(%)', FORECAST_YOY: '百分比(%)', PCT_CHG: '百分比(%)', S_CLOSE: '指数点位' },
@@ -338,6 +338,9 @@ function buildHardConstraintSuffix(analysis) {
   if (/较高者|较大值|取较大|较小值|较低者|取较小/.test(text)) {
     lines.push('硬约束：本需求含「较高者/较大值/较小值」，请用 MAX(参数A, 参数B) 或 MIN(参数A, 参数B)；禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（如 MA(MAX(...),N)、REF(MAX(...),1) 非法）。');
   }
+  if (/涨停|跌停|封板|一字板/.test(text)) {
+    lines.push('硬约束：本需求含涨停/跌停语义，必须使用 PCT_CHG 与 LIMIT_UP_PCT 比较（涨停 PCT_CHG >= LIMIT_UP_PCT；跌停 PCT_CHG <= 0 - LIMIT_UP_PCT），禁止写死 10/20/30 数值。');
+  }
   return lines.length ? '\n' + lines.join('\n') : '';
 }
 
@@ -465,6 +468,23 @@ function trySafeNumericCrossRewrite(formula, analysis) {
 }
 
 // 从已确认分析（conditions+restatement）提取突破方向后的数值阈值；无则返回 null。
+// 确定性还原：弱模型把「涨停/跌停」写死数值（如 PCT_CHG >= 10，对创业/科创/北交不对），
+// 收敛回 LIMIT_UP_PCT 比较（涨停 PCT_CHG >= LIMIT_UP_PCT；跌停 PCT_CHG <= 0 - LIMIT_UP_PCT）。
+// 仅当 analysis 文本含涨停/跌停关键词 且 公式整体精确匹配 写死数值幅度时才改写，否则返回 null（不误改「涨幅大于5%」）。
+function trySafeLimitUpDownRewrite(formula, analysis) {
+  if (!analysis) return null;
+  const text = [...(analysis.conditions || []), analysis.restatement || ''].join(' ');
+  if (!/涨停|跌停|封板|一字板/.test(text)) return null;
+  const up = /^PCT_CHG\s*(>=|>)\s*(?:10|20|30)(?:\.0+)?$/.exec(formula.trim());
+  if (up) return `PCT_CHG ${up[1]} LIMIT_UP_PCT`;
+  const down = /^PCT_CHG\s*(<=|<)\s*(?:-|0\s*-\s*)(10|20|30)(?:\.0+)?$/.exec(formula.trim());
+  if (down) return `PCT_CHG ${down[1]} 0 - LIMIT_UP_PCT`;
+  const downInvert = /^0\s*-\s*PCT_CHG\s*(>=|>)\s*(?:10|20|30)(?:\.0+)?$/.exec(formula.trim());
+  if (downInvert) return 'PCT_CHG <= 0 - LIMIT_UP_PCT';
+  return null;
+}
+
+// 从已确认分析（conditions+restatement）提取突破方向后的数值阈值；无则返回 null。
 function numericLevelFromAnalysis(analysis) {
   if (!analysis) return null;
   const text = [...(analysis.conditions || []), analysis.restatement || ''].join(' ');
@@ -517,6 +537,8 @@ function buildSystemPrompt(meta) {
     '9) DMI/ADX 金叉：用 CROSS_UP(DMI_PDI(N), DMI_MDI(N))；ADX 强弱用 DMI_ADX(N) > 25 直接比较。',
     '10) 零参算子必须写括号：OBV()、BBI()、SAR()、UO()，禁止写裸名 OBV/BBI/SAR/UO。',
     '11) CCI 突破用 CCI(N) > 100；WR 超买 WR(N) > 80、超卖 WR(N) < 20；MFI 用 MFI(N) < 20。',
+    '12) 涨停/跌停：涨停 = PCT_CHG >= LIMIT_UP_PCT；跌停 = PCT_CHG <= 0 - LIMIT_UP_PCT。',
+    '   禁止写死 10/20/30（各板限幅不同：主板10 科创/创业20 北交30，必须用 LIMIT_UP_PCT 字段）。',
     '',
     '周期 timeframe 只能是 ' + meta.timeframes.join('/') + '。',
     '',
@@ -965,6 +987,51 @@ test('trySafeNumericCrossRewrite: 无分析或阈值缺失不改写', () => {
   assert.equal(trySafeNumericCrossRewrite('CROSS_UP(CCI(14), MA(CCI(14), 1))', undefined), null);
 });
 
+test('trySafeLimitUpDownRewrite: 涨停写死数值改写为 LIMIT_UP_PCT', () => {
+  const a = { restatement: '筛选涨停的股票', conditions: ['当日涨停'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 10', a), 'PCT_CHG >= LIMIT_UP_PCT');
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG > 20', a), 'PCT_CHG > LIMIT_UP_PCT');
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 30', a), 'PCT_CHG >= LIMIT_UP_PCT');
+});
+
+test('trySafeLimitUpDownRewrite: 跌停写死数值改写', () => {
+  const a = { restatement: '筛选跌停的股票', conditions: ['当日跌停'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG <= -10', a), 'PCT_CHG <= 0 - LIMIT_UP_PCT');
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG < 0 - 20', a), 'PCT_CHG < 0 - LIMIT_UP_PCT');
+  assert.equal(trySafeLimitUpDownRewrite('0 - PCT_CHG >= 30', a), 'PCT_CHG <= 0 - LIMIT_UP_PCT');
+});
+
+test('trySafeLimitUpDownRewrite: 非涨停语义或非法形态不改写', () => {
+  const a = { restatement: '筛选涨幅大于5%的股票', conditions: ['当日涨幅大于5%'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 5', a), null);
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 10', undefined), null);
+  const b = { restatement: '筛选涨停的股票', conditions: ['当日涨停'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 5.5', b), null);
+});
+
+test('trySafeLimitUpDownRewrite: 涨停或跌停 OR 组合不改写(形态不匹配)', () => {
+  const a = { restatement: '涨停或跌停的股票', conditions: ['涨停或跌停'], logic: '1', timeframe: 'D' };
+  assert.equal(trySafeLimitUpDownRewrite('PCT_CHG >= 10 OR PCT_CHG <= -10', a), null);
+});
+
+test('buildHardConstraintSuffix: 涨停/跌停触发 LIMIT_UP_PCT 硬约束', () => {
+  const a = { restatement: '筛选涨停的股票', conditions: ['当日涨停'] };
+  assert.match(buildHardConstraintSuffix(a), /LIMIT_UP_PCT/);
+  const b = { restatement: '筛选跌停的股票', conditions: ['当日跌停'] };
+  assert.match(buildHardConstraintSuffix(b), /LIMIT_UP_PCT/);
+});
+
+test('buildSystemPrompt: 易错模式含涨停/跌停与 LIMIT_UP_PCT', () => {
+  const p = buildSystemPrompt(META);
+  assert.match(p, /涨停 = PCT_CHG >= LIMIT_UP_PCT/);
+  assert.match(p, /禁止写死 10\/20\/30/);
+});
+
+test('validateFormula: 接受 PCT_CHG 与 LIMIT_UP_PCT 比较', () => {
+  assert.deepEqual(validateFormula(META, 'PCT_CHG >= LIMIT_UP_PCT'), { ok: true });
+  assert.deepEqual(validateFormula(META, 'PCT_CHG <= 0 - LIMIT_UP_PCT'), { ok: true });
+});
+
 test('checkRateLimit: 允许窗口内请求', () => {
   const store = new Map();
   recordRequest(store, 'k', 0);
@@ -1227,6 +1294,7 @@ test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
   assert.match(src, /export function buildRepairUserMessage/);
   assert.match(src, /export function trySafeBollRefRewrite/);
   assert.match(src, /export function trySafeNumericCrossRewrite/);
+  assert.match(src, /export function trySafeLimitUpDownRewrite/);
 });
 
 // ---- 注册表全覆盖：生成器与覆盖矩阵（import scripts/nl-coverage.mjs，纯 .mjs 无需复制）----
