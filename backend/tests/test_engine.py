@@ -95,6 +95,19 @@ class TestExecuteSelectorDate(unittest.TestCase):
         self.assertIn("error", out)
         self.assertIn("早于数据起点", out["error"])
 
+    def test_per_code_asof_evaluates_suspended_stock_at_own_last_bar(self):
+        # sh.600000 到 8/20（close 12>10 命中）；sz.000001 仅到 8/19（close 11>10）
+        # 全局 last_date=8/20 时 sz 无该日行；per-code as-of 应在其最后一根 8/19 上判定 → 命中
+        data_manager.df_daily = pl.DataFrame({
+            "date": [datetime.date(2026, 8, 18), datetime.date(2026, 8, 19), datetime.date(2026, 8, 20),
+                     datetime.date(2026, 8, 18), datetime.date(2026, 8, 19)],
+            "code": ["sh.600000"] * 3 + ["sz.000001"] * 2,
+            "close": [10.0, 11.0, 12.0, 9.0, 11.0],
+        }).sort(["code", "date"])
+        out = self._run()
+        self.assertEqual(out["date"], "2026-08-20")
+        self.assertEqual(set(out["codes"]), {"sh.600000", "sz.000001"})
+
 
 class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
     """Wednesday anti-leak regression test for MTF atoms.

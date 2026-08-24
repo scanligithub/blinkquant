@@ -141,21 +141,26 @@ class SelectionEngine:
         try:
             # 解析与计算
             expr = blink_parser.parse_expression(formula, timeframe)
-            lf = lf.with_columns(expr.alias("_signal"))
 
-            # 目标交易日过滤
+            # 目标交易日校验
             eligible = df.filter(pl.col("date") <= target_date)
             if eligible.is_empty():
                 min_date = df.select(pl.col("date").min()).item()
                 return {"error": f"指定日期 {target_date} 早于数据起点 {min_date}"}
-            last_date = eligible.select(pl.col("date").max()).item()
 
-            result_df = (lf.filter(pl.col("date") == last_date)
-                         .filter(pl.col("_signal").fill_null(False) == True)
-                         .select("code")
-                         .collect())
+            # per-code as-of：在 ≤ target_date 的全历史上计算指标，
+            # 每只股票取最后一根 bar 的 _signal（与 MTF _eval_atom 语义一致，不再用全局 last_date）
+            result_df = (
+                lf.filter(pl.col("date") <= target_date)
+                  .with_columns(expr.alias("_signal"))
+                  .group_by("code")
+                  .agg(pl.col("_signal").last().fill_null(False).alias("_signal"))
+                  .filter(pl.col("_signal"))
+                  .select("code")
+                  .collect()
+            )
 
-            return {"codes": result_df["code"].to_list(), "date": last_date.isoformat()}
+            return {"codes": result_df["code"].to_list(), "date": target_date.isoformat()}
         except Exception as e:
             return {"error": str(e)}
 
