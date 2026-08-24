@@ -16,6 +16,8 @@ interface NodeOutcome {
   ok: boolean;
   count: number;
   error: string | null;
+  /** 节点返回 4xx 时的响应体摘要（如 FastAPI 的 detail），用于确定性错误透传 */
+  detail: string | null;
   date: string | null;
   results: string[];
 }
@@ -44,13 +46,25 @@ export async function POST(req: NextRequest) {
         signal: AbortSignal.timeout(30000)
       })
       .then(async (res): Promise<NodeOutcome> => {
-        if (!res.ok) return { node: i + 1, ok: false, count: 0, error: `HTTP ${res.status}`, date: null, results: [] };
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          return {
+            node: i + 1,
+            ok: false,
+            count: 0,
+            error: `HTTP ${res.status}`,
+            detail: text.slice(0, 300),
+            date: null,
+            results: [],
+          };
+        }
         const json = await res.json();
         return {
           node: i + 1,
           ok: true,
           count: typeof json.count === 'number' ? json.count : (json.results?.length ?? 0),
           error: null,
+          detail: null,
           date: typeof json.date === 'string' ? json.date : null,
           results: Array.isArray(json.results) ? json.results : [],
         };
@@ -59,11 +73,24 @@ export async function POST(req: NextRequest) {
         console.error(`Node failure ${url}:`, err);
         // 容错：单个节点失败不阻塞整体，但必须向上暴露（degraded），避免静默丢数据被误读为"涨停数量少"
         const reason = err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'timeout' : String(err?.message || err);
-        return { node: i + 1, ok: false, count: 0, error: reason, date: null, results: [] };
+        return { node: i + 1, ok: false, count: 0, error: reason, detail: null, date: null, results: [] };
       })
     );
 
     const responses = await Promise.all(promises);
+
+    // 1.5 确定性错误透传：全部节点一致返回 4xx 说明是请求本身非法（公式错误/日期越界），
+    // 而非节点故障——此时不应降级为空结果，应把后端的错误说明原样给到前端。
+    if (responses.every(r => !r.ok && r.error !== null && /^HTTP 4/.test(r.error))) {
+      let message = '请求被计算节点拒绝';
+      try {
+        message = JSON.parse(responses[0].detail || '{}').detail || message;
+      } catch { /* 非 JSON 响应体则用默认文案 */ }
+      return NextResponse.json(
+        { success: false, error: String(message), meta: { degraded: true } },
+        { status: responses[0].error === 'HTTP 400' ? 400 : 422 }
+      );
+    }
 
     // 2. 聚合结果
     const allCodes = responses.flatMap(r => r.results || []);
