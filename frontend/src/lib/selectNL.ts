@@ -143,8 +143,8 @@ export function validateFormula(
     const token = t[2];
     if (['AND', 'OR'].includes(token)) continue;
     if (tfPrefix) {
-      // 带前缀的标识符：必须是字段
-      if (!fields.has(token)) {
+      // 带前缀的标识符：必须是字段或指标（W.MA / D.CLOSE 均合法）
+      if (!fields.has(token) && !indicators.has(token)) {
         return { ok: false, reason: `未识别字段 ${token}` };
       }
     } else {
