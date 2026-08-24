@@ -3,6 +3,7 @@ import gc
 import time
 import asyncio
 import io
+import datetime
 import logging
 import httpx
 import polars as pl
@@ -10,6 +11,30 @@ from huggingface_hub import list_repo_files
 from .indicator_registry import INDICATOR_FUNCS
 
 logger = logging.getLogger(__name__)
+
+# 主板 ST 涨跌幅与普通股并轨日：此前主板 ST 为 5%，此后统一 10%（见 security.py 板别注释）
+MAIN_BOARD_ST_UNIFY_DATE = datetime.date(2026, 7, 6)
+
+
+def limit_pct_expr(date_col: pl.Expr, is_st_col: pl.Expr) -> pl.Expr:
+    """按 code 前缀 + 历史 ST 规则计算每行涨跌停幅度（百分比数值，10 = 10%）。
+
+    科创(688/689)/创业(30*) → 20，北交所(bj.*) → 30，其余(沪深主板) → 10；
+    2026-07-06 前的主板 ST 股为 5%。仅在确认含 date/isST 列的日线表上使用。
+    """
+    base = pl.when(
+        pl.col("code").str.starts_with("sh.688")
+        | pl.col("code").str.starts_with("sh.689")
+        | pl.col("code").str.starts_with("sz.30")
+    ).then(pl.lit(20.0)).when(
+        pl.col("code").str.starts_with("bj.")
+    ).then(pl.lit(30.0)).otherwise(pl.lit(10.0))
+    st_main_5 = (
+        (base == pl.lit(10.0))
+        & (is_st_col.cast(pl.Int8, strict=False) == 1)
+        & (date_col < pl.lit(MAIN_BOARD_ST_UNIFY_DATE))
+    ).fill_null(False)
+    return pl.when(st_main_5).then(pl.lit(5.0)).otherwise(base)
 
 
 class DataManager:
@@ -174,9 +199,11 @@ class DataManager:
                 del sector_constituents_dfs
                 gc.collect()
 
-            # 6. 数据前复权与重采样
+            # 6. 涨停标志（须在前复权前、用未复权价计算）与前复权重采样
             if self.df_daily is not None:
+                self._compute_limit_flags()
                 self._apply_forward_adjustment()
+                self._append_prev_close()
                 self._optimize_memory(self.df_daily, "df_daily")
                 self._optimize_memory(self.df_sector_daily, "df_sector_daily")
                 self._resample_all()
@@ -303,6 +330,39 @@ class DataManager:
         except Exception as e:
             logger.error(f"Node {self.node_index}: Failed to build sector mapping: {e}", exc_info=True)
             self.df_mapping = None
+
+    def _compute_limit_flags(self):
+        """在前复权之前，基于未复权价格计算涨停/跌停标志列（复权不变的布尔值）。
+
+        交易所实际涨停价 = ROUND(prev_close_raw × (1 ± 板别限幅), 2)（0.01 元修约），
+        真实涨停的当日涨幅常落在理论限幅之下（如前收 10.54 → 涨停价 11.59，涨幅仅 9.96%），
+        因此不能用 pctChg >= LIMIT_UP_PCT 判断涨停。首行无昨收 → False（天然排除上市首日）。
+        """
+        if self.df_daily is None:
+            return
+        logger.info(f"Node {self.node_index}: Computing limit up/down flags...")
+        df = self.df_daily.sort(["code", "date"])
+
+        prev_raw = pl.col("close").shift(1).over("code")
+        pct = limit_pct_expr(pl.col("date"), pl.col("isST"))
+        eps = pl.lit(1e-4)
+        up_price = (prev_raw * (pl.lit(1.0) + pct / pl.lit(100.0))).round(2)
+        down_price = (prev_raw * (pl.lit(1.0) - pct / pl.lit(100.0))).round(2)
+
+        self.df_daily = df.with_columns([
+            (pl.col("close") >= up_price - eps).fill_null(False).alias("is_limit_up"),
+            (pl.col("high") >= up_price - eps).fill_null(False).alias("is_touch_limit_up"),
+            (pl.col("close") <= down_price + eps).fill_null(False).alias("is_limit_down"),
+            (pl.col("low") <= down_price + eps).fill_null(False).alias("is_touch_limit_down"),
+        ])
+
+    def _append_prev_close(self):
+        """追加前复权口径的昨收列（与 CLOSE 同语义，供 DSL 直接引用）。"""
+        if self.df_daily is None:
+            return
+        self.df_daily = self.df_daily.with_columns(
+            pl.col("close").shift(1).over("code").alias("prev_close")
+        )
 
     def _apply_forward_adjustment(self):
         """执行前复权处理"""

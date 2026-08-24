@@ -2,9 +2,11 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ast
+import datetime
 import unittest
 import polars as pl
 from core.security import blink_parser, _require_whitelist_field, _require_positive_int, _split_arith_top_level, _strip_outer_parens
+from core.data_manager import DataManager
 
 def parse_call(src):
     return ast.parse(src, mode="eval").body
@@ -485,6 +487,93 @@ class TestLimitUpPct(unittest.TestCase):
         out = df2.with_columns(expr.alias("hit")).filter(pl.col("hit")).select("code").to_series().to_list()
         # 所有 pctChg 已取反：-10<=-10(main) / -15<=-20? no / -20<=-20(kc) / -10<=-10 / -30<=-30(bj)
         self.assertEqual(out, ["sh.600000", "sz.300001", "sz.000001", "bj.830001"])
+
+
+class TestLimitFlags(unittest.TestCase):
+    """IS_LIMIT_UP 等预计算标志列：按交易所 0.01 元修约后的实际涨停价判断。"""
+
+    def _flags(self, rows):
+        """rows: (date, code, isST, close, high, low)，昨收由 close.shift(1).over(code) 推导。"""
+        dm = DataManager()
+        dm.df_daily = pl.DataFrame({
+            "date": [r[0] for r in rows],
+            "code": [r[1] for r in rows],
+            "isST": [r[2] for r in rows],
+            "close": [float(r[3]) for r in rows],
+            "high": [float(r[4]) for r in rows],
+            "low": [float(r[5]) for r in rows],
+        })
+        dm._compute_limit_flags()
+        out = dm.df_daily.sort(["code", "date"])
+        return {
+            "up": out["is_limit_up"].to_list(),
+            "touch_up": out["is_touch_limit_up"].to_list(),
+            "down": out["is_limit_down"].to_list(),
+            "touch_down": out["is_touch_limit_down"].to_list(),
+        }
+
+    def test_round_down_limit_detected(self):
+        # 前收 10.54 → 理论涨停 11.594 → 实际涨停价 round→11.59（涨幅仅 9.96%，旧公式 PCT_CHG>=10 漏选）
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.50),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 11.59, 11.59, 11.30)])
+        self.assertEqual(f["up"], [False, True])
+        self.assertEqual(f["touch_up"][1], True)
+
+    def test_touch_without_seal(self):
+        # 盘中触及涨停（high 达 11.00）但收盘回落到 10.80：封板 False、触板 True
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.00, 10.05, 9.90),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 10.80, 11.00, 10.70)])
+        self.assertEqual(f["up"], [False, False])
+        self.assertEqual(f["touch_up"], [False, True])
+
+    def test_round_up_limit(self):
+        # 前收 9.99 → 涨停价 round(10.989) = 10.99，涨幅 10.01%
+        f = self._flags([(datetime.date(2026, 8, 20), "sz.000001", 0, 9.99, 10.05, 9.95),
+                         (datetime.date(2026, 8, 21), "sz.000001", 0, 10.99, 11.02, 10.90)])
+        self.assertEqual(f["up"], [False, True])
+
+    def test_limit_down_symmetric(self):
+        # 前收 10.54 → 跌停价 round(10.54×0.9)=round(9.486)=9.49（跌幅 9.96%）
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.40),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 9.49, 9.60, 9.49)])
+        self.assertEqual(f["down"][1], True)
+        self.assertEqual(f["touch_down"][1], True)
+        # 首行无昨收，一律 False
+        self.assertEqual(f["down"][0], False)
+
+    def test_main_board_st_history_rule(self):
+        # 2026-07-06 前主板 ST 为 5%：前收 10.00 → 涨停价 10.50；并轨日后同样价格不再构成涨停
+        f = self._flags([(datetime.date(2026, 7, 2), "sh.600001", 1, 10.00, 10.10, 9.98),
+                         (datetime.date(2026, 7, 3), "sh.600001", 1, 10.50, 10.50, 10.30),
+                         (datetime.date(2026, 7, 6), "sh.600001", 1, 10.50, 10.55, 10.45)])
+        self.assertEqual(f["up"], [False, True, False])
+
+    def test_first_row_no_prev_close_is_false(self):
+        f = self._flags([(datetime.date(2026, 8, 20), "bj.830001", 0, 13.00, 13.00, 12.90)])
+        self.assertEqual([f["up"], f["touch_up"], f["down"], f["touch_down"]],
+                         [[False], [False], [False], [False]])
+
+    def test_board_pcts_apply_to_flags(self):
+        # 创业板/科创板 20%：前收 10.00 → 涨停价 12.00；+10%（11.00）不算涨停，+20%（12.00）算
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.688001", 0, 10.00, 10.20, 9.95),
+                         (datetime.date(2026, 8, 21), "sh.688001", 0, 12.00, 12.01, 11.90),
+                         (datetime.date(2026, 8, 20), "sz.300001", 0, 10.00, 10.20, 9.95),
+                         (datetime.date(2026, 8, 21), "sz.300001", 0, 11.00, 11.15, 10.90),
+                         (datetime.date(2026, 8, 20), "sz.300002", 0, 10.00, 10.20, 9.95),
+                         (datetime.date(2026, 8, 21), "sz.300002", 0, 12.00, 12.05, 11.85)])
+        # 排序后依次为 sh.688001 / sz.300001 / sz.300002，各 2 行
+        self.assertEqual(f["up"], [False, True, False, False, False, True])
+
+    def test_dsl_boolean_field_comparison(self):
+        dm = DataManager()
+        dm.df_daily = pl.DataFrame({
+            "code": ["sh.600000", "sh.600001"],
+            "is_limit_up": [True, False],
+        })
+        blink_parser.current_df = dm.df_daily
+        expr = blink_parser.parse_expression("IS_LIMIT_UP == 1")
+        out = dm.df_daily.with_columns(expr.alias("hit")).filter(pl.col("hit"))["code"].to_list()
+        self.assertEqual(out, ["sh.600000"])
 
 
 if __name__ == "__main__":

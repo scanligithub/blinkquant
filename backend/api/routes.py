@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import Response # New import
 from pydantic import BaseModel
+from typing import Optional
+import datetime
 import polars as pl
 import os
 import re
@@ -23,6 +25,7 @@ METRIC_REGEX = selection_engine.metric_pattern
 class SelectionRequest(BaseModel):
     formula: str
     timeframe: str = "D"
+    date: Optional[datetime.date] = None  # 可选目标交易日（YYYY-MM-DD）；早于数据起点时回退语义见 engine
 
 def report_metrics_usage(formula: str):
     """
@@ -58,16 +61,21 @@ def report_metrics_usage(formula: str):
 async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks):
     if data_manager.df_daily is None:
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
-    
-    results = selection_engine.execute_selector(req.formula, req.timeframe, background_tasks)
-    
-    if isinstance(results, dict) and "error" in results:
-        raise HTTPException(status_code=400, detail=results["error"])
-    
+
+    result = selection_engine.execute_selector(req.formula, req.timeframe, background_tasks, target_date=req.date)
+
+    if isinstance(result, dict) and "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
     # 上报热度 (不再需要传 timeframe)
     background_tasks.add_task(report_metrics_usage, req.formula)
-    
-    return {"node": os.getenv("NODE_INDEX"), "count": len(results), "results": results}
+
+    return {
+        "node": os.getenv("NODE_INDEX"),
+        "count": len(result["codes"]),
+        "date": result["date"],
+        "results": result["codes"],
+    }
 
 @router.get("/kline")
 def get_kline(code: str, timeframe: str = "D"):

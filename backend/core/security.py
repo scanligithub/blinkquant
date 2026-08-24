@@ -9,6 +9,9 @@ def _limit_up_pct_expr():
     """按 code 前缀计算每行涨停幅度：科创(688/689)/创业(30*) → 20，北交所(bj.*) → 30，其余(沪深主板) → 10。
 
     2026-07-06 起主板 ST 亦 10%（与普通股一致），故仅按代码判板别即可。
+    注意：这只是理论限幅，不是实际涨停价（实际涨停价经 0.01 元修约，当日涨幅可能低于限幅）。
+    收盘封板/触板请用 IS_LIMIT_UP / IS_TOUCH_LIMIT_UP（由 data_manager 按未复权价预计算，
+    含主板 ST 历史 5% 规则）。
     """
     return pl.when(
         pl.col("code").str.starts_with("sh.688")
@@ -117,6 +120,12 @@ class BlinkParser:
             'FLOAT_MV': pl.col('float_mv'),
             'TURN': pl.col('turn'),
             'LIMIT_UP_PCT': _limit_up_pct_expr(),
+            # 涨停/跌停标志（data_manager 预计算的布尔列，仅日线）
+            'IS_LIMIT_UP': pl.col('is_limit_up'),
+            'IS_TOUCH_LIMIT_UP': pl.col('is_touch_limit_up'),
+            'IS_LIMIT_DOWN': pl.col('is_limit_down'),
+            'IS_TOUCH_LIMIT_DOWN': pl.col('is_touch_limit_down'),
+            'PREV_CLOSE': pl.col('prev_close'),
         }
         # 当前解析上下文
         self.current_df = None

@@ -63,7 +63,8 @@ class SelectionEngine:
                 setattr(data_manager, attr_name, updated_df)
                 logger.info(f"Hot-JIT Broadcast: Mounted {len(new_exprs)} cols to {attr_name}")
 
-    def execute_selector(self, formula: str, timeframe: str, background_tasks):
+    def execute_selector(self, formula: str, timeframe: str, background_tasks, target_date=None):
+        """执行选股。target_date（datetime.date）可选：指定时回退到 ≤ 该日的最近交易日，未指定用数据最新日。"""
         # 1. 执行全周期热挂载
         self._prepare_hot_jit(formula)
 
@@ -100,15 +101,24 @@ class SelectionEngine:
             lf = lf.with_columns(expr.alias("_signal"))
 
             if df.is_empty():
-                return []
-            last_date = df.select(pl.col("date").max()).item()
+                return {"codes": [], "date": None}
+
+            # 5. 目标交易日：未指定 → 数据最新日；指定 → 回退至 ≤ 指定日的最近交易日
+            if target_date is not None:
+                eligible = df.filter(pl.col("date") <= target_date)
+                if eligible.is_empty():
+                    min_date = df.select(pl.col("date").min()).item()
+                    return {"error": f"指定日期 {target_date} 早于数据起点 {min_date}"}
+                last_date = eligible.select(pl.col("date").max()).item()
+            else:
+                last_date = df.select(pl.col("date").max()).item()
 
             result_df = (lf.filter(pl.col("date") == last_date)
                          .filter(pl.col("_signal").fill_null(False) == True)
                          .select("code")
                          .collect())
 
-            return result_df["code"].to_list()
+            return {"codes": result_df["code"].to_list(), "date": last_date.isoformat()}
         except Exception as e:
             return {"error": str(e)}
 
