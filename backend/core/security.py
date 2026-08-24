@@ -1,9 +1,27 @@
 import ast
 import re
 import polars as pl
-from typing import Any
+from typing import Any, Optional
 from .data_manager import data_manager
 from .indicator_registry import INDICATORS, FIELDS, WINDOW_NAMES
+
+# 周期前缀：D/W/M；TABLE_MAP 延迟绑定（避免循环导入）
+_TF_PREFIXES = frozenset(('D', 'W', 'M'))
+_TABLE_MAP = None
+
+def _get_table_map():
+    global _TABLE_MAP
+    if _TABLE_MAP is None:
+        _TABLE_MAP = {
+            'D': data_manager.df_daily,
+            'W': data_manager.df_weekly,
+            'M': data_manager.df_monthly,
+        }
+    return _TABLE_MAP
+
+def _invalidate_table_map():
+    global _TABLE_MAP
+    _TABLE_MAP = None
 
 def _limit_up_pct_expr():
     """按 code 前缀计算每行涨停幅度：科创(688/689)/创业(30*) → 20，北交所(bj.*) → 30，其余(沪深主板) → 10。
@@ -29,6 +47,25 @@ def _require_whitelist_field(node: ast.AST) -> str:
     if name not in FIELDS:
         raise ValueError(f"Unknown field {name}")
     return name
+
+def _require_prefixed_field(node: ast.AST) -> str:
+    """参数必须是白名单字段名（ast.Name）或带周期前缀的字段（ast.Attribute，如 W.CLOSE）。"""
+    if isinstance(node, ast.Name):
+        name = node.id.upper()
+        if name not in FIELDS:
+            raise ValueError(f"Unknown field {name}")
+        return name
+    if isinstance(node, ast.Attribute):
+        if not isinstance(node.value, ast.Name) or node.value.id.upper() not in _TF_PREFIXES:
+            raise ValueError("Invalid prefix on field argument")
+        name = node.attr.upper()
+        if name not in FIELDS:
+            raise ValueError(f"Unknown field {name}")
+        return name
+    raise ValueError("Field argument must be a field name")
+
+# 板块字段：仅允许在无前缀基础周期原子中使用
+_SECTOR_FIELDS = frozenset(('S_CLOSE', 'S_PCT_CHG'))
 
 WINDOW_MAX = 500
 
@@ -130,6 +167,7 @@ class BlinkParser:
         # 当前解析上下文
         self.current_df = None
         self.current_source = None
+        self.mount_enabled = True
 
     def parse_expression(self, expr_str: str, timeframe: str = 'D') -> pl.Expr:
         """解析入口：根据 timeframe 设置当前数据上下文"""
@@ -144,15 +182,132 @@ class BlinkParser:
         tree = ast.parse(clean_expr, mode='eval')
         return self._visit(tree.body)
 
+    # ── 多周期解析入口 ──────────────────────────────────────────────
+
+    def parse_multi_tf(self, expr_str: str, base_tf: str = 'D') -> dict:
+        """多周期解析入口。
+
+        返回 plan tree：
+        - {"type":"atom", "tf":"D"|"W"|"M", "expr": pl.Expr}
+        - {"type":"bool", "op":"AND"|"OR", "children":[...]}
+        """
+        clean_expr = re.sub(r'\b(AND|OR|NOT)\b', lambda m: m.group(1).lower(), expr_str.strip())
+        clean_expr = clean_expr.replace('&&', '&').replace('||', '|')
+        tree = ast.parse(clean_expr, mode='eval')
+        return self._build_plan(tree.body, base_tf)
+
+    def _build_plan(self, node: ast.AST, base_tf: str) -> dict:
+        """递归构建 plan tree。"""
+        if isinstance(node, ast.BoolOp) and type(node.op) in (ast.And, ast.Or):
+            op = 'AND' if isinstance(node.op, ast.And) else 'OR'
+            children = [self._build_plan(v, base_tf) for v in node.values]
+            return {"type": "bool", "op": op, "children": children}
+        # 叶子：单个原子（原子间已在 BoolOp 分裂）
+        tf = base_tf
+        prefixes = self._collect_prefixes(node)
+        bare = self._has_bare_fields(node)
+        if prefixes:
+            if len(prefixes) > 1:
+                raise ValueError("Cross-timeframe mixing not allowed in a single atom")
+            if bare:
+                raise ValueError("Cannot mix bare and prefixed fields in same atom")
+            tf = next(iter(prefixes))
+            self._check_no_sector_fields(node)
+        return {"type": "atom", "tf": tf, "expr": self.parse_expression(ast.unparse(node), timeframe=tf)}
+
+    def _collect_prefixes(self, node: ast.AST) -> set:
+        """遍历 AST 收集所有 D./W./M. 前缀。"""
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id.upper() in _TF_PREFIXES:
+                return {node.value.id.upper()}
+        if isinstance(node, ast.Call):
+            func_node = node.func
+            if isinstance(func_node, ast.Attribute):
+                if isinstance(func_node.value, ast.Name) and func_node.value.id.upper() in _TF_PREFIXES:
+                    result = {func_node.value.id.upper()}
+                else:
+                    result = set()
+            elif isinstance(func_node, ast.Name):
+                result = set()
+            else:
+                result = set()
+            for arg in node.args:
+                result |= self._collect_prefixes(arg)
+            return result
+        if isinstance(node, ast.BinOp):
+            return self._collect_prefixes(node.left) | self._collect_prefixes(node.right)
+        if isinstance(node, ast.UnaryOp):
+            return self._collect_prefixes(node.operand)
+        if isinstance(node, ast.Compare):
+            result = self._collect_prefixes(node.left)
+            for c in node.comparators:
+                result |= self._collect_prefixes(c)
+            return result
+        if isinstance(node, ast.BoolOp):
+            result = set()
+            for v in node.values:
+                result |= self._collect_prefixes(v)
+            return result
+        return set()
+
+    def _has_bare_fields(self, node: ast.AST) -> bool:
+        """检查是否有无前缀的裸字段（ast.Name 属于 FIELDS 的）。"""
+        if isinstance(node, ast.Name) and node.id.upper() in FIELDS:
+            return True
+        if isinstance(node, ast.Attribute):
+            return self._has_bare_fields(node.value)
+        if isinstance(node, ast.Call):
+            for arg in node.args:
+                if self._has_bare_fields(arg):
+                    return True
+            return False
+        if isinstance(node, ast.BinOp):
+            return self._has_bare_fields(node.left) or self._has_bare_fields(node.right)
+        if isinstance(node, ast.UnaryOp):
+            return self._has_bare_fields(node.operand)
+        if isinstance(node, ast.Compare):
+            if self._has_bare_fields(node.left):
+                return True
+            return any(self._has_bare_fields(c) for c in node.comparators)
+        if isinstance(node, ast.BoolOp):
+            return any(self._has_bare_fields(v) for v in node.values)
+        return False
+
+    def _check_no_sector_fields(self, node: ast.AST) -> None:
+        """非基础周期原子中禁止使用板块字段（S_CLOSE 等）。"""
+        if isinstance(node, ast.Name) and node.id.upper() in _SECTOR_FIELDS:
+            raise ValueError(f"Sector field {node.id} not allowed in non-base timeframe")
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id.upper() in _TF_PREFIXES and node.attr.upper() in _SECTOR_FIELDS:
+                raise ValueError(f"Sector field {node.attr} not allowed in non-base timeframe")
+        for child in ast.iter_child_nodes(node):
+            self._check_no_sector_fields(child)
+
     def _visit(self, node: Any) -> Any:
         if isinstance(node, ast.Constant): return node.value
         
         elif isinstance(node, ast.Name):
             name = node.id.upper()
+            # 多周期前缀模式：非基础周期原子禁用挂载列
+            if not self.mount_enabled:
+                return self.fields.get(name, pl.col(name.lower()))
             # 1. 如果该名称已经是内存中的列（如 MA_CLOSE_20），直接引用
             if self.current_df is not None and name in self.current_df.columns:
                 return pl.col(name)
             # 2. 否则查找基础字段映射
+            return self.fields.get(name, pl.col(name.lower()))
+
+        elif isinstance(node, ast.Attribute):
+            # 多周期前缀语法：W.CLOSE / D.MA(CLOSE,20) / M.MACD_DIF(12,26)
+            if not isinstance(node.value, ast.Name):
+                raise ValueError("Invalid prefix expression")
+            tf = node.value.id.upper()
+            if tf not in _TF_PREFIXES:
+                raise ValueError(f"Unknown timeframe prefix: {tf}")
+            # 属性本身必须是字段名
+            name = node.attr.upper()
+            if name not in FIELDS:
+                raise ValueError(f"Unknown field {name}")
             return self.fields.get(name, pl.col(name.lower()))
 
         elif isinstance(node, ast.BinOp):
@@ -180,9 +335,18 @@ class BlinkParser:
             return res
 
         elif isinstance(node, ast.Call):
-            if not isinstance(node.func, ast.Name):
-                raise ValueError("Function call target must be a name")
-            func = node.func.id.upper()
+            # 支持 ast.Attribute (如 W.MA(CLOSE,20)) 和 ast.Name (如 MA(CLOSE,20))
+            if isinstance(node.func, ast.Attribute):
+                if not isinstance(node.func.value, ast.Name):
+                    raise ValueError("Invalid function prefix")
+                tf = node.func.value.id.upper()
+                if tf not in _TF_PREFIXES:
+                    raise ValueError(f"Unknown timeframe prefix: {tf}")
+                func = node.func.attr.upper()
+            elif isinstance(node.func, ast.Name):
+                func = node.func.id.upper()
+            else:
+                raise ValueError("Function call target must be a name or attribute")
             entry = INDICATORS.get(func)
             if entry is None:
                 raise ValueError(f"Unknown function {func}")
@@ -193,7 +357,7 @@ class BlinkParser:
             if entry.get("window"):
                 field_name, n = args
                 pure_key = f"{func}_{field_name}_{n}"
-                if self.current_df is not None and pure_key in self.current_df.columns:
+                if self.mount_enabled and self.current_df is not None and pure_key in self.current_df.columns:
                     return pl.col(pure_key)
                 return entry["func"](self.fields[field_name], n)
             return entry["func"](*args)
@@ -203,7 +367,7 @@ class BlinkParser:
     def _visit_arg(self, node: Any, kind: str, func: str) -> Any:
         """按签名声明的形态校验并求值单个参数。"""
         if kind == "field":
-            return _require_whitelist_field(node)
+            return _require_prefixed_field(node)
         if kind == "pos_int":
             return _require_positive_int(node)
         if kind == "series":

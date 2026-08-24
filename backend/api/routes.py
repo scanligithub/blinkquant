@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
 
 # 正则用于提取公式中的指标 (从 engine 指标注册表派生，确保与支持指标同步)
-METRIC_REGEX = selection_engine.metric_pattern
+# 使用 metric_pattern_mtf 容忍可选的 W./M./D. 前缀
+METRIC_REGEX = selection_engine.metric_pattern_mtf
 
 class SelectionRequest(BaseModel):
     formula: str

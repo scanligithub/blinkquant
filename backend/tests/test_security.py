@@ -621,5 +621,110 @@ class TestLimitFlags(unittest.TestCase):
         self.assertEqual(out, ["sh.600000"])
 
 
+class TestMultiTF(unittest.TestCase):
+    """Multi-timeframe parsing tests: parse_multi_tf, _collect_prefixes, _has_bare_fields, _check_no_sector_fields."""
+
+    def test_simple_daily_atom(self):
+        plan = blink_parser.parse_multi_tf("CLOSE > 10", base_tf="D")
+        self.assertEqual(plan["type"], "atom")
+        self.assertEqual(plan["tf"], "D")
+
+    def test_weekly_prefix_atom(self):
+        plan = blink_parser.parse_multi_tf("W.CLOSE > 10", base_tf="D")
+        self.assertEqual(plan["type"], "atom")
+        self.assertEqual(plan["tf"], "W")
+
+    def test_monthly_prefix_atom(self):
+        plan = blink_parser.parse_multi_tf("M.CLOSE > 10", base_tf="D")
+        self.assertEqual(plan["type"], "atom")
+        self.assertEqual(plan["tf"], "M")
+
+    def test_daily_prefix_atom(self):
+        plan = blink_parser.parse_multi_tf("D.CLOSE > 10", base_tf="D")
+        self.assertEqual(plan["type"], "atom")
+        self.assertEqual(plan["tf"], "D")
+
+    def test_bool_and_plan(self):
+        plan = blink_parser.parse_multi_tf("W.CLOSE > 10 AND D.VOL > 100", base_tf="D")
+        self.assertEqual(plan["type"], "bool")
+        self.assertEqual(plan["op"], "AND")
+        self.assertEqual(len(plan["children"]), 2)
+        self.assertEqual(plan["children"][0]["tf"], "W")
+        self.assertEqual(plan["children"][1]["tf"], "D")
+
+    def test_bool_or_plan(self):
+        plan = blink_parser.parse_multi_tf("W.CLOSE > 10 OR M.CLOSE > 20", base_tf="D")
+        self.assertEqual(plan["type"], "bool")
+        self.assertEqual(plan["op"], "OR")
+
+    def test_triple_bool_plan(self):
+        plan = blink_parser.parse_multi_tf("W.CLOSE > 10 AND D.VOL > 100 AND M.CLOSE > 20", base_tf="D")
+        self.assertEqual(plan["type"], "bool")
+        self.assertEqual(plan["op"], "AND")
+        self.assertEqual(len(plan["children"]), 3)
+
+    def test_function_call_with_prefix(self):
+        plan = blink_parser.parse_multi_tf("W.MA(W.CLOSE, 20) > 10", base_tf="D")
+        self.assertEqual(plan["type"], "atom")
+        self.assertEqual(plan["tf"], "W")
+
+    def test_function_call_with_prefixed_field_rejected(self):
+        with self.assertRaises(ValueError):
+            blink_parser.parse_multi_tf("W.MA(CLOSE, 20) > 10", base_tf="D")
+
+    def test_collect_prefixes_daily(self):
+        node = ast.parse("CLOSE > 10", mode="eval").body
+        self.assertEqual(blink_parser._collect_prefixes(node), set())
+
+    def test_collect_prefixes_weekly(self):
+        node = ast.parse("W.CLOSE > 10", mode="eval").body
+        self.assertEqual(blink_parser._collect_prefixes(node), {"W"})
+
+    def test_collect_prefixes_monthly(self):
+        node = ast.parse("M.CLOSE > 10", mode="eval").body
+        self.assertEqual(blink_parser._collect_prefixes(node), {"M"})
+
+    def test_collect_prefixes_function(self):
+        node = ast.parse("W.MA(CLOSE, 20) > 10", mode="eval").body
+        self.assertEqual(blink_parser._collect_prefixes(node), {"W"})
+
+    def test_has_bare_fields_true(self):
+        node = ast.parse("CLOSE > 10", mode="eval").body
+        self.assertTrue(blink_parser._has_bare_fields(node))
+
+    def test_has_bare_fields_false(self):
+        node = ast.parse("W.CLOSE > 10", mode="eval").body
+        self.assertFalse(blink_parser._has_bare_fields(node))
+
+    def test_has_bare_fields_in_function(self):
+        node = ast.parse("MA(CLOSE, 20) > 10", mode="eval").body
+        self.assertTrue(blink_parser._has_bare_fields(node))
+
+    def test_has_bare_fields_in_prefixed_function(self):
+        node = ast.parse("W.MA(CLOSE, 20) > 10", mode="eval").body
+        self.assertTrue(blink_parser._has_bare_fields(node))
+
+    def test_check_no_sector_fields_ok(self):
+        node = ast.parse("W.CLOSE > 10", mode="eval").body
+        blink_parser._check_no_sector_fields(node)
+
+    def test_check_no_sector_fields_rejected(self):
+        node = ast.parse("W.S_CLOSE > 10", mode="eval").body
+        with self.assertRaises(ValueError):
+            blink_parser._check_no_sector_fields(node)
+
+    def test_cross_timeframe_mixing_rejected(self):
+        with self.assertRaises(ValueError):
+            blink_parser.parse_multi_tf("W.CLOSE + M.CLOSE > 10", base_tf="D")
+
+    def test_bare_and_prefixed_mixing_rejected(self):
+        with self.assertRaises(ValueError):
+            blink_parser.parse_multi_tf("CLOSE + W.CLOSE > 10", base_tf="D")
+
+    def test_bare_field_in_prefixed_func_rejected(self):
+        with self.assertRaises(ValueError):
+            blink_parser.parse_multi_tf("W.MA(CLOSE, 20) + CLOSE > 10", base_tf="D")
+
+
 if __name__ == "__main__":
     unittest.main()

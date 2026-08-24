@@ -8,6 +8,7 @@ import logging
 import httpx
 import polars as pl
 from huggingface_hub import list_repo_files
+from functools import lru_cache
 from .indicator_registry import INDICATOR_FUNCS
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,80 @@ class DataManager:
 
         # 指标计算算子映射（由注册表派生）
         self.INDICATOR_MAP = dict(INDICATOR_FUNCS)
+        # LRU cache for build_asof_frame: {(tf, target_date): DataFrame}
+        self._asof_frame_cache: dict = {}
+        self._asof_frame_cache_max = 8
+
+    def build_asof_frame(self, tf: str, target_date: datetime.date) -> pl.DataFrame:
+        """为非基础周期（W/M）构建 as-of frame。
+
+        逻辑：
+        - 找到 target_date 所在周期的起始日期 cur_start
+        - completed = 该周期之前的所有完整周期行（date < cur_start）
+        - partial = 日线数据 cur_start ≤ date ≤ target_date，按 code 分组合成合成条
+        - 返回 concat([completed, partial])
+
+        使用 LRU cache 缓存最近 8 个 (tf, target_date) 的结果。
+        """
+        cache_key = (tf, target_date)
+        if cache_key in self._asof_frame_cache:
+            return self._asof_frame_cache[cache_key]
+
+        if tf == 'D':
+            # 日线：直接截断到 target_date
+            result = self.df_daily.filter(pl.col("date") <= target_date)
+        else:
+            # 获取参考表（df_weekly 或 df_monthly）
+            ref_df = self.df_weekly if tf == 'W' else self.df_monthly
+            if ref_df is None or ref_df.is_empty():
+                result = pl.DataFrame()
+            else:
+                # 找到 target_date 所在周期的起始日期
+                if tf == 'W':
+                    # ISO week: 周一为一周起始
+                    cur_start = target_date - datetime.timedelta(days=target_date.weekday())
+                else:  # M
+                    cur_start = target_date.replace(day=1)
+
+                # completed = 该周期之前的所有完整周期行
+                completed = ref_df.filter(pl.col("date") < cur_start)
+
+                # partial = 日线数据 cur_start ≤ date ≤ target_date，合成单行
+                partial_daily = self.df_daily.filter(
+                    (pl.col("date") >= cur_start) & (pl.col("date") <= target_date)
+                )
+
+                if partial_daily.is_empty():
+                    result = completed
+                else:
+                    # 按 code 分组，合成单行
+                    partial_agg = partial_daily.group_by("code").agg([
+                        pl.col("date").max().alias("date"),
+                        pl.col("open").first(),
+                        pl.col("high").max(),
+                        pl.col("low").min(),
+                        pl.col("close").last(),
+                        pl.col("volume").sum(),
+                        pl.col("amount").sum(),
+                    ])
+
+                    # 确保列顺序一致：date, code, open, high, low, close, volume, amount
+                    col_order = ["date", "code", "open", "high", "low", "close", "volume", "amount"]
+                    ref_cols = [c for c in col_order if c in ref_df.columns]
+                    if ref_cols:
+                        completed = completed.select(ref_cols) if not completed.is_empty() else completed.select(ref_cols)[:0]
+                        partial_agg = partial_agg.select(ref_cols)
+
+                    result = pl.concat([completed, partial_agg])
+
+        # 更新 cache（LRU：超容量删最旧）
+        if len(self._asof_frame_cache) >= self._asof_frame_cache_max:
+            # 删除最旧的 key（按插入顺序）
+            oldest_key = next(iter(self._asof_frame_cache))
+            del self._asof_frame_cache[oldest_key]
+        self._asof_frame_cache[cache_key] = result
+
+        return result
 
     async def async_load_data(self):
         """流式、低内存占用的异步加载主入口（串行下载和解析，规避并发 OOM 与连接死锁）"""
