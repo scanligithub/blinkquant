@@ -14,21 +14,33 @@ logger = logging.getLogger(__name__)
 
 # 主板 ST 涨跌幅与普通股并轨日：此前主板 ST 为 5%，此后统一 10%（见 security.py 板别注释）
 MAIN_BOARD_ST_UNIFY_DATE = datetime.date(2026, 7, 6)
+# 创业板注册制改革日：此前创业板限幅为 10%（数据集自 2005 年起，该规则实际生效）
+CHI_NEXT_REFORM_DATE = datetime.date(2020, 8, 24)
+# 无涨跌幅限制日判定余量：正常封板日涨幅不超过限幅+修约误差(<1pp)，超出即视为无限制日（新股期等）
+NO_LIMIT_BAND_MARGIN_PCT = 2.0
+# 官方基准昨收与相邻收盘的背离阈值：超过视为除权除息日采用反推基准；以内视为存储噪声沿用昨收
+EX_DIV_DETECT_THRESHOLD = 0.011
 
 
 def limit_pct_expr(date_col: pl.Expr, is_st_col: pl.Expr) -> pl.Expr:
-    """按 code 前缀 + 历史 ST 规则计算每行涨跌停幅度（百分比数值，10 = 10%）。
+    """按 code 前缀 + 历史规则计算每行涨跌停幅度（百分比数值，10 = 10%）。
 
-    科创(688/689)/创业(30*) → 20，北交所(bj.*) → 30，其余(沪深主板) → 10；
-    2026-07-06 前的主板 ST 股为 5%。仅在确认含 date/isST 列的日线表上使用。
+    科创(688/689) → 20，北交所(bj.*) → 30；
+    创业板(sz.30)：2020-08-24 注册制改革前 → 10，此后 → 20；
+    其余(沪深主板) → 10；2026-07-06 前的主板 ST 股为 5%。
+    仅在确认含 date/isST 列的日线表上使用。
     """
     base = pl.when(
         pl.col("code").str.starts_with("sh.688")
         | pl.col("code").str.starts_with("sh.689")
-        | pl.col("code").str.starts_with("sz.30")
     ).then(pl.lit(20.0)).when(
         pl.col("code").str.starts_with("bj.")
-    ).then(pl.lit(30.0)).otherwise(pl.lit(10.0))
+    ).then(pl.lit(30.0)).when(
+        pl.col("code").str.starts_with("sz.30")
+        & (date_col < pl.lit(CHI_NEXT_REFORM_DATE))
+    ).then(pl.lit(10.0)).when(
+        pl.col("code").str.starts_with("sz.30")
+    ).then(pl.lit(20.0)).otherwise(pl.lit(10.0))
     st_main_5 = (
         (base == pl.lit(10.0))
         & (is_st_col.cast(pl.Int8, strict=False) == 1)
@@ -334,9 +346,21 @@ class DataManager:
     def _compute_limit_flags(self):
         """在前复权之前，基于未复权价格计算涨停/跌停标志列（复权不变的布尔值）。
 
-        交易所实际涨停价 = ROUND(prev_close_raw × (1 ± 板别限幅), 2)（0.01 元修约），
+        交易所实际涨停价 = ROUND(官方基准昨收 × (1 ± 板别限幅), 2)（0.01 元修约），
         真实涨停的当日涨幅常落在理论限幅之下（如前收 10.54 → 涨停价 11.59，涨幅仅 9.96%），
-        因此不能用 pctChg >= LIMIT_UP_PCT 判断涨停。首行无昨收 → False（天然排除上市首日）。
+        因此不能用 pctChg >= LIMIT_UP_PCT 判断涨停。
+
+        官方基准昨收的确定：
+        - 除权除息日交易所以除权参考价为基准，相邻收盘不再适用；供应商 pctChg 恰按该官方
+          基准计算（已实测验证），故用 close/(1+pctChg/100) 反推；
+        - 仅当反推值与相邻收盘背离超过阈值（真实除权）时采用，避免浮点/存储噪声扰动修约；
+        - pctChg 缺失或异常时回退相邻收盘。
+
+        无涨跌幅限制日净化：当日涨幅超出限幅带+余量必然是无限制日（新股上市初期等），
+        此时不存在涨停价概念，标志强制 False；正常封板日涨幅不可能越过该阈值。
+        已知残余：无限制日内冲高回落、收盘落回限幅带内的行无法识别。
+
+        首行无昨收 → False（天然排除上市首日）。
         """
         if self.df_daily is None:
             return
@@ -344,16 +368,30 @@ class DataManager:
         df = self.df_daily.sort(["code", "date"])
 
         prev_raw = pl.col("close").shift(1).over("code")
-        pct = limit_pct_expr(pl.col("date"), pl.col("isST"))
+        pct_band = limit_pct_expr(pl.col("date"), pl.col("isST"))
         eps = pl.lit(1e-4)
-        up_price = (prev_raw * (pl.lit(1.0) + pct / pl.lit(100.0))).round(2)
-        down_price = (prev_raw * (pl.lit(1.0) - pct / pl.lit(100.0))).round(2)
+
+        # 全空列时 dtype 为 Null，先显式抬升为 Float64 保证表达式可用
+        pct_chg = pl.col("pctChg").cast(pl.Float64, strict=False)
+        pct_valid = pct_chg.is_not_null() & (pct_chg.abs() < pl.lit(40.0))
+        implied_prev = pl.col("close") / (pl.lit(1.0) + pct_chg / pl.lit(100.0))
+        eff_prev = pl.when(
+            pct_valid & ((implied_prev - prev_raw).abs() > pl.lit(EX_DIV_DETECT_THRESHOLD))
+        ).then(implied_prev).otherwise(prev_raw)
+
+        up_price = (eff_prev * (pl.lit(1.0) + pct_band / pl.lit(100.0))).round(2)
+        down_price = (eff_prev * (pl.lit(1.0) - pct_band / pl.lit(100.0))).round(2)
+
+        no_limit_day = (
+            (pct_chg > (pct_band + pl.lit(NO_LIMIT_BAND_MARGIN_PCT)))
+            | (pct_chg < -(pct_band + pl.lit(NO_LIMIT_BAND_MARGIN_PCT)))
+        ).fill_null(False)
 
         self.df_daily = df.with_columns([
-            (pl.col("close") >= up_price - eps).fill_null(False).alias("is_limit_up"),
-            (pl.col("high") >= up_price - eps).fill_null(False).alias("is_touch_limit_up"),
-            (pl.col("close") <= down_price + eps).fill_null(False).alias("is_limit_down"),
-            (pl.col("low") <= down_price + eps).fill_null(False).alias("is_touch_limit_down"),
+            ((pl.col("close") >= up_price - eps) & ~no_limit_day).fill_null(False).alias("is_limit_up"),
+            ((pl.col("high") >= up_price - eps) & ~no_limit_day).fill_null(False).alias("is_touch_limit_up"),
+            ((pl.col("close") <= down_price + eps) & ~no_limit_day).fill_null(False).alias("is_limit_down"),
+            ((pl.col("low") <= down_price + eps) & ~no_limit_day).fill_null(False).alias("is_touch_limit_down"),
         ])
 
     def _append_prev_close(self):

@@ -490,10 +490,13 @@ class TestLimitUpPct(unittest.TestCase):
 
 
 class TestLimitFlags(unittest.TestCase):
-    """IS_LIMIT_UP 等预计算标志列：按交易所 0.01 元修约后的实际涨停价判断。"""
+    """IS_LIMIT_UP 等预计算标志列：按交易所 0.01 元修约后的实际涨停价判断。
+
+    行格式：(date, code, isST, close, high, low, pctChg)。
+    pctChg 为供应商按官方基准（除权日为除权参考价）计算的当日涨跌幅。
+    """
 
     def _flags(self, rows):
-        """rows: (date, code, isST, close, high, low)，昨收由 close.shift(1).over(code) 推导。"""
         dm = DataManager()
         dm.df_daily = pl.DataFrame({
             "date": [r[0] for r in rows],
@@ -502,6 +505,7 @@ class TestLimitFlags(unittest.TestCase):
             "close": [float(r[3]) for r in rows],
             "high": [float(r[4]) for r in rows],
             "low": [float(r[5]) for r in rows],
+            "pctChg": [None if r[6] is None else float(r[6]) for r in rows],
         })
         dm._compute_limit_flags()
         out = dm.df_daily.sort(["code", "date"])
@@ -514,28 +518,28 @@ class TestLimitFlags(unittest.TestCase):
 
     def test_round_down_limit_detected(self):
         # 前收 10.54 → 理论涨停 11.594 → 实际涨停价 round→11.59（涨幅仅 9.96%，旧公式 PCT_CHG>=10 漏选）
-        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.50),
-                         (datetime.date(2026, 8, 21), "sh.600000", 0, 11.59, 11.59, 11.30)])
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.50, 1.2),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 11.59, 11.59, 11.30, 9.9621)])
         self.assertEqual(f["up"], [False, True])
         self.assertEqual(f["touch_up"][1], True)
 
     def test_touch_without_seal(self):
         # 盘中触及涨停（high 达 11.00）但收盘回落到 10.80：封板 False、触板 True
-        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.00, 10.05, 9.90),
-                         (datetime.date(2026, 8, 21), "sh.600000", 0, 10.80, 11.00, 10.70)])
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.00, 10.05, 9.90, -0.3),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 10.80, 11.00, 10.70, 8.0)])
         self.assertEqual(f["up"], [False, False])
         self.assertEqual(f["touch_up"], [False, True])
 
     def test_round_up_limit(self):
         # 前收 9.99 → 涨停价 round(10.989) = 10.99，涨幅 10.01%
-        f = self._flags([(datetime.date(2026, 8, 20), "sz.000001", 0, 9.99, 10.05, 9.95),
-                         (datetime.date(2026, 8, 21), "sz.000001", 0, 10.99, 11.02, 10.90)])
+        f = self._flags([(datetime.date(2026, 8, 20), "sz.000001", 0, 9.99, 10.05, 9.95, 0.8),
+                         (datetime.date(2026, 8, 21), "sz.000001", 0, 10.99, 11.02, 10.90, 10.0101)])
         self.assertEqual(f["up"], [False, True])
 
     def test_limit_down_symmetric(self):
         # 前收 10.54 → 跌停价 round(10.54×0.9)=round(9.486)=9.49（跌幅 9.96%）
-        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.40),
-                         (datetime.date(2026, 8, 21), "sh.600000", 0, 9.49, 9.60, 9.49)])
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600000", 0, 10.54, 10.60, 10.40, -1.1),
+                         (datetime.date(2026, 8, 21), "sh.600000", 0, 9.49, 9.60, 9.49, -9.9621)])
         self.assertEqual(f["down"][1], True)
         self.assertEqual(f["touch_down"][1], True)
         # 首行无昨收，一律 False
@@ -543,26 +547,67 @@ class TestLimitFlags(unittest.TestCase):
 
     def test_main_board_st_history_rule(self):
         # 2026-07-06 前主板 ST 为 5%：前收 10.00 → 涨停价 10.50；并轨日后同样价格不再构成涨停
-        f = self._flags([(datetime.date(2026, 7, 2), "sh.600001", 1, 10.00, 10.10, 9.98),
-                         (datetime.date(2026, 7, 3), "sh.600001", 1, 10.50, 10.50, 10.30),
-                         (datetime.date(2026, 7, 6), "sh.600001", 1, 10.50, 10.55, 10.45)])
+        f = self._flags([(datetime.date(2026, 7, 2), "sh.600001", 1, 10.00, 10.10, 9.98, 0.5),
+                         (datetime.date(2026, 7, 3), "sh.600001", 1, 10.50, 10.50, 10.30, 5.0),
+                         (datetime.date(2026, 7, 6), "sh.600001", 1, 10.50, 10.55, 10.45, 0.0)])
         self.assertEqual(f["up"], [False, True, False])
 
     def test_first_row_no_prev_close_is_false(self):
-        f = self._flags([(datetime.date(2026, 8, 20), "bj.830001", 0, 13.00, 13.00, 12.90)])
+        f = self._flags([(datetime.date(2026, 8, 20), "bj.830001", 0, 13.00, 13.00, 12.90, 0.0)])
         self.assertEqual([f["up"], f["touch_up"], f["down"], f["touch_down"]],
                          [[False], [False], [False], [False]])
 
     def test_board_pcts_apply_to_flags(self):
         # 创业板/科创板 20%：前收 10.00 → 涨停价 12.00；+10%（11.00）不算涨停，+20%（12.00）算
-        f = self._flags([(datetime.date(2026, 8, 20), "sh.688001", 0, 10.00, 10.20, 9.95),
-                         (datetime.date(2026, 8, 21), "sh.688001", 0, 12.00, 12.01, 11.90),
-                         (datetime.date(2026, 8, 20), "sz.300001", 0, 10.00, 10.20, 9.95),
-                         (datetime.date(2026, 8, 21), "sz.300001", 0, 11.00, 11.15, 10.90),
-                         (datetime.date(2026, 8, 20), "sz.300002", 0, 10.00, 10.20, 9.95),
-                         (datetime.date(2026, 8, 21), "sz.300002", 0, 12.00, 12.05, 11.85)])
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.688001", 0, 10.00, 10.20, 9.95, 0.6),
+                         (datetime.date(2026, 8, 21), "sh.688001", 0, 12.00, 12.01, 11.90, 20.0),
+                         (datetime.date(2026, 8, 20), "sz.300001", 0, 10.00, 10.20, 9.95, 0.4),
+                         (datetime.date(2026, 8, 21), "sz.300001", 0, 11.00, 11.15, 10.90, 10.0),
+                         (datetime.date(2026, 8, 20), "sz.300002", 0, 10.00, 10.20, 9.95, 0.7),
+                         (datetime.date(2026, 8, 21), "sz.300002", 0, 12.00, 12.05, 11.85, 20.0)])
         # 排序后依次为 sh.688001 / sz.300001 / sz.300002，各 2 行
         self.assertEqual(f["up"], [False, True, False, False, False, True])
+
+    def test_exdiv_official_base_detected(self):
+        # 除权除息日：昨收 10.00、分红 0.50 → 官方基准 9.50 → 官方涨停价 round(9.50×1.1)=10.45；
+        # 收盘 10.45 封真实涨停（pctChg=+10.0 按官方基准），旧 shift 法错算 11.00 会漏
+        f = self._flags([(datetime.date(2026, 6, 18), "sh.600010", 0, 10.00, 10.05, 9.95, 0.5),
+                         (datetime.date(2026, 6, 19), "sh.600010", 0, 10.45, 10.45, 10.30, 10.0)])
+        self.assertEqual(f["up"], [False, True])
+        self.assertEqual(f["touch_up"][1], True)
+
+    def test_exdiv_falls_back_to_shift_when_pct_missing(self):
+        # pctChg 缺失：回退相邻收盘（现版行为），不因缺列崩溃
+        f = self._flags([(datetime.date(2026, 6, 18), "sh.600011", 0, 10.54, 10.60, 10.50, None),
+                         (datetime.date(2026, 6, 19), "sh.600011", 0, 11.59, 11.59, 11.40, None)])
+        self.assertEqual(f["up"], [False, True])
+
+    def test_no_limit_day_purified(self):
+        # 无涨跌幅限制日（如新股上市初期）：+88% 远超限幅带 → 即使越过理论涨停价也不算涨停
+        f = self._flags([(datetime.date(2026, 8, 20), "sz.301900", 0, 10.00, 10.20, 9.95, 0.0),
+                         (datetime.date(2026, 8, 21), "sz.301900", 0, 18.80, 19.00, 17.00, 88.0)])
+        self.assertEqual([f["up"], f["touch_up"], f["down"], f["touch_down"]],
+                         [[False, False], [False, False], [False, False], [False, False]])
+
+    def test_no_limit_day_borderline_gain_not_sealed(self):
+        # 主板 +13% 落在限幅带外（>10+2）：无限制日净化生效；而 +9.96% 正常封板不受误伤
+        f = self._flags([(datetime.date(2026, 8, 20), "sh.600012", 0, 10.00, 10.10, 9.90, 0.2),
+                         (datetime.date(2026, 8, 21), "sh.600012", 0, 11.30, 11.35, 11.10, 13.0),
+                         (datetime.date(2026, 8, 20), "sh.600013", 0, 10.54, 10.60, 10.50, 1.0),
+                         (datetime.date(2026, 8, 21), "sh.600013", 0, 11.59, 11.59, 11.40, 9.9621)])
+        # 排序后前 2 行 sh.600012（净化），后 2 行 sh.600013（正常封板）
+        self.assertEqual(f["up"][:2], [False, False])
+        self.assertEqual(f["up"][2:], [False, True])
+
+    def test_chi_next_historical_pct_before_2020_reform(self):
+        # 创业板 2020-08-24 注册制改革前限幅 10%：改革前 +10% 即涨停；改革后需 +20%
+        f = self._flags([(datetime.date(2020, 8, 20), "sz.300010", 0, 10.00, 10.10, 9.95, 0.5),
+                         (datetime.date(2020, 8, 21), "sz.300010", 0, 11.00, 11.02, 10.85, 10.0),
+                         (datetime.date(2020, 8, 24), "sz.300011", 0, 10.00, 10.10, 9.95, 0.3),
+                         (datetime.date(2020, 8, 25), "sz.300011", 0, 11.00, 11.05, 10.90, 10.0)])
+        # 排序后前 2 行 sz.300010（改革前 band=10），后 2 行 sz.300011（改革后 band=20）
+        self.assertEqual(f["up"][:2], [False, True])
+        self.assertEqual(f["up"][2:], [False, False])
 
     def test_dsl_boolean_field_comparison(self):
         dm = DataManager()
