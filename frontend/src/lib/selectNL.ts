@@ -88,6 +88,7 @@ export function parseSelectNLText(raw: string): SelectNLResult {
 const COMPARE_STR = '>=|<=|>|<';
 const POS_INT_MAX = 500;
 const ARITH_MAX_OPS = 3;
+const TF_PREFIXES = new Set(['D', 'W', 'M']);
 
 export function validateFormula(
   meta: NLMeta,
@@ -113,10 +114,12 @@ export function validateFormula(
   const sigs = meta.signatures ?? {};
 
   // 1. 校验所有函数调用签名（含嵌套，正则全局扫描）
-  const callRegex = /([A-Z_][A-Z0-9_]*)\s*\(/g;
+  // 支持可选的周期前缀：W.MA(W.CLOSE, 20) 或 MA(CLOSE, 20)
+  const callRegex = /(?:([DWM])\.)?([A-Z_][A-Z0-9_]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = callRegex.exec(formula)) !== null) {
-    const func = m[1];
+    const tfPrefix = m[1]; // 可选 D/W/M
+    const func = m[2];
     // AND/OR 是布尔逻辑词，后跟 ( 是括号条件而非函数调用
     if (func === 'AND' || func === 'OR') continue;
     const sig = sigs[func];
@@ -126,19 +129,29 @@ export function validateFormula(
     if (closeIdx === -1) return { ok: false, reason: '公式括号不配对' };
     const argStr = formula.slice(openIdx + 1, closeIdx);
     const args = splitTopLevel(argStr, ',').map((s) => s.trim());
-    const v = validateCallArgs(meta, sig, args, func);
+    const v = validateCallArgs(meta, sig, args, func, tfPrefix);
     if (v.ok === false) return v;
     callRegex.lastIndex = closeIdx + 1;
   }
 
   // 2. 其余大写标识符必须 ∈ 白名单
-  const tokenRegex = /[A-Z_][A-Z0-9_]*/g;
+  // 支持可选的周期前缀：W.CLOSE / D.VOL 等
+  const tokenRegex = /(?:(?:([DWM])\.)?([A-Z_][A-Z0-9_]*))/g;
   let t: RegExpExecArray | null;
   while ((t = tokenRegex.exec(formula)) !== null) {
-    const token = t[0];
+    const tfPrefix = t[1];
+    const token = t[2];
     if (['AND', 'OR'].includes(token)) continue;
-    if (indicators.has(token) || fields.has(token)) continue;
-    return { ok: false, reason: `未识别标识符 ${token}` };
+    if (tfPrefix) {
+      // 带前缀的标识符：必须是字段
+      if (!fields.has(token)) {
+        return { ok: false, reason: `未识别字段 ${token}` };
+      }
+    } else {
+      // 无前缀的标识符：必须是指标或字段
+      if (indicators.has(token) || fields.has(token)) continue;
+      return { ok: false, reason: `未识别标识符 ${token}` };
+    }
   }
   return { ok: true };
 }
@@ -195,7 +208,8 @@ function validateCallArgs(
   meta: NLMeta,
   sig: string[],
   args: string[],
-  func: string
+  func: string,
+  tfPrefix?: string
 ): { ok: true } | { ok: false; reason: string } {
   if (args.length !== sig.length) {
     return { ok: false, reason: `函数 ${func} 必须恰好 ${sig.length} 个参数` };
@@ -204,8 +218,14 @@ function validateCallArgs(
     const kind = sig[i];
     const arg = args[i];
     if (kind === 'field') {
-      if (!meta.fields.includes(arg)) {
+      // 支持带前缀的字段：W.CLOSE, D.VOL 等
+      const fieldMatch = /^(?:([DWM])\.)?([A-Z_][A-Z0-9_]*)$/.exec(arg);
+      if (!fieldMatch) {
         return { ok: false, reason: `函数 ${func} 参数 ${arg} 不在字段白名单` };
+      }
+      const fieldName = fieldMatch[2];
+      if (!meta.fields.includes(fieldName)) {
+        return { ok: false, reason: `函数 ${func} 参数 ${fieldName} 不在字段白名单` };
       }
     } else if (kind === 'pos_int') {
       if (!/^\d+$/.test(arg) || Number(arg) < 1 || Number(arg) > POS_INT_MAX) {
@@ -261,28 +281,33 @@ function isArithExpr(meta: NLMeta, tok: string): boolean {
 }
 
 function isSeriesExpr(meta: NLMeta, tok: string): boolean {
-  if (meta.fields.includes(tok)) return true;
+  const trimmed = tok.trim();
+  // 0. 带前缀的字段：W.CLOSE, D.VOL 等
+  const prefixedFieldMatch = /^(?:([DWM])\.)?([A-Z_][A-Z0-9_]*)$/.exec(trimmed);
+  if (prefixedFieldMatch && meta.fields.includes(prefixedFieldMatch[2])) return true;
+  if (meta.fields.includes(trimmed)) return true;
   // 1. 平衡外括号剥离：'(CLOSE-OPEN)' → 'CLOSE-OPEN'（后端 ast 对括号透明，前端需显式剥）
-  if (tok.trim().startsWith('(') && matchParen(tok.trim(), 0) === tok.trim().length - 1) {
-    return isSeriesExpr(meta, tok.trim().slice(1, -1));
+  if (trimmed.startsWith('(') && matchParen(trimmed, 0) === trimmed.length - 1) {
+    return isSeriesExpr(meta, trimmed.slice(1, -1));
   }
-  // 2. 函数调用路径：仅当 call 的闭合括号恰在末尾（纯调用，尾部无残留）
-  const mm = /^([A-Z_][A-Z0-9_]*)\s*\(/.exec(tok);
+  // 2. 函数调用路径：支持可选前缀 W.MA(...) 或 MA(...)
+  const mm = /^(?:([DWM])\.)?([A-Z_][A-Z0-9_]*)\s*\(/.exec(trimmed);
   if (mm) {
-    const sig = meta.signatures?.[mm[1]];
+    const funcName = mm[2];
+    const sig = meta.signatures?.[funcName];
     const openIdx = mm.index + mm[0].length - 1;
     if (sig && !sig.includes('cond')) {
-      const closeIdx = matchParen(tok, openIdx);
-      if (closeIdx === tok.length - 1) {
-        const argStr = tok.slice(openIdx + 1, closeIdx);
+      const closeIdx = matchParen(trimmed, openIdx);
+      if (closeIdx === trimmed.length - 1) {
+        const argStr = trimmed.slice(openIdx + 1, closeIdx);
         const args = splitTopLevel(argStr, ',').map((s) => s.trim());
-        if (validateCallArgs(meta, sig, args, mm[1]).ok === true) return true;
+        if (validateCallArgs(meta, sig, args, funcName, mm[1]).ok === true) return true;
       }
     }
   }
   // 3. 算术表达式路径：函数调用路径不匹配（非纯调用/尾部有残留/非调用）时尝试
-  const aparts = splitArithTopLevel(tok);
-  if (aparts.length > 1) return isArithExpr(meta, tok);
+  const aparts = splitArithTopLevel(trimmed);
+  if (aparts.length > 1) return isArithExpr(meta, trimmed);
   return false;
 }
 
@@ -360,6 +385,25 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '   收盘跌停 = IS_LIMIT_DOWN == 1 ；盘中触及跌停 = IS_TOUCH_LIMIT_DOWN == 1。',
     '   禁止用 PCT_CHG >= LIMIT_UP_PCT 判断涨停（实际涨停价按 0.01 元修约，真实涨停的当日涨幅常低于限幅，如 9.96%，会漏选）。',
     '   LIMIT_UP_PCT 仅用于「涨幅达到板块限幅」这类字面需求；任何情况下禁止写死 10/20/30。',
+    '',
+    '【多周期选股 — 支持跨周期组合】',
+    '可用 D./W./M. 前缀指定字段和函数的周期：',
+    '  W.MA(W.CLOSE, 20) — 周线20周均线',
+    '  M.CLOSE — 月线收盘价',
+    '  D.VOL — 日线成交量（等同于 VOL）',
+    '规则：',
+    '  1. 无前缀 = 日线（如 CLOSE、MA(CLOSE,20)）',
+    '  2. D. = 显式日线；W. = 周线；M. = 月线',
+    '  3. 函数前缀决定指标计算周期，字段前缀决定数据周期',
+    '  4. 同一原子内不能混用前缀和无前缀字段（W.MA(CLOSE,20) 非法，须写 W.MA(W.CLOSE,20)）',
+    '  5. 板块字段（S_CLOSE 等）仅允许在无前缀原子中使用',
+    '  6. 不同周期原子通过 AND/OR 组合时，各自独立求值后取交集/并集',
+    '',
+    '多周期示例：',
+    '  周线金叉且日线放量：CROSS_UP(W.MA(W.CLOSE,5), W.MA(W.CLOSE,20)) AND VOL > MA(VOL,5)*2',
+    '  周线均线多头：W.MA(W.CLOSE,5) > W.MA(W.CLOSE,10) AND W.MA(W.CLOSE,10) > W.MA(W.CLOSE,20)',
+    '  月线趋势向上：M.CLOSE > M.MA(M.CLOSE,10)',
+    '  周线MACD金叉：CROSS_UP(W.MACD_DIF(12,26), W.MACD_DEA(12,26,9))',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -669,6 +713,11 @@ export function buildAnalyzePrompt(meta: NLMeta): string {
     '   - 「涨停」（默认收盘封板）→「当日收盘价封在涨停价」；「盘中触及涨停/触板」→「当日最高价达到过涨停价」；「跌停」「触及跌停」同理。此类需求周期应选 D',
     '6. 若需求明确提到某个具体交易日（如「2026年8月20日」「2026-08-20」），输出 ISO 格式的 date 字段（YYYY-MM-DD）；',
     '   「今天/最新/当前」等相对表述不要输出 date（系统默认查询最新交易日）。',
+    '7. 多周期需求识别：若用户提到「周线/月线」等周期关键词，需在 conditions 中明确标注周期：',
+    '   - 「周线均线金叉」→「周线5周均线上穿20周均线」',
+    '   - 「月线收盘价大于10」→「月线收盘价大于10」',
+    '   - 「周线MACD金叉」→「周线MACD指标DIF上穿DEA」',
+    '   - 周期关键词：日线/天/D、周线/周/W、月线/月/M',
     '',
     '输出必须是合法 JSON：{"restatement":"...","conditions":["...","..."],"logic":"1 AND 2","timeframe":"D"}。',
     '若用户提到具体交易日，额外输出 "date":"YYYY-MM-DD" 字段；否则不要输出 date。',

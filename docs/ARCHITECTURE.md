@@ -1,6 +1,6 @@
 # BlinkQuant 系统架构文档
 
-版本: v1.0 | 更新: 2026-08-04
+版本: v1.1 | 更新: 2026-08-24
 
 ---
 
@@ -24,6 +24,67 @@ GitHub Actions (每日 03:00 CST) 下载 GBBQ.zip，Go TDX Engine 19 并行分�
 ### 2. 数据消费
 
 用户请求 -> Vercel 前端。选股: POST /api/v1/select (并发 3 节点 Promise.all) -> FastAPI + Polars Lazy 执行 -> 返回代码列表。K线: GET /api/v1/kline (Parquet 二进制流) -> hyparquet WASM 解析 -> 前端轻量图表计算指标。搜索/列表: 缓存 + 后端索引。
+
+### 3. 多周期选股 (v3.0)
+
+用户输入含周期前缀的公式（如 `W.MA(W.CLOSE, 20) > 10`）-> `parse_multi_tf` 返回 plan tree -> 每个 atom 独立求值（D 走 df_daily，W/M 走 `build_asof_frame`）-> 布尔折叠（AND→交集，OR→并集）-> 返回代码列表。
+
+---
+
+## 多周期选股 DSL (v3.0)
+
+### 语法
+
+```
+周期前缀 := D | W | M
+字段 := [周期前缀 '.'] FIELD_NAME
+函数 := [周期前缀 '.'] FUNC_NAME '(' 参数列表 ')'
+原子 := 字段 比较运算符 (字段 | 常量) | 函数 比较运算符 (字段 | 常量)
+表达式 := 原子 (AND | OR 原子)*
+```
+
+### 示例
+
+| 公式 | 含义 |
+|------|------|
+| `CLOSE > 10` | 日线收盘价 > 10（无前缀 = 日线） |
+| `W.MA(W.CLOSE, 20) > 10` | 周线20周均线 > 10 |
+| `M.CLOSE > M.MA(M.CLOSE, 10)` | 月线收盘价 > 10月均线 |
+| `W.MA(W.CLOSE,5) > W.MA(W.CLOSE,20) AND VOL > MA(VOL,5)*2` | 周线均线多头 + 日线放量 |
+| `CROSS_UP(W.MACD_DIF(12,26), W.MACD_DEA(12,26,9))` | 周线MACD金叉 |
+
+### 约束规则
+
+1. **无前缀 = 日线**：`CLOSE` 等价于 `D.CLOSE`
+2. **显式前缀**：`D.` = 强制日线；`W.` = 周线；`M.` = 月线
+3. **同一原子内禁止混用**：`W.MA(CLOSE, 20)` 非法，须写 `W.MA(W.CLOSE, 20)`
+4. **板块字段限制**：`S_CLOSE` 等板块字段仅允许在无前缀原子中使用
+5. **跨周期组合**：不同周期原子通过 AND/OR 组合时，各自独立求值后取交集/并集
+
+### As-of Frame 构建
+
+对于非基础周期（W/M），`build_asof_frame(tf, target_date)` 构建截至 target_date 的完整数据：
+
+```
+completed = 周期表中 date < cur_start 的完整周期行
+partial   = 日线数据 cur_start ≤ date ≤ target_date，按 code 分组合成单行
+result    = concat([completed, partial])
+```
+
+- 周线 cur_start = target_date 所在周的周一
+- 月线 cur_start = target_date 所在月的第一天
+- LRU 缓存最近 8 个 (tf, target_date) 结果
+
+### Plan Tree
+
+`parse_multi_tf` 返回的 plan tree 结构：
+
+```json
+{"type": "atom", "tf": "W", "expr": pl.Expr}
+{"type": "bool", "op": "AND", "children": [...]}
+```
+
+引擎 `_fold_plan` 递归折叠：atom 返回 code set，bool 按 op 做集合运算。
 
 ---
 
@@ -81,10 +142,11 @@ GitHub Actions (每日 03:00 CST) 下载 GBBQ.zip，Go TDX Engine 19 并行分�
 
 | 模块 | 文件 | 核心职责 |
 |------|------|---------|
-| 数据管理 | backend/core/data_manager.py | 流式下载、分片加载、前复权、内存优化、重采样、板块映射 |
-| 选股引擎 | backend/core/engine.py | 热 JIT 编译、Lazy 执行、安全板块 Join |
-| 安全解析 | backend/core/security.py | AST 白名单解析器，防注入 |
+| 数据管理 | backend/core/data_manager.py | 流式下载、分片加载、前复权、内存优化、重采样、板块映射、as-of frame 构建 |
+| 选股引擎 | backend/core/engine.py | 热 JIT 编译、Lazy 执行、安全板块 Join、多周期 plan tree 折叠 |
+| 安全解析 | backend/core/security.py | AST 白名单解析器、防注入、多周期 parse_multi_tf |
 | API 路由 | backend/api/routes.py | 选股/K线/搜索/状态/健康检查 |
+| AI 选股 | frontend/src/lib/selectNL.ts | 公式校验、提示词构建、多周期前缀支持 |
 | 主页面 | frontend/src/app/page.tsx | 状态管理、选股/图表联动、本地缓存 |
 | K线图表 | frontend/src/components/KLineChart.tsx | lightweight-charts、20+指标、十字光标 |
 | 技术指标 | frontend/src/utils/indicators/*.ts | 19 个指标纯前端实现 |
