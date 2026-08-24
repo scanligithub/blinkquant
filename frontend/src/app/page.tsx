@@ -150,6 +150,7 @@ useEffect(() => {
 
   const [results, setResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectMeta, setSelectMeta] = useState<{ date?: string | null; degraded?: boolean } | null>(null);
   const [selectedStock, setSelectedStock] = useState<{kind: 'stock' | 'sector'; code: string; name?: string; data: any} | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [dailyDataCache, setDailyDataCache] = useState<any[]>([]);
@@ -280,18 +281,21 @@ useEffect(() => {
     setShowStrategies(false);
   }, []);
 
-  const handleSelect = async (overrides?: { formula?: string; timeframe?: string }) => {
-    setLoading(true); setResults([]); setSelectedStock(null);
+  const handleSelect = async (overrides?: { formula?: string; timeframe?: string; date?: string }) => {
+    setLoading(true); setResults([]); setSelectedStock(null); setSelectMeta(null);
     const f = overrides?.formula ?? formula;
     const t = overrides?.timeframe ?? timeframe;
+    const d = overrides?.date;
     try {
       const res = await fetch('/api/select', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formula: f, timeframe: t })
+        body: JSON.stringify({ formula: f, timeframe: t, ...(d ? { date: d } : {}) })
       });
       const json = await res.json();
-      if (json.success) setResults(json.data);
-      else alert(`Selection failed: ${json.error}`);
+      if (json.success) {
+        setResults(json.data);
+        setSelectMeta({ date: json.date ?? null, degraded: !!json.meta?.degraded });
+      } else alert(`Selection failed: ${json.error}`);
     } catch (err) { alert('Gateway connection failed'); }
     setLoading(false);
   };
@@ -534,8 +538,22 @@ setDailyDataCache(dailyData);
                     自选
                   </button>
                 </div>
-                {!showWatchlist && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono">{results.length}</span>}
+                {!showWatchlist && (
+                  <>
+                    {selectMeta?.date && (
+                      <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-mono">
+                        {selectMeta.date}
+                      </span>
+                    )}
+                    <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono">{results.length}</span>
+                  </>
+                )}
               </div>
+              {!showWatchlist && selectMeta?.degraded && (
+                <div className="mx-2 mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  部分计算节点响应失败，本次结果可能不完整，建议重试。
+                </div>
+              )}
               {showWatchlist ? (
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                   <Watchlist
@@ -816,9 +834,9 @@ setDailyDataCache(dailyData);
       {showAISelect && (
         <AISelectModal
           onClose={() => setShowAISelect(false)}
-          onRun={(formula, timeframe) => {
+          onRun={(formula, timeframe, date) => {
             setShowAISelect(false);
-            handleSelect({ formula, timeframe });
+            handleSelect({ formula, timeframe, date });
           }}
         />
       )}

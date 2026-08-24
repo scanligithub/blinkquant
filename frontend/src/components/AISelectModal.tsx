@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 interface AISelectModalProps {
   onClose: () => void;
-  onRun: (formula: string, timeframe: string) => void;
+  onRun: (formula: string, timeframe: string, date?: string) => void;
 }
 
 interface AnalyzeResult {
@@ -11,6 +11,7 @@ interface AnalyzeResult {
   conditions: string[];
   logic: string;
   timeframe: string;
+  date?: string;
 }
 
 interface TranslateResult {
@@ -167,6 +168,12 @@ export default function AISelectModal({ onClose, onRun }: AISelectModalProps) {
               <div className="mt-1 text-slate-500">
                 逻辑关系：<span className="font-mono text-slate-700">{analysis.logic}</span>
               </div>
+              {analysis.date && (
+                <div className="mt-1 text-slate-500">
+                  查询交易日：<span className="font-mono text-slate-700">{analysis.date}</span>
+                  （非交易日自动回退到最近交易日）
+                </div>
+              )}
             </div>
 
             <div className="mt-2 flex items-center gap-1">
@@ -281,7 +288,7 @@ export default function AISelectModal({ onClose, onRun }: AISelectModalProps) {
                 取消
               </button>
               <button
-                onClick={() => onRun(result.formula, timeframe)}
+                onClick={() => onRun(result.formula, timeframe, analysis?.date)}
                 disabled={!result.formula.trim()}
                 className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold disabled:opacity-50"
               >

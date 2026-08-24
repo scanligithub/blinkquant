@@ -23,6 +23,7 @@ export interface AnalyzeResult {
   conditions: string[];
   logic: string;
   timeframe: string;
+  date?: string;
 }
 
 export const MAX_FORMULA_LENGTH = 500;
@@ -354,8 +355,11 @@ export function buildSystemPrompt(meta: NLMeta): string {
     '9) DMI/ADX 金叉：用 CROSS_UP(DMI_PDI(N), DMI_MDI(N))；ADX 强弱用 DMI_ADX(N) > 25 直接比较。',
     '10) 零参算子必须写括号：OBV()、BBI()、SAR()、UO()，禁止写裸名 OBV/BBI/SAR/UO。',
     '11) CCI 突破用 CCI(N) > 100；WR 超买 WR(N) > 80、超卖 WR(N) < 20；MFI 用 MFI(N) < 20。',
-    '12) 涨停/跌停：涨停 = PCT_CHG >= LIMIT_UP_PCT；跌停 = PCT_CHG <= 0 - LIMIT_UP_PCT。',
-    '   禁止写死 10/20/30（各板限幅不同：主板10 科创/创业20 北交30，必须用 LIMIT_UP_PCT 字段）。',
+    '12) 涨停/跌停：必须用预计算标志字段（仅支持周期 D）：',
+    '   收盘涨停（封板）= IS_LIMIT_UP == 1 ；盘中触及涨停（触板）= IS_TOUCH_LIMIT_UP == 1。',
+    '   收盘跌停 = IS_LIMIT_DOWN == 1 ；盘中触及跌停 = IS_TOUCH_LIMIT_DOWN == 1。',
+    '   禁止用 PCT_CHG >= LIMIT_UP_PCT 判断涨停（实际涨停价按 0.01 元修约，真实涨停的当日涨幅常低于限幅，如 9.96%，会漏选）。',
+    '   LIMIT_UP_PCT 仅用于「涨幅达到板块限幅」这类字面需求；任何情况下禁止写死 10/20/30。',
     '',
     `周期 timeframe 只能是 ${meta.timeframes.join('/')}。`,
     '',
@@ -386,7 +390,10 @@ export function parseSelectNLAnalysis(raw: string): AnalyzeResult {
   if (conditions.length === 0) throw new Error('分析结果缺少 conditions');
   const logic = typeof parsed.logic === 'string' && parsed.logic.trim() !== '' ? parsed.logic.trim() : conditions.map((_, i) => `${i + 1}`).join(' AND ');
   const timeframe = typeof parsed.timeframe === 'string' ? parsed.timeframe.toUpperCase() : 'D';
-  return { restatement: parsed.restatement.trim(), conditions, logic, timeframe };
+  // 可选日期：仅接受严格 ISO 格式，其余（相对表述/非法值）一律丢弃，走后端默认最新交易日
+  const date =
+    typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : undefined;
+  return { restatement: parsed.restatement.trim(), conditions, logic, timeframe, ...(date ? { date } : {}) };
 }
 
 const UNIT_FACTORS: Record<string, number> = { 万亿: 1e12, 亿: 1e8, 万: 1e4 };
@@ -457,8 +464,8 @@ export function buildHardConstraintSuffix(analysis: AnalyzeResult): string {
   if (/较高者|较大值|取较大|较小值|较低者|取较小/.test(text)) {
     lines.push('硬约束：本需求含「较高者/较大值/较小值」，请用 MAX(参数A, 参数B) 或 MIN(参数A, 参数B)；禁止把 MAX/MIN 作为外层 MA/REF/HHV/LLV/SUM 等 window 函数的参数（如 MA(MAX(...),N)、REF(MAX(...),1) 非法）。');
   }
-  if (/涨停|跌停|封板|一字板/.test(text)) {
-    lines.push('硬约束：本需求含涨停/跌停语义，必须使用 PCT_CHG 与 LIMIT_UP_PCT 比较（涨停 PCT_CHG >= LIMIT_UP_PCT；跌停 PCT_CHG <= 0 - LIMIT_UP_PCT），禁止写死 10/20/30 数值。');
+  if (/涨停|跌停|封板|一字板|触板|炸板/.test(text)) {
+    lines.push('硬约束：本需求含涨停/跌停语义，必须使用预计算标志字段（周期 D）：收盘涨停 IS_LIMIT_UP == 1；盘中触及涨停 IS_TOUCH_LIMIT_UP == 1；收盘跌停 IS_LIMIT_DOWN == 1；盘中触及跌停 IS_TOUCH_LIMIT_DOWN == 1。禁止用 PCT_CHG 与 LIMIT_UP_PCT 比较，禁止写死 10/20/30 数值。');
   }
   return lines.length ? '\n' + lines.join('\n') : '';
 }
@@ -472,6 +479,7 @@ export function buildTranslateUserMessage(analysis: AnalyzeResult): string {
     `条件清单：\n${conditionLines}`,
     `逻辑关系：${analysis.logic}`,
     `周期：${analysis.timeframe}`,
+    ...(analysis.date ? [`查询交易日：${analysis.date}（date 由系统单独处理，公式中不要写任何日期条件）`] : []),
     buildHardConstraintSuffix(analysis),
   ].join('\n');
 }
@@ -594,19 +602,24 @@ export function trySafeNumericCrossRewrite(formula: string, analysis?: AnalyzeRe
   return null;
 }
 
-// 确定性还原：弱模型把「涨停/跌停」写死数值（如 PCT_CHG >= 10，对创业/科创/北交不对），
-// 收敛回 LIMIT_UP_PCT 比较（涨停 PCT_CHG >= LIMIT_UP_PCT；跌停 PCT_CHG <= 0 - LIMIT_UP_PCT）。
-// 仅当 analysis 文本含涨停/跌停关键词 且 公式整体精确匹配 写死数值幅度时才改写，否则返回 null（不误改「涨幅大于5%」）。
+// 确定性还原：弱模型把「涨停/跌停」写成 PCT_CHG 与写死数值或 LIMIT_UP_PCT 的比较（旧口径会漏选
+// 实际涨幅 9.96%~9.99% 的真实涨停），收敛回预计算标志字段。
+// 收盘封板 → IS_LIMIT_UP == 1；需求明确「触及/触板/盘中」→ IS_TOUCH_LIMIT_UP == 1；跌停同理。
+// 仅当 analysis 文本含涨停/跌停关键词 且 公式整体精确匹配旧形式时才改写，否则返回 null（不误改「涨幅大于5%」）。
 export function trySafeLimitUpDownRewrite(formula: string, analysis?: AnalyzeResult): string | null {
   if (!analysis) return null;
   const text = [...(analysis.conditions || []), analysis.restatement || ''].join(' ');
-  if (!/涨停|跌停|封板|一字板/.test(text)) return null;
-  const up = /^PCT_CHG\s*(>=|>)\s*(?:10|20|30)(?:\.0+)?$/.exec(formula.trim());
-  if (up) return `PCT_CHG ${up[1]} LIMIT_UP_PCT`;
-  const down = /^PCT_CHG\s*(<=|<)\s*(?:-|0\s*-\s*)(10|20|30)(?:\.0+)?$/.exec(formula.trim());
-  if (down) return `PCT_CHG ${down[1]} 0 - LIMIT_UP_PCT`;
-  const downInvert = /^0\s*-\s*PCT_CHG\s*(>=|>)\s*(?:10|20|30)(?:\.0+)?$/.exec(formula.trim());
-  if (downInvert) return 'PCT_CHG <= 0 - LIMIT_UP_PCT';
+  if (!/涨停|跌停|封板|一字板|触板|炸板/.test(text)) return null;
+  const wantTouch = /触及|触板|盘中|炸板/.test(text);
+  const upTarget = wantTouch ? 'IS_TOUCH_LIMIT_UP == 1' : 'IS_LIMIT_UP == 1';
+  const downTarget = wantTouch ? 'IS_TOUCH_LIMIT_DOWN == 1' : 'IS_LIMIT_DOWN == 1';
+  const up = /^PCT_CHG\s*(>=|>)\s*(?:(?:10|20|30)(?:\.0+)?|LIMIT_UP_PCT)$/.exec(formula.trim());
+  if (up) return upTarget;
+  const down = /^PCT_CHG\s*(<=|<)\s*(?:-\s*|0\s*-\s*)?(?:(?:10|20|30)(?:\.0+)?|LIMIT_UP_PCT)$/.exec(formula.trim());
+  if (down) return downTarget;
+  const downInvert = /^0\s*-\s*PCT_CHG\s*(>=|>)\s*(?:(?:10|20|30)(?:\.0+)?|LIMIT_UP_PCT)$/.exec(formula.trim());
+  if (downInvert) return downTarget;
+  // 已是旧推荐形式 PCT_CHG <= 0 - LIMIT_UP_PCT 的变体已覆盖；其余不动
   return null;
 }
 
@@ -653,9 +666,12 @@ export function buildAnalyzePrompt(meta: NLMeta): string {
     '   - 「近N日振幅」「振幅大于x%」→「（最高价-最低价）/收盘价 的百分比」或明确阈值；不要写成「距上次某条件成立」',
     '   - 「上破/下破布林上轨/下轨」→「收盘价大于/小于布林上轨/下轨」或「收盘价上穿/下穿布林轨」',
     '   - 「距上次…不超过N日」才对应 BARSLAST 类语义；「新高/新低/振幅」不要用 BARSLAST 语义描述',
-    '   - 「涨停」→「当日收盘涨幅达到或超过该股涨停幅度(LIMIT_UP_PCT)」；「跌停」→「当日收盘跌幅达到或超过该股跌停幅度」',
+    '   - 「涨停」（默认收盘封板）→「当日收盘价封在涨停价」；「盘中触及涨停/触板」→「当日最高价达到过涨停价」；「跌停」「触及跌停」同理。此类需求周期应选 D',
+    '6. 若需求明确提到某个具体交易日（如「2026年8月20日」「2026-08-20」），输出 ISO 格式的 date 字段（YYYY-MM-DD）；',
+    '   「今天/最新/当前」等相对表述不要输出 date（系统默认查询最新交易日）。',
     '',
     '输出必须是合法 JSON：{"restatement":"...","conditions":["...","..."],"logic":"1 AND 2","timeframe":"D"}。',
+    '若用户提到具体交易日，额外输出 "date":"YYYY-MM-DD" 字段；否则不要输出 date。',
     '只输出 JSON，不要输出其他文字。',
   ].join('\n');
 }
