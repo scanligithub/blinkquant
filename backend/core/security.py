@@ -381,9 +381,17 @@ class BlinkParser:
         if isinstance(node, ast.Name):
             name = _require_whitelist_field(node)
             return self.fields[name]
+        # 无前缀函数调用
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id.upper() in INDICATORS
                 and "cond" not in INDICATORS[node.func.id.upper()]["signature"]):
+            return self._visit(node)
+        # 带前缀函数调用：W.MA(W.CLOSE, 20)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id.upper() in _TF_PREFIXES
+                and node.func.attr.upper() in INDICATORS
+                and "cond" not in INDICATORS[node.func.attr.upper()]["signature"]):
             return self._visit(node)
         if isinstance(node, ast.BinOp) and type(node.op) in (ast.Add, ast.Sub, ast.Mult, ast.Div):
             self._require_arith(node, func)
