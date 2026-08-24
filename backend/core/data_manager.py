@@ -110,8 +110,8 @@ class DataManager:
             return self._asof_frame_cache[cache_key]
 
         if tf == 'D':
-            # 日线：直接截断到 target_date
-            result = self.df_daily.filter(pl.col("date") <= target_date)
+            # 日线：直接截断到 target_date，并按 code/date 排序保证稳定语义
+            result = self.df_daily.filter(pl.col("date") <= target_date).sort(["code", "date"])
         else:
             # 获取参考表（df_weekly 或 df_monthly）
             ref_df = self.df_weekly if tf == 'W' else self.df_monthly
@@ -129,9 +129,10 @@ class DataManager:
                 completed = ref_df.filter(pl.col("date") < cur_start)
 
                 # partial = 日线数据 cur_start ≤ date ≤ target_date，合成单行
+                # 显式排序保证 first(open)/last(close) 语义确定
                 partial_daily = self.df_daily.filter(
                     (pl.col("date") >= cur_start) & (pl.col("date") <= target_date)
-                )
+                ).sort(["code", "date"])
 
                 if partial_daily.is_empty():
                     result = completed

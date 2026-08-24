@@ -213,7 +213,9 @@ class BlinkParser:
                 raise ValueError("Cannot mix bare and prefixed fields in same atom")
             tf = next(iter(prefixes))
             self._check_no_sector_fields(node)
-        return {"type": "atom", "tf": tf, "expr": self.parse_expression(ast.unparse(node), timeframe=tf)}
+        src = ast.unparse(node)
+        return {"type": "atom", "tf": tf, "source": src,
+                "expr": self.parse_expression(src, timeframe=tf)}
 
     def _collect_prefixes(self, node: ast.AST) -> set:
         """遍历 AST 收集所有 D./W./M. 前缀。"""

@@ -6,6 +6,7 @@ import unittest
 import polars as pl
 from core.data_manager import data_manager
 from core.engine import selection_engine
+from core.security import blink_parser
 from core.indicator_registry import WINDOW_NAMES
 
 class TestDerivation(unittest.TestCase):
@@ -152,6 +153,9 @@ class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
         data_manager.df_monthly = self._orig_monthly
         data_manager.df_mapping = self._orig_mapping
         data_manager._asof_frame_cache.clear()
+        # 重置 parser 单例状态，避免 mount_enabled / current_df 污染后续测试
+        blink_parser.mount_enabled = True
+        blink_parser.current_df = None
 
     def test_wednesday_no_leak_w_atom(self):
         """W.CLOSE > 10 on Wednesday (2026-08-19) should only see partial week close=11.0, not Thu/Fri."""
@@ -203,6 +207,191 @@ class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
             "W.CLOSE > 10", "D", None, target_date=target_date
         )
         self.assertEqual(result1["codes"], result2["codes"])
+
+
+class TestMTFAsOfSemantics(unittest.TestCase):
+    """P0 回归：MTF 每个 atom 必须返回“每只股票在 target_date 的 as-of bar 上”的
+    当前满足集合，而非历史上曾经满足的集合；cache / effective_date 必须正确隔离。"""
+
+    def setUp(self):
+        self._orig_daily = data_manager.df_daily
+        self._orig_weekly = data_manager.df_weekly
+        self._orig_monthly = data_manager.df_monthly
+        self._orig_mapping = data_manager.df_mapping
+        data_manager.df_mapping = None
+        data_manager._asof_frame_cache.clear()
+        selection_engine._set_cache.clear()
+
+    def tearDown(self):
+        data_manager.df_daily = self._orig_daily
+        data_manager.df_weekly = self._orig_weekly
+        data_manager.df_monthly = self._orig_monthly
+        data_manager.df_mapping = self._orig_mapping
+        data_manager._asof_frame_cache.clear()
+        selection_engine._set_cache.clear()
+        # 重置 parser 单例状态，避免 mount_enabled / current_df 污染后续测试
+        blink_parser.mount_enabled = True
+        blink_parser.current_df = None
+
+    def _load(self, rows):
+        dates, codes, closes = [], [], []
+        for d, c, cl in rows:
+            dates.append(d); codes.append(c); closes.append(float(cl))
+        df = pl.DataFrame({
+            "date": dates,
+            "code": codes,
+            "close": closes,
+            "open": [c - 0.1 for c in closes],
+            "high": [c + 0.2 for c in closes],
+            "low": [c - 0.2 for c in closes],
+            "volume": [1000000.0] * len(closes),
+            "amount": [10000000.0] * len(closes),
+        }).sort(["code", "date"])
+        data_manager.df_daily = df
+        data_manager._resample_all()
+
+    def test_d_atom_current_only(self):
+        """D atom 必须只看当前 bar：历史上 >10 但当前 ≤10 的股票必须排除。"""
+        self._load([
+            (datetime.date(2026, 8, 17), "sh.A", 12),
+            (datetime.date(2026, 8, 18), "sh.A", 13),
+            (datetime.date(2026, 8, 19), "sh.A", 5),
+            (datetime.date(2026, 8, 17), "sh.B", 5),
+            (datetime.date(2026, 8, 18), "sh.B", 6),
+            (datetime.date(2026, 8, 19), "sh.B", 15),
+        ])
+        # W.CLOSE > 0 全选，用于把 D atom 推入 MTF(_eval_atom) 路径
+        res = selection_engine.execute_selector(
+            "CLOSE > 10 AND W.CLOSE > 0", "D", None,
+            target_date=datetime.date(2026, 8, 19))
+        self.assertEqual(set(res["codes"]), {"sh.B"})
+
+    def test_w_atom_current_only(self):
+        """W atom 必须只看当前周 bar：历史周 >10 但当前周 ≤10 必须排除。"""
+        self._load([
+            (datetime.date(2026, 8, 10), "sh.A", 12),
+            (datetime.date(2026, 8, 11), "sh.A", 12),
+            (datetime.date(2026, 8, 12), "sh.A", 12),
+            (datetime.date(2026, 8, 13), "sh.A", 12),
+            (datetime.date(2026, 8, 14), "sh.A", 12),
+            (datetime.date(2026, 8, 17), "sh.A", 5),
+            (datetime.date(2026, 8, 18), "sh.A", 5),
+            (datetime.date(2026, 8, 19), "sh.A", 5),
+            (datetime.date(2026, 8, 10), "sh.B", 5),
+            (datetime.date(2026, 8, 11), "sh.B", 5),
+            (datetime.date(2026, 8, 12), "sh.B", 5),
+            (datetime.date(2026, 8, 13), "sh.B", 5),
+            (datetime.date(2026, 8, 14), "sh.B", 5),
+            (datetime.date(2026, 8, 17), "sh.B", 15),
+            (datetime.date(2026, 8, 18), "sh.B", 15),
+            (datetime.date(2026, 8, 19), "sh.B", 15),
+        ])
+        res = selection_engine.execute_selector(
+            "W.CLOSE > 10", "D", None,
+            target_date=datetime.date(2026, 8, 19))
+        self.assertEqual(set(res["codes"]), {"sh.B"})
+
+    def test_m_atom_current_only(self):
+        """M atom 必须只看当前月 bar：历史月 >10 但当前月 ≤10 必须排除。"""
+        self._load([
+            (datetime.date(2026, 7, 6), "sh.A", 12),
+            (datetime.date(2026, 7, 7), "sh.A", 12),
+            (datetime.date(2026, 7, 8), "sh.A", 12),
+            (datetime.date(2026, 8, 17), "sh.A", 5),
+            (datetime.date(2026, 8, 18), "sh.A", 5),
+            (datetime.date(2026, 7, 6), "sh.B", 5),
+            (datetime.date(2026, 7, 7), "sh.B", 5),
+            (datetime.date(2026, 7, 8), "sh.B", 5),
+            (datetime.date(2026, 8, 17), "sh.B", 15),
+            (datetime.date(2026, 8, 18), "sh.B", 15),
+        ])
+        res = selection_engine.execute_selector(
+            "M.CLOSE > 10", "D", None,
+            target_date=datetime.date(2026, 8, 18))
+        self.assertEqual(set(res["codes"]), {"sh.B"})
+
+    def test_cache_target_date_isolation(self):
+        """同一 atom 不同 target_date 必须得到不同结果（cache key 含 target_date）。"""
+        self._load([
+            (datetime.date(2026, 8, 10), "sh.X", 5),
+            (datetime.date(2026, 8, 11), "sh.X", 5),
+            (datetime.date(2026, 8, 12), "sh.X", 5),
+            (datetime.date(2026, 8, 13), "sh.X", 5),
+            (datetime.date(2026, 8, 14), "sh.X", 5),
+            (datetime.date(2026, 8, 17), "sh.X", 15),
+            (datetime.date(2026, 8, 18), "sh.X", 15),
+            (datetime.date(2026, 8, 19), "sh.X", 15),
+        ])
+        r1 = selection_engine.execute_selector(
+            "W.CLOSE > 10", "D", None,
+            target_date=datetime.date(2026, 8, 14))
+        r2 = selection_engine.execute_selector(
+            "W.CLOSE > 10", "D", None,
+            target_date=datetime.date(2026, 8, 19))
+        self.assertNotIn("sh.X", r1["codes"])   # 08-14：当前周收盘=5
+        self.assertIn("sh.X", r2["codes"])       # 08-19：当前周收盘=15
+        self.assertNotEqual(set(r1["codes"]), set(r2["codes"]))
+
+    def test_suspended_code_uses_own_last_bar(self):
+        """停牌股票用自身最后一根 bar，不因缺失 target_date 当日数据而被错误剔除。
+        用 W.CLOSE > 0 把 D atom 推入 MTF(_eval_atom) 路径以触发 per-code as-of。"""
+        self._load([
+            (datetime.date(2026, 8, 20), "sh.A", 11),
+            (datetime.date(2026, 8, 19), "sh.B", 11),  # 无 8/20 数据
+            (datetime.date(2026, 8, 19), "sh.C", 9),
+        ])
+        res = selection_engine.execute_selector(
+            "CLOSE > 10 AND W.CLOSE > 0", "D", None,
+            target_date=datetime.date(2026, 8, 20))
+        self.assertEqual(set(res["codes"]), {"sh.A", "sh.B"})
+
+    def test_d_and_w_intersection(self):
+        """D∩W 必须真实取交集；用 W.MA(W.CLOSE,2) 使 D/W 产生真实分歧。"""
+        wk = {
+            "sh.A": (15, 15),   # (week1c, week2c)
+            "sh.B": (2, 15),
+            "sh.C": (20, 5),
+            "sh.D": (2, 5),
+        }
+        week0 = [datetime.date(2026, 8, 3), datetime.date(2026, 8, 4),
+                 datetime.date(2026, 8, 5), datetime.date(2026, 8, 6), datetime.date(2026, 8, 7)]
+        week1 = [datetime.date(2026, 8, 10), datetime.date(2026, 8, 11),
+                 datetime.date(2026, 8, 12), datetime.date(2026, 8, 13), datetime.date(2026, 8, 14)]
+        week2 = [datetime.date(2026, 8, 17), datetime.date(2026, 8, 18), datetime.date(2026, 8, 19)]
+        rows = []
+        for code, (w1c, w2c) in wk.items():
+            for d in week0:
+                rows.append((d, code, w1c))
+            for d in week1:
+                rows.append((d, code, w1c))
+            for d in week2:
+                rows.append((d, code, w2c))
+        self._load(rows)
+        res = selection_engine.execute_selector(
+            "CLOSE > 10 AND W.MA(W.CLOSE, 2) > 10", "D", None,
+            target_date=datetime.date(2026, 8, 19))
+        # A: D(15>10)✓ W.MA((15+15)/2=15>10)✓
+        # B: D(15>10)✓ W.MA((2+15)/2=8.5)✗
+        # C: D(5>10)✗  W.MA((20+5)/2=12.5)✓
+        # D: D(5>10)✗  W.MA((2+5)/2=3.5)✗
+        self.assertEqual(set(res["codes"]), {"sh.A"})
+
+    def test_non_trading_target_date_normalization(self):
+        """非交易日 target_date 必须归一到最近交易日，D/W/M 统一使用。"""
+        self._load([
+            (datetime.date(2026, 8, 17), "sh.600000", 11),
+            (datetime.date(2026, 8, 18), "sh.600000", 11),
+            (datetime.date(2026, 8, 19), "sh.600000", 11),
+            (datetime.date(2026, 8, 20), "sh.600000", 11),
+            (datetime.date(2026, 8, 21), "sh.600000", 11),
+            # 仅 08-24 有数据：若 target 被错误当作 08-22 直接取数，本应被排除
+            (datetime.date(2026, 8, 24), "sh.600001", 11),
+        ])
+        res = selection_engine.execute_selector(
+            "CLOSE > 0", "D", None,
+            target_date=datetime.date(2026, 8, 22))  # 周六
+        self.assertEqual(res["date"], "2026-08-21")
+        self.assertEqual(set(res["codes"]), {"sh.600000"})
 
 
 if __name__ == "__main__":

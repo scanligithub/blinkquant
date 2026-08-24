@@ -25,9 +25,9 @@ class SelectionEngine:
         self._set_cache: dict = {}
         self._set_cache_max = 32
 
-    def _canonical_atom_key(self, tf: str, atom_expr_str: str) -> str:
-        """生成 atom 的 canonical key（用于 set cache 去重）。"""
-        return f"{tf}:{atom_expr_str}"
+    def _canonical_atom_key(self, tf: str, target_date: datetime.date, atom_expr_str: str) -> str:
+        """生成 atom 的 canonical key（用于 set cache 去重），含 target_date 隔离不同交易日。"""
+        return f"{tf}:{target_date.isoformat()}:{atom_expr_str}"
 
     def _prepare_hot_jit(self, formula: str):
         """
@@ -85,12 +85,20 @@ class SelectionEngine:
         - 检测 W./M. 前缀 → 使用 parse_multi_tf → plan tree
         - 无前缀 → 单周期路径（向后兼容）
         """
-        # 0. 统一 target_date：未指定 → df_daily 最新日
+        # 0. 统一 target_date：未指定 → df_daily 最新日；指定 → 归一到 ≤ 该日的最近交易日
         if target_date is None:
             if data_manager.df_daily is not None and not data_manager.df_daily.is_empty():
                 target_date = data_manager.df_daily.select(pl.col("date").max()).item()
             else:
                 return {"error": "Data not loaded."}
+        else:
+            eff = (data_manager.df_daily
+                   .filter(pl.col("date") <= target_date)
+                   .select(pl.col("date").max())
+                   .item())
+            if eff is None:
+                return {"error": f"指定日期 {target_date} 早于数据起点，无可用交易日数据"}
+            target_date = eff
 
         # 1. 执行全周期热挂载
         self._prepare_hot_jit(formula)
@@ -185,26 +193,24 @@ class SelectionEngine:
     def _eval_atom(self, atom: dict, target_date: datetime.date, base_tf: str) -> set:
         """对单个 atom 求值，返回 code set。
 
-        1. 检查 set cache（canonical key）
-        2. 根据 tf 选择 DataFrame（D→df_daily, W/M→build_asof_frame）
-        3. mount_enabled = (atom_tf == base_tf)
-        4. 执行指标计算
-        5. 返回 code set
+        契约：返回“每一只股票在 target_date 的 as-of bar 上，该 atom 是否成立”的集合。
+        1. 统一经 build_asof_frame 取得 ≤ target_date 的 as-of frame（D/W/M 一致）
+        2. 在全历史上计算指标（保留历史窗口）
+        3. 每只股票取最后一根 bar 的 _signal（per-code as-of）
+        4. mount_enabled = (atom_tf == base_tf)
+        5. set cache（key 含 target_date）
         """
         tf = atom["tf"]
         expr = atom["expr"]
 
-        # 生成 canonical key（用于 set cache）
-        cache_key = self._canonical_atom_key(tf, str(expr))
-        if cache_key in self._set_cache:
-            return self._set_cache[cache_key]
+        # 生成 canonical key（用于 set cache，含 target_date 隔离）
+        cache_key = self._canonical_atom_key(tf, target_date, atom.get("source", str(expr)))
+        cached = self._set_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
-        # 选择 DataFrame
-        if tf == 'D':
-            df = data_manager.df_daily
-        else:
-            df = data_manager.build_asof_frame(tf, target_date)
-
+        # 统一 as-of：D/W/M 均经 build_asof_frame 取得 ≤ target_date 的历史
+        df = data_manager.build_asof_frame(tf, target_date)
         if df is None or df.is_empty():
             return set()
 
@@ -212,16 +218,22 @@ class SelectionEngine:
         blink_parser.mount_enabled = (tf == base_tf)
 
         try:
-            # 计算信号
-            signal_df = df.lazy().with_columns(expr.alias("_signal")).collect()
-            result_codes = set(
-                signal_df.filter(pl.col("_signal").fill_null(False) == True)["code"].to_list()
+            # 先计算指标（全历史窗口）→ 每只股票取最后一根 → 判 _signal
+            signal_df = (
+                df.sort(["code", "date"])
+                  .with_columns(expr.alias("_signal"))
+                  .select(["code", "date", "_signal"])
+                  .group_by("code")
+                  .agg(pl.col("_signal").last().fill_null(False).alias("_signal"))
+                  .filter(pl.col("_signal"))
+                  .select("code")
             )
+            result_codes = set(signal_df["code"].to_list())
         except Exception as e:
             logger.warning(f"Atom eval failed for {tf}: {e}")
             result_codes = set()
 
-        # 更新 set cache
+        # 更新 set cache（LRU：超容量删最旧）
         if len(self._set_cache) >= self._set_cache_max:
             oldest_key = next(iter(self._set_cache))
             del self._set_cache[oldest_key]
