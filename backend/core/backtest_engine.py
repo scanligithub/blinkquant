@@ -7,6 +7,7 @@ from core.engine import selection_engine, SelectionEngine
 from core.raw_price_store import RawPriceStore
 from core.portfolio import Portfolio, Position
 from core.execution import ExecutionEngine, OrderIntent, Fill
+from core.data_manager import data_manager
 from core.backtest_types import FeeConfig, ExecutionConfig, Allocator, MVP_EXECUTION_CONFIG, equal_weight_allocator, SelectionResult
 
 
@@ -153,7 +154,25 @@ class BacktestEngine:
             
             if not target_weights:
                 # 记录权益曲线即使没有信号
-                self._record_snapshot(signal_date, execution_date)
+                execution_date = self.calendar.next_trade_day(signal_date)
+                raw_prices = self.raw_price_store.load_execution_prices([execution_date])
+                raw_prices_dict = {
+                    row["code"]: {"close": row["close"]}
+                    for row in raw_prices.iter_rows(named=True)
+                }
+                for code, pos in self.portfolio.positions.items():
+                    if pos.total_qty > 0:
+                        raw_close = raw_prices_dict.get(pos.code, {}).get("close", 0)
+                        if raw_close > 0:
+                            pos.update_market_value(raw_close)
+                equity = self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())
+                equity_curve_rows.append({
+                    "date": execution_date,
+                    "equity": equity,
+                    "cash": self.portfolio.cash,
+                    "positions_value": sum(p.market_value for p in self.portfolio.positions.values()),
+                    "signal_date": signal_date,
+                })
                 continue
             
             # 4. 生成订单意图
@@ -166,7 +185,14 @@ class BacktestEngine:
             
             intents = self._generate_intents(target_weights, execution_prices_dict)
             
+            fills = []
             if intents:
+                # 获取限制标记
+                all_codes = set()
+                for intent in intents:
+                    all_codes.add(intent.code)
+                limit_flags = data_manager.get_limit_flags(execution_date, list(all_codes))
+                
                 # 5. 执行订单
                 fills = self.execution_engine.execute(
                     execution_date=execution_date,
@@ -174,6 +200,7 @@ class BacktestEngine:
                     positions=self.portfolio.positions,
                     raw_prices=execution_prices_dict,
                     cash=self.portfolio.cash,
+                    limit_flags=limit_flags,
                 )
                 
                 # 7. 组合更新（唯一入口）

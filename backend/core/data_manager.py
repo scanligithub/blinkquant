@@ -541,5 +541,48 @@ class DataManager:
             self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
             self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
+    def get_limit_flags(self, date: datetime.date, codes: list[str]) -> dict[str, dict]:
+        """
+        获取指定日期和股票代码的涨跌停/停牌标记。
+        
+        Returns:
+            dict: {code: {"is_limit_up": bool, "is_limit_down": bool, "is_suspended": bool}}
+        """
+        if self.df_daily is None:
+            return {}
+        
+        # 过滤指定日期和代码
+        mask = (pl.col("date") == date) & (pl.col("code").is_in(codes))
+        filtered = self.df_daily.filter(mask)
+        
+        if filtered.is_empty():
+            return {}
+        
+        # 选择需要的列
+        result = {}
+        for row in filtered.iter_rows(named=True):
+            code = row["code"]
+            result[code] = {
+                "is_limit_up": bool(row.get("is_limit_up", False)),
+                "is_touch_limit_up": bool(row.get("is_touch_limit_up", False)),
+                "is_limit_down": bool(row.get("is_limit_down", False)),
+                "is_touch_limit_down": bool(row.get("is_touch_limit_down", False)),
+                # 停牌判断：如果当天没有数据，或者成交量为0且不是正常停牌
+                "is_suspended": row.get("volume", 0) == 0 or row.get("amount", 0) == 0,
+            }
+        
+        # 对于未找到的代码，标记为停牌
+        for code in codes:
+            if code not in result:
+                result[code] = {
+                    "is_limit_up": False,
+                    "is_touch_limit_up": False,
+                    "is_limit_down": False,
+                    "is_touch_limit_down": False,
+                    "is_suspended": True,
+                }
+        
+        return result
+
 
 data_manager = DataManager()

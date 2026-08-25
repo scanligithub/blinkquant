@@ -46,6 +46,7 @@ class ExecutionEngine:
         positions: dict[str, Position],
         raw_prices: dict[str, dict],  # code -> {"open": float, "close": float}
         cash: float,
+        limit_flags: dict[str, dict] = None,  # code -> {"is_limit_up": bool, "is_limit_down": bool, "is_suspended": bool}
     ) -> list[Fill]:
         """
         执行订单意图，只返回成交记录，不修改资金/持仓。
@@ -58,6 +59,7 @@ class ExecutionEngine:
             positions: 当前持仓字典 code -> Position
             raw_prices: 原始价格字典 code -> {"open": float, "close": float}
             cash: 当前可用现金
+            limit_flags: 涨跌停/停牌标记 code -> {"is_limit_up": bool, "is_limit_down": bool, "is_suspended": bool}
             
         Returns:
             fills列表（按执行顺序：先卖单后买单）
@@ -76,7 +78,7 @@ class ExecutionEngine:
                 continue
             
             # 检查涨跌停/停牌限制
-            if not self._can_trade(intent.code, "SELL", execution_date, raw_prices):
+            if not self._can_trade(intent.code, "SELL", limit_flags):
                 continue
             
             fill_qty = min(intent.target_qty, pos.available_qty)
@@ -99,7 +101,7 @@ class ExecutionEngine:
                 continue
             
             # 检查涨跌停/停牌
-            if not self._can_trade(intent.code, "BUY", execution_date, raw_prices):
+            if not self._can_trade(intent.code, "BUY", limit_flags):
                 continue
             
             # 计算最大可买数量（基于当前可用现金）
@@ -134,14 +136,38 @@ class ExecutionEngine:
         unit_cost = max(unit_cost, price + fee_config.commission_min / 100)  # 粗略估算最低佣金分摊
         return max(0, int(available_cash / unit_cost))
     
-    def _can_trade(self, code: str, side: str, execution_date: datetime.date, raw_prices: dict) -> bool:
+    def _can_trade(self, code: str, side: str, limit_flags: dict) -> bool:
         """检查涨跌停/停牌限制。
         
-        实际实现需要从 data_manager 获取 limit_up/down/suspended 字段。
-        这里简化：假设 raw_prices 已包含 limit 信息，或由上层过滤。
+        Args:
+            code: 股票代码
+            side: "BUY" 或 "SELL"
+            limit_flags: 限制标记字典
+            
+        Returns:
+            是否可以交易
         """
-        # TODO: 实际实现需要从 Position 或数据源获取 limit_up/down/suspended 标记
-        # 暂时返回 True，后续完善
+        if limit_flags is None:
+            return True
+            
+        flags = limit_flags.get(code)
+        if flags is None:
+            # 没有数据，视为停牌
+            return False
+            
+        # 停牌不可交易
+        if flags.get("is_suspended", False):
+            return False
+            
+        if side == "BUY":
+            # 涨停不可买
+            if flags.get("is_limit_up", False):
+                return False
+        elif side == "SELL":
+            # 跌停不可卖
+            if flags.get("is_limit_down", False):
+                return False
+                
         return True
     
     def _calc_fee(self, amount: float, side: str) -> float:
