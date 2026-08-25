@@ -1,0 +1,315 @@
+import datetime
+from dataclasses import dataclass
+from typing import Optional
+import polars as pl
+
+from core.engine import selection_engine, SelectionEngine
+from core.raw_price_store import RawPriceStore
+from core.portfolio import Portfolio, Position
+from core.execution import ExecutionEngine, OrderIntent, Fill
+from core.backtest_types import FeeConfig, ExecutionConfig, Allocator, MVP_EXECUTION_CONFIG, equal_weight_allocator, SelectionResult
+
+
+class TradingCalendar:
+    """交易日历：提供交易日序列、下一个交易日、信号日期范围。"""
+    
+    def __init__(self):
+        self._trade_dates: list[datetime.date] = []
+        self._date_set: set = set()
+    
+    def set_trade_dates(self, dates: list[datetime.date]):
+        """设置交易日列表（已排序）。"""
+        self._trade_dates = sorted(dates)
+        self._date_set = set(self._trade_dates)
+    
+    def next_trade_day(self, date: datetime.date) -> datetime.date:
+        """获取下一个交易日。"""
+        if not self._trade_dates:
+            next_day = date + datetime.timedelta(days=1)
+            while next_day.weekday() >= 5:
+                next_day += datetime.timedelta(days=1)
+            return next_day
+        
+        for d in self._trade_dates:
+            if d > date:
+                return d
+        return self._trade_dates[-1]
+    
+    def signal_range(self, start_date: datetime.date, end_signal_date: datetime.date) -> list[datetime.date]:
+        """获取 [start_date, end_signal_date] 内的所有交易日。"""
+        if not self._trade_dates:
+            result = []
+            current = start_date
+            while current <= end_signal_date:
+                if current.weekday() < 5:
+                    result.append(current)
+                current += datetime.timedelta(days=1)
+            return result
+        
+        return [d for d in self._trade_dates if start_date <= d <= end_signal_date]
+
+
+@dataclass
+class BacktestResult:
+    equity_curve: 'pl.DataFrame'
+    trades: 'pl.DataFrame'
+    positions_daily: 'pl.DataFrame'
+    metrics: dict
+
+
+class BacktestEngine:
+    """
+    回测引擎：Signal Calendar 模型，逐日事件循环。
+    
+    核心流程：
+    for signal_date in calendar.signal_range(start_date, end_signal_date):
+        execution_date = calendar.next_trade_day(signal_date)
+        
+        1. 市场状态 as-of(signal_date)
+        2. 策略信号 → SelectionEngine(target_date=signal_date) → SelectionResult
+        3. 目标组合 → allocator(codes, signal_date) → target_weights
+        4. 订单意图 → diff(current_portfolio, target_weights) → OrderIntent[]
+        5. 执行 → ExecutionEngine.execute(execution_date, intents) → fills
+        6. 组合更新 → Portfolio.update(fills) → cash/positions/equity
+        7. 估值 → raw_close(execution_date) → mark_to_market
+        8. 快照 → AccountSnapshot
+    """
+    
+    def __init__(
+        self,
+        calendar: 'TradingCalendar',
+        selection_engine: 'SelectionEngine',
+        raw_price_store: 'RawPriceStore',
+        fee_config: 'FeeConfig',
+        execution_config: 'ExecutionConfig' = None,
+        allocator: 'Allocator' = None,
+    ):
+        self.calendar = calendar
+        self.selection_engine = selection_engine
+        self.raw_price_store = raw_price_store
+        self.fee_config = fee_config
+        self.execution_config = execution_config
+        self.allocator = allocator
+        
+        # 初始化组件
+        self.portfolio = Portfolio(initial_cash=1_000_000)
+        self.execution_engine = ExecutionEngine(
+            exec_config=execution_config,
+            fee_config=fee_config,
+        )
+    
+    def run(
+        self,
+        formula: str,
+        start_date: datetime.date,
+        end_signal_date: datetime.date,
+        initial_cash: float = 1_000_000,
+        initial_positions: dict[str, 'Position'] = None,
+    ) -> 'BacktestResult':
+        """
+        运行回测。
+        
+        Args:
+            formula: 选股公式
+            start_date: 回测开始日期（signal_date 起始）
+            end_signal_date: 最后允许产生信号的日期
+            initial_cash: 初始资金
+            initial_positions: 初始持仓（可选）
+        """
+        # 初始化组合
+        self.portfolio = Portfolio(initial_cash=1_000_000)
+        
+        # 记录结果
+        equity_curve_rows = []
+        trades_rows = []
+        positions_daily_rows = []
+        
+        # 获取信号日期序列
+        signal_dates = self.calendar.signal_range(start_date, end_signal_date)
+        
+        for signal_date in signal_dates:
+            execution_date = self.calendar.next_trade_day(signal_date)
+            
+            # 1. 每日开盘前解冻
+            self.portfolio.daily_thaw()
+            
+            # 2. 策略信号
+            selection_result = self.selection_engine.execute_selector(
+                formula, "D", None, target_date=signal_date
+            )
+            
+            if isinstance(selection_result, dict) and "error" in selection_result:
+                continue
+            
+            target_codes = selection_result.codes
+            
+            # 3. 目标组合权重
+            target_weights = self.allocator(target_codes, signal_date)
+            
+            # 4. 生成订单意图
+            intents = self._generate_intents(target_weights, signal_date)
+            
+            if intents:
+                # 获取执行价格
+                execution_date = self.calendar.next_trade_day(signal_date)
+                execution_prices = self.raw_price_store.load_execution_prices([execution_date])
+                execution_prices_dict = {
+                    row["code"]: {"open": row["open"], "close": row["close"]}
+                    for row in execution_prices.iter_rows(named=True)
+                }
+                
+                # 生成订单意图
+                intents = self._generate_intents(target_weights, signal_date)
+                
+                # 执行
+                fills, remaining_cash = self.execution_engine.execute(
+                    execution_date=execution_date,
+                    intents=intents,
+                    positions=self.portfolio.positions,
+                    raw_prices=execution_prices_dict,
+                    cash=self.portfolio.cash,
+                )
+                
+                # 应用成交
+                self._apply_fills(fills, signal_date)
+            
+            # 估值（使用 execution_date 的 raw_close）
+            execution_date = self.calendar.next_trade_day(signal_date)
+            raw_prices = self.raw_price_store.load_execution_prices([signal_date, execution_date])
+            raw_prices_dict = {
+                row["code"]: {"close": row["close"]}
+                for row in raw_prices.iter_rows(named=True)
+            }
+            
+            # 更新持仓市值
+            for code, pos in self.portfolio.positions.items():
+                if pos.total_qty > 0:
+                    raw_close = raw_prices_dict.get(pos.code, {}).get("close", 0)
+                    if raw_close > 0:
+                        pos.update_market_value(raw_close)
+            
+            # 记录权益曲线
+            equity = self.portfolio.get_equity({code: {"close": raw_prices_dict.get(c, {}).get("close", 0)} for c in self.portfolio.positions})
+            equity_curve_rows.append({
+                "date": signal_date,
+                "equity": self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values()),
+                "cash": self.portfolio.cash,
+                "positions_value": sum(p.market_value for p in self.portfolio.positions.values()),
+            })
+            
+            # 记录持仓快照
+            for code, pos in self.portfolio.positions.items():
+                if pos.total_qty > 0:
+                    raw_close = raw_prices_dict.get(pos.code, {}).get("close", 0)
+                    if raw_close > 0:
+                        positions_daily_rows.append({
+                            "date": signal_date,
+                            "code": code,
+                            "qty": pos.total_qty,
+                            "cost": pos.avg_cost,
+                            "market_value": pos.market_value,
+                        })
+        
+        # 构建结果
+        equity_curve_rows = [
+            {"date": d, "equity": e, "cash": c, "positions_value": v}
+            for d, e, c, v in zip(
+                [r["date"] for d in equity_curve_rows],
+                [r["equity"] for r in equity_curve_rows],
+                [r["cash"] for r in equity_curve_rows],
+                [r["positions_value"] for r in equity_curve_rows],
+            )
+        ]
+        equity_curve = pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
+            "date": pl.Date, "equity": pl.Float64, "cash": pl.Float64, "positions_value": pl.Float64
+        })
+        
+        metrics = self._calculate_metrics(pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame())
+        
+        return BacktestResult(
+            equity_curve=equity_curve,
+            trades=pl.DataFrame([]),
+            positions_daily=pl.DataFrame([]),
+            metrics=metrics,
+        )
+    
+    def _generate_intents(self, target_weights: dict[str, float], signal_date: datetime.date) -> list:
+        """生成订单意图：对比目标权重与当前持仓。"""
+        intents = []
+        
+        # 简化：等权重，每只股票目标市值 = total_equity * weight
+        total_equity = sum(p.market_value for p in self.portfolio.positions.values()) + self.portfolio.cash
+        
+        target_market_values = {code: weight * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())) 
+                                for code, weight in target_weights.items()}
+        
+        current_values = {}
+        for code, pos in self.portfolio.positions.items():
+            if pos.total_qty > 0:
+                current_values[code] = pos.total_qty * pos.avg_cost
+        
+        all_codes = set(target_weights.keys()) | set(self.portfolio.positions.keys())
+        
+        for code in all_codes:
+            target_value = target_weights.get(code, 0) * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values()))
+            current_value = 0
+            if code in self.portfolio.positions:
+                pos = self.portfolio.positions[code]
+                if pos.total_qty > 0:
+                    current_values[code] = pos.total_qty * pos.avg_cost
+            
+            diff = target_market_values.get(code, 0) - current_values.get(code, 0)
+            
+            if diff > 1000:  # 最小交易门槛
+                intents.append(OrderIntent(code=code, side="BUY", target_qty=100, target_weight=target_weights.get(code, 0)))
+            elif diff < -1000:
+                intents.append(OrderIntent(code=code, side="SELL", target_qty=100, target_weight=0))
+        
+        return []
+    
+    def _apply_fills(self, fills: list, signal_date: datetime.date):
+        """应用成交回报到组合。"""
+        for fill in fills:
+            if fill.side == "BUY":
+                self.portfolio.cash -= fill.qty * fill.price + fill.fee
+                pos = self.portfolio.positions.get(fill.code)
+                if pos is None:
+                    pos = Position(code=fill.code, total_qty=0, available_qty=0, frozen_qty=0, avg_cost=0.0, market_value=0.0)
+                    self.portfolio.positions[fill.code] = pos
+                pos.buy(fill.qty, fill.price)
+                self.portfolio.cash -= fill.fee
+            elif fill.side == "SELL":
+                pos = self.portfolio.positions.get(fill.code)
+                if pos:
+                    pos.sell(fill.qty, fill.price)
+                    self.portfolio.cash += fill.qty * fill.price - fill.fee
+                    if pos.total_qty == 0:
+                        del self.portfolio.positions[fill.code]
+    
+    def _calculate_metrics(self, equity_curve: 'pl.DataFrame') -> dict:
+        """计算回测指标。"""
+        if equity_curve.is_empty():
+            return {}
+        
+        returns = equity_curve["equity"].pct_change().drop_nulls()
+        if len(returns) == 0:
+            return {}
+        
+        total_return = (equity_curve["equity"][-1] / equity_curve["equity"][0]) - 1
+        n_days = len(equity_curve)
+        years = n_days / 252
+        cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
+        
+        sharpe = returns.mean() / returns.std() * (252 ** 0.5) if returns.std() > 0 else 0
+        
+        peak = equity_curve["equity"].cum_max()
+        drawdown = (equity_curve["equity"] - peak) / peak
+        max_dd = drawdown.min()
+        
+        return {
+            "total_return": total_return,
+            "cagr": cagr,
+            "sharpe": sharpe,
+            "max_drawdown": max_dd,
+            "total_days": len(equity_curve),
+        }
