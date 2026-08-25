@@ -75,20 +75,20 @@ class TestExecuteSelectorDate(unittest.TestCase):
 
     def test_default_uses_latest_date(self):
         out = self._run()
-        self.assertEqual(out["date"], "2026-08-20")
-        self.assertEqual(out["codes"], ["sh.600000"])
+        self.assertEqual(out.signal_date.isoformat(), "2026-08-20")
+        self.assertEqual(out.codes, ["sh.600000"])
 
     def test_exact_trading_day(self):
         # 2026-08-19 收盘 11.0 > 10 命中
         out = self._run(target_date=datetime.date(2026, 8, 19))
-        self.assertEqual(out["date"], "2026-08-19")
-        self.assertEqual(out["codes"], ["sh.600000"])
+        self.assertEqual(out.signal_date.isoformat(), "2026-08-19")
+        self.assertEqual(out.codes, ["sh.600000"])
 
     def test_non_trading_day_falls_back_to_previous(self):
         # 8/22 是周末（数据中不存在）→ 回退到 8/20
         out = self._run(target_date=datetime.date(2026, 8, 22))
-        self.assertEqual(out["date"], "2026-08-20")
-        self.assertEqual(out["codes"], ["sh.600000"])
+        self.assertEqual(out.signal_date.isoformat(), "2026-08-20")
+        self.assertEqual(out.codes, ["sh.600000"])
 
     def test_date_before_data_start_returns_error(self):
         out = self._run(target_date=datetime.date(2026, 7, 1))
@@ -105,8 +105,8 @@ class TestExecuteSelectorDate(unittest.TestCase):
             "close": [10.0, 11.0, 12.0, 9.0, 11.0],
         }).sort(["code", "date"])
         out = self._run()
-        self.assertEqual(out["date"], "2026-08-20")
-        self.assertEqual(set(out["codes"]), {"sh.600000", "sz.000001"})
+        self.assertEqual(out.signal_date.isoformat(), "2026-08-20")
+        self.assertEqual(set(out.codes), {"sh.600000", "sz.000001"})
 
 
 class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
@@ -193,9 +193,9 @@ class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
         result = selection_engine.execute_selector(
             "W.CLOSE > 10", "D", None, target_date=target_date
         )
-        self.assertEqual(result["date"], target_date.isoformat())
+        self.assertEqual(result.signal_date.isoformat(), target_date.isoformat())
         # On Wednesday, partial week close = 11.0 > 10 => sh.600000 should be in results
-        self.assertIn("sh.600000", result["codes"])
+        self.assertIn("sh.600000", result.codes)
 
     def test_wednesday_m_atom_no_leak(self):
         """M.CLOSE > 10 on Wednesday should only see data up to Wed, not Thu/Fri."""
@@ -219,7 +219,7 @@ class TestMultiTFWednesdayAntiLeak(unittest.TestCase):
         result2 = selection_engine.execute_selector(
             "W.CLOSE > 10", "D", None, target_date=target_date
         )
-        self.assertEqual(result1["codes"], result2["codes"])
+        self.assertEqual(result1.codes, result2.codes)
 
 
 class TestMTFAsOfSemantics(unittest.TestCase):
@@ -277,7 +277,7 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         res = selection_engine.execute_selector(
             "CLOSE > 10 AND W.CLOSE > 0", "D", None,
             target_date=datetime.date(2026, 8, 19))
-        self.assertEqual(set(res["codes"]), {"sh.B"})
+        self.assertEqual(set(res.codes), {"sh.B"})
 
     def test_w_atom_current_only(self):
         """W atom 必须只看当前周 bar：历史周 >10 但当前周 ≤10 必须排除。"""
@@ -302,7 +302,7 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         res = selection_engine.execute_selector(
             "W.CLOSE > 10", "D", None,
             target_date=datetime.date(2026, 8, 19))
-        self.assertEqual(set(res["codes"]), {"sh.B"})
+        self.assertEqual(set(res.codes), {"sh.B"})
 
     def test_m_atom_current_only(self):
         """M atom 必须只看当前月 bar：历史月 >10 但当前月 ≤10 必须排除。"""
@@ -321,7 +321,7 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         res = selection_engine.execute_selector(
             "M.CLOSE > 10", "D", None,
             target_date=datetime.date(2026, 8, 18))
-        self.assertEqual(set(res["codes"]), {"sh.B"})
+        self.assertEqual(set(res.codes), {"sh.B"})
 
     def test_cache_target_date_isolation(self):
         """同一 atom 不同 target_date 必须得到不同结果（cache key 含 target_date）。"""
@@ -341,9 +341,9 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         r2 = selection_engine.execute_selector(
             "W.CLOSE > 10", "D", None,
             target_date=datetime.date(2026, 8, 19))
-        self.assertNotIn("sh.X", r1["codes"])   # 08-14：当前周收盘=5
-        self.assertIn("sh.X", r2["codes"])       # 08-19：当前周收盘=15
-        self.assertNotEqual(set(r1["codes"]), set(r2["codes"]))
+        self.assertNotIn("sh.X", r1.codes)   # 08-14：当前周收盘=5
+        self.assertIn("sh.X", r2.codes)       # 08-19：当前周收盘=15
+        self.assertNotEqual(set(r1.codes), set(r2.codes))
 
     def test_suspended_code_uses_own_last_bar(self):
         """停牌股票用自身最后一根 bar，不因缺失 target_date 当日数据而被错误剔除。
@@ -356,7 +356,7 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         res = selection_engine.execute_selector(
             "CLOSE > 10 AND W.CLOSE > 0", "D", None,
             target_date=datetime.date(2026, 8, 20))
-        self.assertEqual(set(res["codes"]), {"sh.A", "sh.B"})
+        self.assertEqual(set(res.codes), {"sh.A", "sh.B"})
 
     def test_d_and_w_intersection(self):
         """D∩W 必须真实取交集；用 W.MA(W.CLOSE,2) 使 D/W 产生真实分歧。"""
@@ -387,7 +387,7 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         # B: D(15>10)✓ W.MA((2+15)/2=8.5)✗
         # C: D(5>10)✗  W.MA((20+5)/2=12.5)✓
         # D: D(5>10)✗  W.MA((2+5)/2=3.5)✗
-        self.assertEqual(set(res["codes"]), {"sh.A"})
+        self.assertEqual(set(res.codes), {"sh.A"})
 
     def test_non_trading_target_date_normalization(self):
         """非交易日 target_date 必须归一到最近交易日，D/W/M 统一使用。"""
@@ -403,8 +403,8 @@ class TestMTFAsOfSemantics(unittest.TestCase):
         res = selection_engine.execute_selector(
             "CLOSE > 0", "D", None,
             target_date=datetime.date(2026, 8, 22))  # 周六
-        self.assertEqual(res["date"], "2026-08-21")
-        self.assertEqual(set(res["codes"]), {"sh.600000"})
+        self.assertEqual(res.signal_date.isoformat(), "2026-08-21")
+        self.assertEqual(set(res.codes), {"sh.600000"})
 
 
 if __name__ == "__main__":

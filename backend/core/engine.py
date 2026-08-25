@@ -5,6 +5,7 @@ import datetime
 from .data_manager import data_manager
 from .security import blink_parser
 from .indicator_registry import WINDOW_NAMES, FIELDS
+from .selection_result import SelectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,8 @@ class SelectionEngine:
         - 无前缀 → 单周期路径（向后兼容）
         """
         # 0. 统一 target_date：未指定 → df_daily 最新日；指定 → 归一到 ≤ 该日的最近交易日
+        # 记录用户原始输入用于审计
+        requested_date = target_date
         if target_date is None:
             if data_manager.df_daily is not None and not data_manager.df_daily.is_empty():
                 target_date = data_manager.df_daily.select(pl.col("date").max()).item()
@@ -108,9 +111,26 @@ class SelectionEngine:
         has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', clean_expr))
 
         if has_mtf:
-            return self._execute_mtf(formula, timeframe, target_date)
+            result_dict = self._execute_mtf(formula, timeframe, target_date)
         else:
-            return self._execute_single(formula, timeframe, target_date)
+            result_dict = self._execute_single(formula, timeframe, target_date)
+
+        # 返回 SelectionResult（保持错误 dict 兼容）
+        if isinstance(result_dict, dict) and "error" in result_dict:
+            return result_dict
+
+        return SelectionResult(
+            requested_date=requested_date,
+            signal_date=target_date,
+            codes=result_dict["codes"],
+            metadata={
+                "formula": formula,
+                "timeframe": timeframe,
+                "has_mtf": has_mtf,
+                "nodes_responding": 1,
+                "degraded": False,
+            }
+        )
 
     def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date):
         """单周期执行路径（向后兼容）。"""

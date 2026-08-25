@@ -208,9 +208,9 @@ class TestNoLookaheadPoisonDifferential(unittest.TestCase):
         result = selection_engine.execute_selector(
             formula, "D", None, target_date=target_date
         )
-        if "error" in result:
+        if isinstance(result, dict) and "error" in result:
             raise RuntimeError(f"Select error: {result['error']}")
-        return set(result["codes"])
+        return set(result.codes)
 
     def test_poison_differential_sweep(self):
         """
@@ -496,7 +496,7 @@ class TestLookaheadDetectorCanary(unittest.TestCase):
 
         # 正确路径：使用 build_asof_frame 正确构建的 as-of frame
         clean_result = selection_engine.execute_selector(formula, "D", None, target_date=T)
-        clean_codes = set(clean_result["codes"])
+        clean_codes = set(clean_result.codes)
 
         # 故意制造泄漏：使用完整周线表（含本周完整 K 线，已含周四/周五数据）
         # 手动构造“错误”的 as-of frame：不做 partial 合成，直接用 completed（含本周行）
