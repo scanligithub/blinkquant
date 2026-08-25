@@ -106,13 +106,15 @@ metadata = {
 ```python
 @dataclass
 class FeeConfig:
-    commission_rate: float = 0.00025      # 佣金费率
-    commission_min: float = 5.0           # 最低佣金
-    stamp_tax_rate: float = 0.0005        # 印花税费率（单边卖出）
-    transfer_fee_rate: float = 0.00001    # 过户费费率（双向）
+    commission_rate: float = 0.00025      # 佣金费率（研究用默认值，非历史真实费率）
+    commission_min: float = 5.0           # 最低佣金（研究用默认值）
+    stamp_tax_rate: float = 0.0005        # 印花税费率（单边卖出，研究用默认值）
+    transfer_fee_rate: float = 0.00001    # 过户费费率（双向，研究用默认值）
 ```
 
-**原则**：不写死常量，支持 `historical_fee_schedule` 后续扩展。
+**原则**：
+- 当前默认值为 **研究用默认费率模型**，不代表 A 股历史真实费率
+- 不写死常量，支持 `historical_fee_schedule(date)` 后续扩展（Phase 7）
 
 ---
 
@@ -125,14 +127,30 @@ class FeeConfig:
 | 同一股票同一 execution_date | 最多一个净交易方向（BUY / SELL 二选一） |
 | 账户类型 | 纯现金账户：不融资、不融券、不日内回转 |
 
+**Position 结构扩展（支持 T+1 可卖/冻结语义）**：
+```python
+@dataclass
+class Position:
+    code: str
+    total_qty: int
+    available_qty: int   # 当日可卖数量（T 日旧仓 + 历史已解冻）
+    frozen_qty: int      # 当日冻结数量（T+1 新买入，T+2 解冻）
+    avg_cost: float
+    market_value: float
+```
+
+**解冻规则**：
+- T+1 新买入 `qty` → `frozen_qty += qty`
+- 次交易日开盘前 → `frozen_qty -= qty`；`available_qty += qty`
+
 ---
 
 ### 2.8 数据语义边界表
 
 | 数据 | 选股层 | 回测成交层 | 回测估值层 |
 |------|--------|------------|------------|
-| qfq OHLCV | ✅ 常驻 | ❌ | ✅ 组合估值 |
-| raw OHLCV | ❌ | ✅ 按窗口加载 | ❌ |
+| qfq OHLCV | ✅ 常驻 | ❌ | ❌ |
+| raw OHLCV | ❌ | ✅ 按窗口加载 | ✅ 组合估值 |
 | limit_up/down | ✅ 复用 | ✅ 复用 | — |
 | suspension | ✅ 复用 | ✅ 复用 | — |
 | sector/industry | ✅ 实时 | ❌ 报错 | — |
@@ -175,12 +193,26 @@ class FeeConfig:
     stamp_tax_rate: float = 0.0005        # 印花税费率（单边卖出）
     transfer_fee_rate: float = 0.00001    # 过户费费率（双向）
 
+# ---- MVP 冻结配置（不可修改）----
+MVP_EXECUTION_CONFIG = ExecutionConfig(
+    price_mode="open",              # 固定：open（集合竞价成交价）
+    order_sequence="sell_first",    # 固定：先卖后买
+    cash_reinvestment="same_cycle", # 固定：卖出回款当周期可再投资
+    partial_fill_policy="keep_cash",# 固定：失败资金留存，不递归重分配
+)
+
 @dataclass
 class ExecutionConfig:
-    price_mode: str = "open"              # open / vwap / close
-    order_sequence: str = "sell_first"    # sell_first / simultaneous
-    cash_available: str = "T+1"           # T+1 / T+2
-    partial_fill_policy: str = "keep_cash" # keep_cash / redistribute
+    price_mode: str = "open"               # MVP 冻结为 "open"（不可改）
+    order_sequence: str = "sell_first"     # MVP 冻结为 "sell_first"（不可改）
+    cash_reinvestment: str = "same_cycle"  # MVP 冻结为 "same_cycle"（不可改）
+    partial_fill_policy: str = "keep_cash" # MVP 冻结为 "keep_cash"（不可改）
+
+# Future extension（暂不实现，接口预留）：
+# price_mode: "open" / "vwap" / "close"
+# order_sequence: "sell_first" / "simultaneous"
+# cash_reinvestment: "same_cycle" / "T+2"
+# partial_fill_policy: "keep_cash" / "redistribute"
 
 # MVP 仅内置等权，通过 callable 预留扩展
 Allocator = Callable[[list[str], date], dict[str, float]]
@@ -198,7 +230,7 @@ class BacktestEngine:
         selection_engine: SelectionEngine,
         raw_price_store: RawPriceStore,
         fee_config: FeeConfig,
-        execution_config: ExecutionConfig,
+        execution_config: ExecutionConfig = MVP_EXECUTION_CONFIG,
         allocator: Allocator = equal_weight_allocator,
     ):
         ...
@@ -207,28 +239,53 @@ class BacktestEngine:
         self,
         formula: str,
         start_date: date,
-        end_date: date,
+        end_signal_date: date,
         initial_cash: float = 1_000_000,
-        rebalance_freq: str = "daily",  # daily / weekly / monthly / signal
+        initial_positions: dict[str, Position] | None = None,  # MVP: 默认 {}
     ) -> BacktestResult:
         ...
 ```
 
+**MVP 冻结**：
+- `rebalance_freq` 固定为 `"daily"`（每个 `signal_date` 调仓）
+- `weekly` / `monthly` / `signal` 暂不实现，仅在接口保留字符串字面量以备扩展
+
 ---
 
-## 4. 回测事件循环时序（逐日）
+## 4. 回测事件循环时序（Signal Calendar 模型）
 
+**核心定义**：
+- `signal_date` ∈ `[start_date, end_signal_date]` —— 策略观察截止日，也是 `SelectionEngine` 的 `target_date`
+- `execution_date = next_trade_day(signal_date)` —— 实际成交日（T+1 开盘）
+- `end_date`（可选）默认等于 `end_signal_date`；若需指定最后成交日，请显式传 `end_execution_date`
+
+**区间定义示例**：
+```python
+start_date = date(2025, 1, 2)
+end_signal_date = date(2025, 12, 31)
+# 最后 signal_date = 2025-12-31
+# 最后 execution_date = 2026-01-02（次一个交易日）
 ```
-for trading_day in calendar.range(start, end):
+
+**逐日事件循环**：
+```
+for signal_date in calendar.signal_range(start_date, end_signal_date):
+    execution_date = calendar.next_trade_day(signal_date)
     
-    # 1. 市场状态 as-of(trading_day)
-    # 2. 策略信号 → SelectionEngine(target_date=trading_day) → SelectionResult
+    # 1. 市场状态 as-of(signal_date)
+    # 2. 策略信号 → SelectionEngine(target_date=signal_date) → SelectionResult
     # 3. 目标组合 → allocator(codes, signal_date) → target_weights
     # 4. 订单意图 → diff(current_portfolio, target_weights) → OrderIntent[]
-    # 5. 执行 → ExecutionEngine.execute(trading_day+1, intents) → fills
+    # 5. 执行 → ExecutionEngine.execute(execution_date, intents) → fills
     # 6. 组合更新 → Portfolio.update(fills) → cash/positions/equity
-    # 6. 估值 → raw_close(trading_day+1) → mark_to_market
+    # 6. 估值 → raw_close(execution_date) → mark_to_market
     # 7. 快照 → AccountSnapshot(equity, cash, positions, pnl)
+```
+
+**边界约束**：
+- 最后一个 `signal_date` ≤ `end_signal_date`
+- 最后一个 `execution_date` 可能超出 `end_signal_date`（允许），但必须 ≤ `end_execution_date`（若指定）
+- 第一个 `signal_date` ≥ `start_date`；若 `start_date` 非交易日，自动归一到 ≥ `start_date` 的首个交易日
 ```
 
 ---
@@ -243,6 +300,7 @@ for trading_day in calendar.range(start, end):
 | **Friday Completion** | 周五 target_date 的 partial week OHLCV == 完整周线 |
 | **Canary Detector** | 故意注入泄漏 → 投毒差分必须报警 |
 | **Execution Contract** | T+1 买入不可卖 / T+1 旧仓可卖 / 先卖后买资金可用 / 费用计算正确 |
+| **Execution Boundary No-Lookahead** | 投毒 execution_date (T+1) 的 open/high/low/close → signal_date (T) 的结果不变；仅 execution 结果受影响 |
 | **FeeConfig 参数化** | 修改 FeeConfig → 回测结果按比例变化 |
 
 ---
@@ -304,12 +362,22 @@ class BacktestResult:
     positions_daily: pl.DataFrame       # date, code, qty, cost, market_value
     metrics: dict                       # CAGR, Sharpe, MaxDD, Turnover, WinRate...
 
+# Position (支持 T+1 可卖/冻结)
+@dataclass
+class Position:
+    code: str
+    total_qty: int
+    available_qty: int      # 当日可卖数量
+    frozen_qty: int         # 冻结数量（T+1 新买入，T+2 解冻）
+    avg_cost: float
+    market_value: float
+
 # AccountSnapshot (逐日)
 @dataclass
 class AccountSnapshot:
     date: date
     cash: float
-    positions: dict[str, Position]      # code -> Position(qty, avg_cost, market_value, frozen_qty)
+    positions: dict[str, Position]
     equity: float
     daily_pnl: float
 ```
