@@ -94,8 +94,8 @@ class BacktestEngine:
         # 初始化组件
         self.portfolio = Portfolio(initial_cash=1_000_000)
         self.execution_engine = ExecutionEngine(
-            exec_config=execution_config,
-            fee_config=fee_config,
+            exec_config=None,
+            fee_config=FeeConfig(),
         )
     
     def run(
@@ -104,7 +104,7 @@ class BacktestEngine:
         start_date: datetime.date,
         end_signal_date: datetime.date,
         initial_cash: float = 1_000_000,
-        initial_positions: dict[str, 'Position'] = None,
+        initial_positions: dict[str, Position] = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -125,7 +125,7 @@ class BacktestEngine:
         positions_daily_rows = []
         
         # 获取信号日期序列
-        signal_dates = self.calendar.signal_range(start_date, end_signal_date)
+        signal_dates = self.calendar.signal_range(start_date, end_date)
         
         for signal_date in signal_dates:
             execution_date = self.calendar.next_trade_day(signal_date)
@@ -146,22 +146,23 @@ class BacktestEngine:
             # 3. 目标组合权重
             target_weights = self.allocator(target_codes, signal_date)
             
+            if not target_weights:
+                # 记录权益曲线即使没有信号
+                self._record_snapshot(signal_date, signal_date)
+                continue
+            
             # 4. 生成订单意图
-            intents = self._generate_intents(target_weights, signal_date)
+            execution_date = self.calendar.next_trade_day(signal_date)
+            execution_prices = self.raw_price_store.load_execution_prices([execution_date])
+            execution_prices_dict = {
+                row["code"]: {"open": row["open"], "close": row["close"]}
+                for row in execution_prices.iter_rows(named=True)
+            }
+            
+            intents = self._generate_intents(target_weights, execution_prices_dict)
             
             if intents:
-                # 获取执行价格
-                execution_date = self.calendar.next_trade_day(signal_date)
-                execution_prices = self.raw_price_store.load_execution_prices([execution_date])
-                execution_prices_dict = {
-                    row["code"]: {"open": row["open"], "close": row["close"]}
-                    for row in execution_prices.iter_rows(named=True)
-                }
-                
-                # 生成订单意图
-                intents = self._generate_intents(target_weights, signal_date)
-                
-                # 执行
+                # 执行订单
                 fills, remaining_cash = self.execution_engine.execute(
                     execution_date=execution_date,
                     intents=intents,
@@ -189,7 +190,7 @@ class BacktestEngine:
                         pos.update_market_value(raw_close)
             
             # 记录权益曲线
-            equity = self.portfolio.get_equity({code: {"close": raw_prices_dict.get(c, {}).get("close", 0)} for c in self.portfolio.positions})
+            equity = self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())
             equity_curve_rows.append({
                 "date": signal_date,
                 "equity": self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values()),
@@ -211,15 +212,6 @@ class BacktestEngine:
                         })
         
         # 构建结果
-        equity_curve_rows = [
-            {"date": d, "equity": e, "cash": c, "positions_value": v}
-            for d, e, c, v in zip(
-                [r["date"] for d in equity_curve_rows],
-                [r["equity"] for r in equity_curve_rows],
-                [r["cash"] for r in equity_curve_rows],
-                [r["positions_value"] for r in equity_curve_rows],
-            )
-        ]
         equity_curve = pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
             "date": pl.Date, "equity": pl.Float64, "cash": pl.Float64, "positions_value": pl.Float64
         })
@@ -227,45 +219,71 @@ class BacktestEngine:
         metrics = self._calculate_metrics(pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame())
         
         return BacktestResult(
-            equity_curve=equity_curve,
+            equity_curve=pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
+                "date": pl.Date, "equity": pl.Float64, "cash": pl.Float64, "positions_value": pl.Float64
+            }),
             trades=pl.DataFrame([]),
             positions_daily=pl.DataFrame([]),
             metrics=metrics,
         )
     
-    def _generate_intents(self, target_weights: dict[str, float], signal_date: datetime.date) -> list:
+    def _generate_intents(self, target_weights: dict[str, float], execution_prices: dict) -> list:
         """生成订单意图：对比目标权重与当前持仓。"""
         intents = []
         
-        # 简化：等权重，每只股票目标市值 = total_equity * weight
-        total_equity = sum(p.market_value for p in self.portfolio.positions.values()) + self.portfolio.cash
+        # 计算总权益
+        total_equity = self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())
+        if total_equity <= 0:
+            return []
         
-        target_market_values = {code: weight * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())) 
-                                for code, weight in target_weights.items()}
+        # 目标市值
+        target_values = {code: weight * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())) 
+                         for code, weight in target_weights.items()}
         
+        # 当前持仓市值
         current_values = {}
         for code, pos in self.portfolio.positions.items():
             if pos.total_qty > 0:
-                current_values[code] = pos.total_qty * pos.avg_cost
+                current_values[code] = pos.market_value
         
         all_codes = set(target_weights.keys()) | set(self.portfolio.positions.keys())
         
         for code in all_codes:
             target_value = target_weights.get(code, 0) * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values()))
-            current_value = 0
-            if code in self.portfolio.positions:
-                pos = self.portfolio.positions[code]
-                if pos.total_qty > 0:
-                    current_values[code] = pos.total_qty * pos.avg_cost
+            current_value = current_values.get(code, 0)
             
-            diff = target_market_values.get(code, 0) - current_values.get(code, 0)
+            diff = target_weights.get(code, 0) * (self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())) - current_values.get(code, 0)
             
-            if diff > 1000:  # 最小交易门槛
-                intents.append(OrderIntent(code=code, side="BUY", target_qty=100, target_weight=target_weights.get(code, 0)))
-            elif diff < -1000:
-                intents.append(OrderIntent(code=code, side="SELL", target_qty=100, target_weight=0))
+            if abs(diff) < 1000:  # 最小交易门槛
+                continue
+            
+            # 获取执行价格
+            price = 0
+            for code_key, price_info in execution_prices.items():
+                if code_key == code:
+                    price = price_info.get("open", 0)
+                    break
+            
+            if price <= 0:
+                continue
+            
+            if diff > 1000:  # 需要买入
+                # 估算可买数量
+                unit_cost = price * (1 + self.fee_config.commission_rate) + price * self.fee_config.transfer_fee_rate
+                unit_cost = max(unit_cost, price + self.fee_config.commission_min / 100)  # 粗略
+                max_qty = int(self.portfolio.cash / unit_cost) if unit_cost > 0 else 0
+                if max_qty > 0:
+                    target_qty = min(int(abs(diff) / execution_prices.get(code, {}).get("open", 10)) if price > 0 else 100, max_qty)
+                    if target_qty > 0:
+                        intents.append(OrderIntent(code=code, side="BUY", target_qty=target_qty, target_weight=target_weights.get(code, 0)))
+            elif diff < -1000:  # 需要卖出
+                pos = self.portfolio.positions.get(code)
+                if pos and pos.available_qty > 0:
+                    target_qty = min(int(abs(diff) / pos.avg_cost) if pos.avg_cost > 0 else 100, pos.available_qty)
+                    if target_qty > 0:
+                        intents.append(OrderIntent(code=code, side="SELL", target_qty=target_qty, target_weight=0))
         
-        return []
+        return intents
     
     def _apply_fills(self, fills: list, signal_date: datetime.date):
         """应用成交回报到组合。"""

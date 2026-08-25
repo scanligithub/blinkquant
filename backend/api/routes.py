@@ -12,6 +12,9 @@ from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
 from core.indicator_registry import nl_meta as build_nl_meta
+from core.backtest_engine import BacktestEngine, TradingCalendar
+from core.raw_price_store import RawPriceStore
+from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator
 import logging
 import io # New import
 
@@ -27,6 +30,13 @@ class SelectionRequest(BaseModel):
     formula: str
     timeframe: str = "D"
     date: Optional[datetime.date] = None  # 可选目标交易日（YYYY-MM-DD）；早于数据起点时回退语义见 engine
+
+
+class BacktestRequest(BaseModel):
+    formula: str
+    start_date: datetime.date
+    end_signal_date: datetime.date
+    initial_cash: float = 1_000_000
 
 def report_metrics_usage(formula: str):
     """
@@ -77,6 +87,53 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
         "date": result["date"],
         "results": result["codes"],
     }
+
+
+@router.post("/backtest")
+async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
+    if data_manager.df_daily is None:
+        raise HTTPException(status_code=503, detail="Nodes are loading data...")
+
+    # 初始化回测引擎组件
+    calendar = TradingCalendar()
+    # 从 df_daily 获取交易日列表
+    if data_manager.df_daily is not None:
+        trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
+        calendar.set_trade_dates(trade_dates)
+
+    raw_price_store = RawPriceStore(data_root="data")  # 实际路径需配置
+    raw_price_store.data_root = "data"  # 临时
+
+    # 创建回测引擎
+    backtest_engine = BacktestEngine(
+        calendar=TradingCalendar(),
+        selection_engine=selection_engine,
+        raw_price_store=RawPriceStore(data_root="data"),
+        fee_config=FeeConfig(),
+        execution_config=MVP_EXECUTION_CONFIG,
+        allocator=equal_weight_allocator,
+    )
+
+    # 运行回测
+    try:
+        result = backtest_engine.run(
+            formula=req.formula,
+            start_date=req.start_date,
+            end_signal_date=req.end_signal_date,
+            initial_cash=req.initial_cash,
+        )
+
+        # 返回结果
+        return {
+            "formula": req.formula,
+            "start_date": req.start_date.isoformat(),
+            "end_signal_date": req.end_signal_date.isoformat(),
+            "initial_cash": req.initial_cash,
+            "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
+            "metrics": result.metrics,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/kline")
 def get_kline(code: str, timeframe: str = "D"):
