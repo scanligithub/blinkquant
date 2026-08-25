@@ -47,6 +47,7 @@ export default function Home() {
   const [showAISelect, setShowAISelect] = useState(false);
   const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
+  const [selectDate, setSelectDate] = useState('');
   const [timeframe, setTimeframe] = useState('D');
   const [chartTimeframe, setChartTimeframe] = useState('D');
   const [subChartType, setSubChartType] = useState('MACD');
@@ -496,9 +497,15 @@ setDailyDataCache(dailyData);
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                 placeholder="例如：CLOSE > MA(CLOSE, 20)"
                 value={formula} onChange={(e) => setFormula(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSelect()}
+                onKeyDown={(e) => e.key === 'Enter' && handleSelect({ date: selectDate || undefined })}
               />
-              <button onClick={() => handleSelect()} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
+              <input
+                type="date"
+                title="选股日期（留空 = 最新交易日）"
+                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-sm text-slate-600 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                value={selectDate} onChange={(e) => setSelectDate(e.target.value)}
+              />
+              <button onClick={() => handleSelect({ date: selectDate || undefined })} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
                 {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : '运行选股'}
               </button>
               <button
