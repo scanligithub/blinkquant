@@ -1,7 +1,8 @@
 import datetime
 import polars as pl
 from core.execution import ExecutionEngine, OrderIntent, Fill
-from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, Position
+from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG
+from core.portfolio import Position, Portfolio
 
 
 def create_test_positions():
@@ -28,7 +29,7 @@ def test_sell_first_then_buy_cash_available():
     ]
     
     engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
-    fills, remaining_cash = engine.execute(
+    fills = engine.execute(
         execution_date=datetime.date(2025, 1, 3),
         intents=intents,
         positions={"sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0)},
@@ -36,12 +37,10 @@ def test_sell_first_then_buy_cash_available():
         cash=10000.0,
     )
     
-    # SELL: 500 * 11.0 = 5500, fee = max(5500*0.00025, 5) + 5500*0.0005 + 5500*0.00001 = 5 + 2.75 + 0.055 = 7.805 -> 7.81
-    # net = 5500 - 7.81 = 5492.19
-    # remaining_cash = 10000 + 5492.19 = 15492.19
-    # BUY: 250 * 20.0 = 5000, fee = max(5000*0.00025, 5) + 0 + 5000*0.00001 = 5 + 0.05 = 5.05
-    # cost = 5005.05
-    # remaining_cash = 15492.19 - 5005.05 = 10487.14
+    # 使用 Portfolio 应用成交
+    portfolio = Portfolio(initial_cash=10000.0)
+    portfolio.positions = {"sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0)}
+    portfolio.apply_fills(fills, datetime.date(2025, 1, 3), {"sh.600000": {"close": 11.0}, "sz.000001": {"close": 20.0}})
     
     sell_fills = [f for f in fills if f.side == "SELL"]
     buy_fills = [f for f in fills if f.side == "BUY"]
@@ -51,6 +50,10 @@ def test_sell_first_then_buy_cash_available():
     assert len(buy_fills) == 1
     assert buy_fills[0].qty == 250
     assert buy_fills[0].price == 20.0
+    # 卖出 500 * 11.0 = 5500, fee ≈ 7.81, 净收入 ≈ 5492.19
+    # 买入 250 * 20.0 = 5000, fee ≈ 5.05
+    # 现金变化：10000 + 5492.19 - 5005.05 = 10487.14
+    assert abs(portfolio.cash - 10487.14) < 0.1
 
 
 def test_t1_buy_cannot_sell_same_day():
@@ -65,7 +68,7 @@ def test_t1_buy_cannot_sell_same_day():
     ]
     
     engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
-    fills, _ = engine.execute(
+    fills = engine.execute(
         execution_date=datetime.date(2025, 1, 3),
         intents=intents,
         positions={"sh.600000": Position(code="sh.600000", total_qty=500, available_qty=0, frozen_qty=500, avg_cost=10.0, market_value=5000.0)},
@@ -73,25 +76,8 @@ def test_t1_buy_cannot_sell_same_day():
         cash=0.0,
     )
     
-    # frozen_qty = 500, available_qty = 0 -> SELL should be 0
-    assert len([f for f in fills if f.side == "SELL"]) == 0
-
-
-def test_limit_up_cannot_buy():
-    """涨停不可买。"""
-    positions = {}
-    raw_prices = {"sh.600000": {"open": 11.0, "close": 11.0}}  # 11.0 is limit up (assume)
-    
-    # Need to set up limit_up flag in raw data or position
-    # For now, test that limit_up flag prevents buy
-    positions = {}
-    raw_prices = {"sh.600000": {"open": 11.0, "close": 11.0}}
-    
-    intents = [OrderIntent(code="sh.600000", side="BUY", target_qty=100, target_weight=0.5)]
-    
-    engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
-    # This test needs limit_up flag in position or raw data
-    # For now, we'll test the fee calculation
+    # frozen_qty = 500, available_qty = 0 -> SELL 应该是 0
+    assert len(fills) == 0
 
 
 def test_fee_calculation():
@@ -122,17 +108,17 @@ def test_partial_fill_cash_retained():
         "sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0),
     }
     raw_prices = {
-        "sh.600000": {"open": 11.0, "close": 11.0},  # limit up? no
+        "sh.600000": {"open": 11.0, "close": 11.0},
         "sz.000001": {"open": 20.0, "close": 20.0},
     }
     
     intents = [
         OrderIntent(code="sh.600000", side="SELL", target_qty=1000, target_weight=0.0),
-        OrderIntent(code="sz.000001", side="BUY", target_qty=1000, target_weight=1.0),  # need 20000 but only have ~10000 after sell
+        OrderIntent(code="sz.000001", side="BUY", target_qty=1000, target_weight=1.0),  # 需要 20000 但只有约 10000
     ]
     
     engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
-    fills, remaining_cash = engine.execute(
+    fills = engine.execute(
         execution_date=datetime.date(2025, 1, 3),
         intents=intents,
         positions={"sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0)},
@@ -142,9 +128,11 @@ def test_partial_fill_cash_retained():
     
     # SELL all 1000 @ 11.0 -> net ~10994.39 cash
     # BUY sz.000001: max affordable = 10994.39 / (20 * 1.00025) approx 549 shares
-    # remaining cash should be positive
-    remaining_cash_after = 0.0  # will be set by engine
-    # Just verify no crash and partial fill logic works
+    # 剩余现金应为正数
+    portfolio = Portfolio(initial_cash=0.0)
+    portfolio.positions = {"sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0)}
+    portfolio.apply_fills(fills, datetime.date(2025, 1, 3), {"sh.600000": {"close": 11.0}, "sz.000001": {"close": 20.0}})
+    assert portfolio.cash > 0
 
 
 def test_limit_up_down_from_position():
@@ -155,12 +143,21 @@ def test_limit_up_down_from_position():
 
 
 def test_single_direction_per_execution_date():
-    """同一股票同一 execution_date 只能一个净方向。"""
+    """同一股票同一 execution_date 只能一个净交易方向。"""
     intents = [
         OrderIntent(code="sh.600000", side="BUY", target_qty=100, target_weight=0.5),
         OrderIntent(code="sh.600000", side="SELL", target_qty=100, target_weight=0.0),
     ]
     
     engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
+    fills = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=intents,
+        positions={},
+        raw_prices={"sh.600000": {"open": 11.0, "close": 11.0}},
+        cash=10000.0,
+    )
+    
     # The engine should handle this by netting or rejecting
-    # For MVP, we'll check it doesn't crash and handles gracefully
+    # For MVP, we just check it doesn't crash
+    assert isinstance(fills, list)

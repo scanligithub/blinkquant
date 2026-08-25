@@ -81,11 +81,13 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
     # 上报热度 (不再需要传 timeframe)
     background_tasks.add_task(report_metrics_usage, req.formula)
 
+    # 返回完整的 SelectionResult 契约
     return {
         "node": os.getenv("NODE_INDEX"),
-        "count": len(result["codes"]),
-        "date": result["date"],
-        "results": result["codes"],
+        "requested_date": result.requested_date.isoformat() if result.requested_date else None,
+        "signal_date": result.signal_date.isoformat(),
+        "codes": result.codes,
+        "metadata": result.metadata,
     }
 
 
@@ -104,9 +106,9 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
     raw_price_store = RawPriceStore(data_root="data")  # 实际路径需配置
     raw_price_store.data_root = "data"  # 临时
 
-    # 创建回测引擎
+    # 创建回测引擎 - 使用已配置的 calendar
     backtest_engine = BacktestEngine(
-        calendar=TradingCalendar(),
+        calendar=calendar,
         selection_engine=selection_engine,
         raw_price_store=RawPriceStore(data_root="data"),
         fee_config=FeeConfig(),
@@ -130,6 +132,8 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "end_signal_date": req.end_signal_date.isoformat(),
             "initial_cash": req.initial_cash,
             "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
+            "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
+            "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
             "metrics": result.metrics,
         }
     except Exception as e:

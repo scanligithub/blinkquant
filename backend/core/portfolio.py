@@ -1,7 +1,6 @@
 import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
-from core.backtest_types import Position as PositionType
 
 
 @dataclass
@@ -24,7 +23,6 @@ class Position:
             total_cost = self.total_qty * self.avg_cost + frozen_qty * price
             self.total_qty += frozen_qty
             self.avg_cost = total_cost / self.total_qty
-        self.total_qty += frozen_qty
         self.frozen_qty += frozen_qty
         # market_value 由外部根据 raw_close 更新
     
@@ -47,45 +45,6 @@ class Position:
         if self.total_qty == 0:
             self.avg_cost = 0.0
         return sell_qty
-    
-    def buy(self, frozen_qty: int, price: float):
-        """买入：增加冻结数量，更新平均成本。"""
-        if frozen_qty <= 0:
-            return
-        if self.total_qty == 0:
-            self.avg_cost = price
-        else:
-            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
-            self.avg_cost = total_cost / (self.total_qty + frozen_qty)
-        self.total_qty += frozen_qty
-        self.frozen_qty += frozen_qty
-    
-    def thaw(self, thaw_qty: int):
-        """解冻：冻结转可用。"""
-        if thaw_qty <= 0:
-            return
-        thaw_qty = min(thaw_qty, self.frozen_qty)
-        self.frozen_qty -= thaw_qty
-        self.available_qty += thaw_qty
-    
-    def sell(self, qty: int, price: float) -> int:
-        """卖出：仅使用 available_qty。返回实际卖出数量。"""
-        sell_qty = min(qty, self.available_qty)
-        if sell_qty <= 0:
-            return 0
-        self.available_qty -= sell_qty
-        self.total_qty -= sell_qty
-        if self.total_qty == 0:
-            self.avg_cost = 0.0
-        return sell_qty
-    
-    def thaw(self, thaw_qty: int):
-        """解冻：冻结转可用。"""
-        if thaw_qty <= 0:
-            return
-        thaw_qty = min(thaw_qty, self.frozen_qty)
-        self.frozen_qty -= thaw_qty
-        self.available_qty += thaw_qty
     
     def update_market_value(self, raw_close: float):
         """按 raw_close 更新市值。"""
@@ -117,6 +76,7 @@ class AccountSnapshot:
 class Portfolio:
     """
     投资组合管理：现金、持仓、权益、逐日快照、T+1 解冻。
+    所有资金/持仓变更的唯一入口。
     """
     
     def __init__(self, initial_cash: float = 1_000_000):
@@ -143,27 +103,30 @@ class Portfolio:
     def apply_fills(self, fills: list, execution_date: datetime.date, raw_prices: dict) -> float:
         """
         应用成交回报，更新持仓和现金。
+        唯一的资金/持仓变更入口。
         返回发生的总费用。
         """
         total_fee = 0.0
         for fill in fills:
             if fill.side == "BUY":
-                self.cash -= fill.qty * fill.price + fill.fee
+                # 买入：扣除资金，增加冻结持仓
+                cost = fill.qty * fill.price + fill.fee
+                self.cash -= cost
                 pos = self.positions.get(fill.code)
                 if pos is None:
                     pos = Position(code=fill.code, total_qty=0, available_qty=0, frozen_qty=0, avg_cost=0.0, market_value=0.0)
                     self.positions[fill.code] = pos
                 pos.buy(fill.qty, fill.price)
-                self.cash -= fill.fee
             elif fill.side == "SELL":
                 pos = self.positions.get(fill.code)
                 if pos:
                     sold = pos.sell(fill.qty, fill.price)
-                    self.cash += fill.qty * fill.price - fill.fee
-                    if pos.total_qty == 0:
-                        del self.positions[fill.code]
+                    if sold > 0:
+                        self.cash += fill.qty * fill.price - fill.fee
+                        if pos.total_qty == 0:
+                            del self.positions[fill.code]
             total_fee += fill.fee
-        return 0.0  # fee already deducted in cash
+        return total_fee
     
     def daily_thaw(self):
         """每日开盘前解冻：T+1 冻结 → T+2 解冻为可用。"""
@@ -197,7 +160,7 @@ class Portfolio:
     
     def snapshot(self, date: datetime.date, raw_prices: dict) -> 'AccountSnapshot':
         """生成当日账户快照。"""
-        equity = self.get_equity({})
+        equity = self.get_equity(raw_prices)
         return AccountSnapshot(
             date=date,
             cash=self.cash,
@@ -209,3 +172,363 @@ class Portfolio:
     def update_daily_pnl(self, prev_equity: float, current_equity: float):
         """更新日度盈亏。"""
         self._daily_pnl = current_equity - prev_equity
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
+
+
+@dataclass
+class Position:
+    """持仓结构（支持 T+1 可卖/冻结语义）。"""
+    code: str
+    total_qty: int = 0
+    available_qty: int = 0
+    frozen_qty: int = 0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    
+    def buy(self, frozen_qty: int, price: float):
+        """买入：增加冻结数量，更新平均成本。"""
+        if frozen_qty <= 0:
+            return
+        if self.total_qty == 0:
+            self.avg_cost = price
+        else:
+            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
+            self.total_qty += frozen_qty
+            self.avg_cost = total_cost / self.total_qty
+        self.frozen_qty += frozen_qty
+        # market_value 由外部根据 raw_close 更新
+    
+    def thaw(self, thaw_qty: int):
+        """解冻：冻结转可用。"""
+        if thaw_qty <= 0:
+            return
+        thaw_qty = min(thaw_qty, self.frozen_qty)
+        self.frozen_qty -= thaw_qty
+        self.available_qty += thaw_qty
+    
+    def sell(self, qty: int, price: float) -> int:
+        """卖出：仅使用 available_qty。返回实际卖出数量。"""
+        sell_qty = min(qty, self.available_qty)
+        if sell_qty <= 0:
+            return 0
+        self.available_qty -= sell_qty
+        self.total_qty -= sell_qty
+        # avg_cost 不变（FIFO 简化）
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+        return sell_qty
+    
+    def update_market_value(self, raw_close: float):
+        """按 raw_close 更新市值。"""
+        self.market_value = self.total_qty * raw_close
+    
+    def __post_init__(self):
+        # 确保一致性
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+            self.available_qty = 0
+            self.frozen_qty = 0
+        else:
+            # 确保 available + frozen = total
+            if self.available_qty + self.frozen_qty != self.total_qty:
+                # 修正：优先保证 available，剩余算 frozen
+                self.frozen_qty = max(0, self.total_qty - self.available_qty)
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
+
+
+@dataclass
+class Position:
+    """持仓结构（支持 T+1 可卖/冻结语义）。"""
+    code: str
+    total_qty: int = 0
+    available_qty: int = 0
+    frozen_qty: int = 0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    
+    def buy(self, frozen_qty: int, price: float):
+        """买入：增加冻结数量，更新平均成本。"""
+        if frozen_qty <= 0:
+            return
+        if self.total_qty == 0:
+            self.avg_cost = price
+        else:
+            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
+            self.total_qty += frozen_qty
+            self.avg_cost = total_cost / self.total_qty
+        self.frozen_qty += frozen_qty
+        # market_value 由外部根据 raw_close 更新
+    
+    def thaw(self, thaw_qty: int):
+        """解冻：冻结转可用。"""
+        if thaw_qty <= 0:
+            return
+        thaw_qty = min(thaw_qty, self.frozen_qty)
+        self.frozen_qty -= thaw_qty
+        self.available_qty += thaw_qty
+    
+    def sell(self, qty: int, price: float) -> int:
+        """卖出：仅使用 available_qty。返回实际卖出数量。"""
+        sell_qty = min(qty, self.available_qty)
+        if sell_qty <= 0:
+            return 0
+        self.available_qty -= sell_qty
+        self.total_qty -= sell_qty
+        # avg_cost 不变（FIFO 简化）
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+        return sell_qty
+    
+    def update_market_value(self, raw_close: float):
+        """按 raw_close 更新市值。"""
+        self.market_value = self.total_qty * raw_close
+    
+    def __post_init__(self):
+        # 确保一致性
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+            self.available_qty = 0
+            self.frozen_qty = 0
+        else:
+            # 确保 available + frozen = total
+            if self.available_qty + self.frozen_qty != self.total_qty:
+                # 修正：优先保证 available，剩余算 frozen
+                self.frozen_qty = max(0, self.total_qty - self.available_qty)
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
+
+
+@dataclass
+class Position:
+    """持仓结构（支持 T+1 可卖/冻结语义）。"""
+    code: str
+    total_qty: int = 0
+    available_qty: int = 0
+    frozen_qty: int = 0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    
+    def buy(self, frozen_qty: int, price: float):
+        """买入：增加冻结数量，更新平均成本。"""
+        if frozen_qty <= 0:
+            return
+        if self.total_qty == 0:
+            self.avg_cost = price
+        else:
+            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
+            self.total_qty += frozen_qty
+            self.avg_cost = total_cost / self.total_qty
+        self.frozen_qty += frozen_qty
+        # market_value 由外部根据 raw_close 更新
+    
+    def thaw(self, thaw_qty: int):
+        """解冻：冻结转可用。"""
+        if thaw_qty <= 0:
+            return
+        thaw_qty = min(thaw_qty, self.frozen_qty)
+        self.frozen_qty -= thaw_qty
+        self.available_qty += thaw_qty
+    
+    def sell(self, qty: int, price: float) -> int:
+        """卖出：仅使用 available_qty。返回实际卖出数量。"""
+        sell_qty = min(qty, self.available_qty)
+        if sell_qty <= 0:
+            return 0
+        self.available_qty -= sell_qty
+        self.total_qty -= sell_qty
+        # avg_cost 不变（FIFO 简化）
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+        return sell_qty
+    
+    def update_market_value(self, raw_close: float):
+        """按 raw_close 更新市值。"""
+        self.market_value = self.total_qty * raw_close
+    
+    def __post_init__(self):
+        # 确保一致性
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+            self.available_qty = 0
+            self.frozen_qty = 0
+        else:
+            # 确保 available + frozen = total
+            if self.available_qty + self.frozen_qty != self.total_qty:
+                # 修正：优先保证 available，剩余算 frozen
+                self.frozen_qty = max(0, self.total_qty - self.available_qty)
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
+
+
+@dataclass
+class Position:
+    """持仓结构（支持 T+1 可卖/冻结语义）。"""
+    code: str
+    total_qty: int = 0
+    available_qty: int = 0
+    frozen_qty: int = 0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    
+    def buy(self, frozen_qty: int, price: float):
+        """买入：增加冻结数量，更新平均成本。"""
+        if frozen_qty <= 0:
+            return
+        if self.total_qty == 0:
+            self.avg_cost = price
+        else:
+            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
+            self.total_qty += frozen_qty
+            self.avg_cost = total_cost / self.total_qty
+        self.frozen_qty += frozen_qty
+        # market_value 由外部根据 raw_close 更新
+    
+    def thaw(self, thaw_qty: int):
+        """解冻：冻结转可用。"""
+        if thaw_qty <= 0:
+            return
+        thaw_qty = min(thaw_qty, self.frozen_qty)
+        self.frozen_qty -= thaw_qty
+        self.available_qty += thaw_qty
+    
+    def sell(self, qty: int, price: float) -> int:
+        """卖出：仅使用 available_qty。返回实际卖出数量。"""
+        sell_qty = min(qty, self.available_qty)
+        if sell_qty <= 0:
+            return 0
+        self.available_qty -= sell_qty
+        self.total_qty -= sell_qty
+        # avg_cost 不变（FIFO 简化）
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+        return sell_qty
+    
+    def update_market_value(self, raw_close: float):
+        """按 raw_close 更新市值。"""
+        self.market_value = self.total_qty * raw_close
+    
+    def __post_init__(self):
+        # 确保一致性
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+            self.available_qty = 0
+            self.frozen_qty = 0
+        else:
+            # 确保 available + frozen = total
+            if self.available_qty + self.frozen_qty != self.total_qty:
+                # 修正：优先保证 available，剩余算 frozen
+                self.frozen_qty = max(0, self.total_qty - self.available_qty)
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
+
+
+@dataclass
+class Position:
+    """持仓结构（支持 T+1 可卖/冻结语义）。"""
+    code: str
+    total_qty: int = 0
+    available_qty: int = 0
+    frozen_qty: int = 0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    
+    def buy(self, frozen_qty: int, price: float):
+        """买入：增加冻结数量，更新平均成本。"""
+        if frozen_qty <= 0:
+            return
+        if self.total_qty == 0:
+            self.avg_cost = price
+        else:
+            total_cost = self.total_qty * self.avg_cost + frozen_qty * price
+            self.total_qty += frozen_qty
+            self.avg_cost = total_cost / self.total_qty
+        self.frozen_qty += frozen_qty
+        # market_value 由外部根据 raw_close 更新
+    
+    def thaw(self, thaw_qty: int):
+        """解冻：冻结转可用。"""
+        if thaw_qty <= 0:
+            return
+        thaw_qty = min(thaw_qty, self.frozen_qty)
+        self.frozen_qty -= thaw_qty
+        self.available_qty += thaw_qty
+    
+    def sell(self, qty: int, price: float) -> int:
+        """卖出：仅使用 available_qty。返回实际卖出数量。"""
+        sell_qty = min(qty, self.available_qty)
+        if sell_qty <= 0:
+            return 0
+        self.available_qty -= sell_qty
+        self.total_qty -= sell_qty
+        # avg_cost 不变（FIFO 简化）
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+        return sell_qty
+    
+    def update_market_value(self, raw_close: float):
+        """按 raw_close 更新市值。"""
+        self.market_value = self.total_qty * raw_close
+    
+    def __post_init__(self):
+        # 确保一致性
+        if self.total_qty == 0:
+            self.avg_cost = 0.0
+            self.available_qty = 0
+            self.frozen_qty = 0
+        else:
+            # 确保 available + frozen = total
+            if self.available_qty + self.frozen_qty != self.total_qty:
+                # 修正：优先保证 available，剩余算 frozen
+                self.frozen_qty = max(0, self.total_qty - self.available_qty)
+
+
+@dataclass
+class AccountSnapshot:
+    """逐日账户快照。"""
+    date: datetime.date
+    cash: float
+    positions: dict[str, 'Position']
+    equity: float
+    daily_pnl: float
