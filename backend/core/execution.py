@@ -1,9 +1,19 @@
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from core.backtest_types import FeeConfig, ExecutionConfig, Position
 
 # A 股买入最小申报单位（整手）。卖出允许零股，不做整手取整。
 LOT_SIZE = 100
+
+# 拒单原因分类（Execution Diagnostics 契约）。
+# 标签仅用于解释"目标为何未成交"，绝不改变成交语义。
+R_SUSPENDED = "SUSPENDED"        # 停牌
+R_LIMIT_BLOCKED = "LIMIT_BLOCKED"  # 涨停禁买 / 跌停禁卖
+R_FROZEN = "FROZEN"              # SELL 但可用数量为 0（T+1 冻结或空仓）
+R_CASH_STARVED = "CASH_STARVED"  # BUY 可用现金不足一手
+R_NO_PRICE = "NO_PRICE"          # 执行日缺失 raw open
+R_ZERO_TARGET = "ZERO_TARGET"    # planner 输出 qty<=0（防御性）
+R_BELOW_LOT = "BELOW_LOT"        # BUY 目标不足一手（经济性碎量）
 
 
 @dataclass
@@ -23,6 +33,27 @@ class Fill:
     fee: float
 
 
+@dataclass
+class Rejection:
+    """一次未成交意图的可解释标签。"""
+    code: str
+    side: str
+    reason: str
+    target_qty: int
+
+
+@dataclass
+class ExecutionReport:
+    fills: list = field(default_factory=list)
+    rejections: list = field(default_factory=list)   # list[Rejection]
+
+    def reason_counters(self) -> dict:
+        counters: dict = {}
+        for r in self.rejections:
+            counters[r.reason] = counters.get(r.reason, 0) + 1
+        return counters
+
+
 class ExecutionEngine:
     """
     执行引擎：T+1 开盘、先卖后买、费用、部分成交、T+1 持仓约束、整手取整。
@@ -34,9 +65,11 @@ class ExecutionEngine:
     - partial_fill_policy = "keep_cash"
 
     职责边界：
-    - 只产出 Fill；现金/持仓记账一律由 Portfolio.apply_fills() 完成。
+    - 只产出 ExecutionReport(fills, rejections)；现金/持仓记账一律由
+      Portfolio.apply_fills() 完成。
     - BUY 数量受三重约束：意图目标数量（向下取整手）→ 真实 FeeConfig
       的逐笔可负担数量 → 涨跌停/停牌。卖出回款在同一 cycle 内可用于买入。
+    - 未成交意图必须携带 Rejection 原因（诊断契约），原因标签不影响任何成交路径。
     """
 
     def __init__(self, exec_config: ExecutionConfig, fee_config: FeeConfig):
@@ -51,64 +84,91 @@ class ExecutionEngine:
         raw_prices: dict[str, dict],
         cash: float,
         limit_flags: dict[str, dict] = None,
-    ) -> list[Fill]:
-        """执行订单意图，只返回成交记录，不修改资金/持仓。
-
-        Args:
-            execution_date: 成交日期 (T+1)
-            intents: 订单意图列表（目标经济数量，允许非整手）
-            positions: 当前持仓字典 code -> Position
-            raw_prices: 原始价格字典 code -> {"open": float, "close": float}
-            cash: 当前可用现金
-            limit_flags: 涨跌停/停牌标记（None 表示不启用限制检查）
+    ) -> ExecutionReport:
+        """执行订单意图。
 
         Returns:
-            fills 列表（执行顺序：先卖单后买单）
+            ExecutionReport(fills, rejections)
         """
         sells = [i for i in intents if i.side == "SELL"]
         buys = [i for i in intents if i.side == "BUY"]
 
-        fills: list[Fill] = []
+        report = ExecutionReport()
         available_cash = cash
 
         # ---- 先卖后买：卖出回款同 cycle 可用于买入 ----
         for intent in sells:
             pos = positions.get(intent.code)
+
+            price = raw_prices.get(intent.code, {}).get("open", 0)
+            if price <= 0:
+                report.rejections.append(Rejection(intent.code, "SELL", R_NO_PRICE, intent.target_qty))
+                continue
+            gate = self._trade_gate(intent.code, "SELL", limit_flags)
+            if gate is not None:
+                report.rejections.append(Rejection(intent.code, "SELL", gate, intent.target_qty))
+                continue
             if not pos or pos.available_qty <= 0:
+                report.rejections.append(Rejection(intent.code, "SELL", R_FROZEN, intent.target_qty))
                 continue
-            if not self._can_trade(intent.code, "SELL", limit_flags):
-                continue
+
             # 卖出允许零股：数量仅受 available_qty 约束
             fill_qty = min(intent.target_qty, pos.available_qty)
             if fill_qty <= 0:
+                report.rejections.append(Rejection(intent.code, "SELL", R_ZERO_TARGET, intent.target_qty))
                 continue
-            price = raw_prices.get(intent.code, {}).get("open", 0)
-            if price <= 0:
-                continue
+
             fee = self._calc_fee(price * fill_qty, "SELL")
-            fills.append(Fill(intent.code, "SELL", fill_qty, price, fee))
+            report.fills.append(Fill(intent.code, "SELL", fill_qty, price, fee))
             available_cash += price * fill_qty - fee
 
         for intent in buys:
             price = raw_prices.get(intent.code, {}).get("open", 0)
             if price <= 0:
+                report.rejections.append(Rejection(intent.code, "BUY", R_NO_PRICE, intent.target_qty))
                 continue
-            if not self._can_trade(intent.code, "BUY", limit_flags):
+            gate = self._trade_gate(intent.code, "BUY", limit_flags)
+            if gate is not None:
+                report.rejections.append(Rejection(intent.code, "BUY", gate, intent.target_qty))
                 continue
-            # 整手向下取整（自然抑制微小调仓噪音）
+            if intent.target_qty <= 0:
+                report.rejections.append(Rejection(intent.code, "BUY", R_ZERO_TARGET, intent.target_qty))
+                continue
+
             lot_qty = (intent.target_qty // LOT_SIZE) * LOT_SIZE
             if lot_qty <= 0:
+                report.rejections.append(Rejection(intent.code, "BUY", R_BELOW_LOT, intent.target_qty))
                 continue
-            # 以真实 FeeConfig 的逐笔订单费用计算最大可买整手数量
+
             fill_qty = self._max_affordable_lot_qty(price, available_cash, lot_qty)
             if fill_qty <= 0:
+                report.rejections.append(Rejection(intent.code, "BUY", R_CASH_STARVED, intent.target_qty))
                 continue
+
             fee = self._calc_fee(price * fill_qty, "BUY")
-            fills.append(Fill(intent.code, "BUY", fill_qty, price, fee))
-            # 同一 cycle 内多笔 BUY 顺序扣减可用现金
+            report.fills.append(Fill(intent.code, "BUY", fill_qty, price, fee))
             available_cash -= price * fill_qty + fee
 
-        return fills
+        return report
+
+    @staticmethod
+    def _trade_gate(code: str, side: str, limit_flags: dict):
+        """涨跌停/停牌闸门。可交易返回 None，否则返回拒绝原因标签。
+
+        limit_flags 为 None 时跳过检查；标记缺失视为停牌（fail-closed）。
+        """
+        if limit_flags is None:
+            return None
+        flags = limit_flags.get(code)
+        if flags is None:
+            return R_SUSPENDED
+        if flags.get("is_suspended", False):
+            return R_SUSPENDED
+        if side == "BUY" and flags.get("is_limit_up", False):
+            return R_LIMIT_BLOCKED
+        if side == "SELL" and flags.get("is_limit_down", False):
+            return R_LIMIT_BLOCKED
+        return None
 
     def _max_affordable_lot_qty(self, price: float, cash: float, cap_qty: int) -> int:
         """按真实 FeeConfig 计算可负担的最大整手买入数量。
@@ -125,25 +185,6 @@ class ExecutionEngine:
                 return qty
             qty -= LOT_SIZE
         return 0
-
-    def _can_trade(self, code: str, side: str, limit_flags: dict) -> bool:
-        """涨跌停/停牌限制：停牌禁交易；涨停禁买；跌停禁卖。
-
-        limit_flags 为 None 时跳过检查（单元测试便利路径）；
-        标记缺失（无该 code 条目）视为停牌（fail-closed）。
-        """
-        if limit_flags is None:
-            return True
-        flags = limit_flags.get(code)
-        if flags is None:
-            return False
-        if flags.get("is_suspended", False):
-            return False
-        if side == "BUY" and flags.get("is_limit_up", False):
-            return False
-        if side == "SELL" and flags.get("is_limit_down", False):
-            return False
-        return True
 
     def _calc_fee(self, amount: float, side: str) -> float:
         """单笔订单费用 = max(佣金率×金额, 最低佣金) + 印花税(仅卖出) + 过户费。"""

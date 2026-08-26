@@ -134,6 +134,9 @@ class BacktestEngine:
         trades_rows = []
         positions_daily_rows = []
         
+        # 拒单分类计数器（Execution Diagnostics 契约，run 结束后经引擎实例读取）
+        rej_counters: dict = {}
+        
         # 停牌 carry-forward 估值的最后可用价（derived 规则，非官方复牌基准）
         self._last_close: dict[str, float] = {}
         if self.portfolio.positions:
@@ -185,8 +188,8 @@ class BacktestEngine:
                 intent_codes = [intent.code for intent in intents]
                 limit_flags = data_manager.get_limit_flags(execution_date, intent_codes)
                 
-                # 5. 执行订单（只产出 Fill）
-                fills = self.execution_engine.execute(
+                # 5. 执行订单（只产出 Fill + 可解释拒绝标签）
+                report = self.execution_engine.execute(
                     execution_date=execution_date,
                     intents=intents,
                     positions=self.portfolio.positions,
@@ -194,6 +197,9 @@ class BacktestEngine:
                     cash=self.portfolio.cash,
                     limit_flags=limit_flags,
                 )
+                fills = report.fills
+                for r in report.rejections:
+                    rej_counters[r.reason] = rej_counters.get(r.reason, 0) + 1
                 
                 # 6. 组合更新（唯一记账入口）+ 现金非负不变量
                 self.portfolio.apply_fills(fills, execution_date, {})
@@ -275,6 +281,10 @@ class BacktestEngine:
         })
         
         metrics = self._calculate_metrics(pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame())
+        
+        # 诊断契约：拒单分类计数器挂到引擎实例（脚本/Metrics 层读取）
+        self.rej_counters = rej_counters
+        self.rejections_total = sum(rej_counters.values())
         
         return BacktestResult(
             equity_curve=pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
