@@ -116,6 +116,21 @@ def test_micro_end_to_end_hand_computed():
             assert result.positions_daily.height == 1
             pd_row = result.positions_daily.to_dicts()[0]
             assert pd_row["date"] == D2 and pd_row["code"] == "sh.A" and pd_row["qty"] == 99_900
+
+            # ---- MetricsCalculator 集成（纯后处理，手算数字复验）----
+            from core.metrics import compute_metrics
+            m = compute_metrics(result, initial_cash=1_000_000)
+            assert abs(m.performance.total_return - 0.0) < 1e-12      # 单行曲线首尾相对
+            assert m.trading.trade_count == 1 and m.trading.buy_count == 1
+            assert m.trading.trade_days == 1
+            assert abs(m.trading.gross_buy - 999_000.0) < 1e-6
+            assert abs(m.trading.total_fees - 259.74) < 0.01
+            assert abs(m.exposure.deployment_mean - 1198800.0 / 1199540.26) < 1e-9
+            assert abs(m.exposure.cash_drag - (740.26 / 1199540.26)) < 1e-9
+            assert m.execution_quality.dust_reject_count == 0
+            assert m.execution_quality.carried_events == 0
+            flat = m.to_flat_dict()
+            assert "integrity.negative_cash_count" in flat
     finally:
         data_manager.df_daily = None
         data_manager.df_weekly = None

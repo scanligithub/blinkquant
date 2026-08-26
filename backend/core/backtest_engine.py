@@ -60,6 +60,7 @@ class BacktestResult:
     trades: 'pl.DataFrame'
     positions_daily: 'pl.DataFrame'
     metrics: dict
+    execution_diagnostics: dict = None
 
 
 class BacktestEngine:
@@ -137,6 +138,19 @@ class BacktestEngine:
         # 拒单分类计数器（Execution Diagnostics 契约，run 结束后经引擎实例读取）
         rej_counters: dict = {}
         
+        # Metrics 诊断采集（轻量标量/字典，不改变执行语义）
+        diag = {
+            "rej_counters": rej_counters,
+            "intents_total": 0,
+            "partial_fill_count": 0,
+            "carried_events": 0,
+            "zero_price_trade_count": 0,
+            "t1_violation_count": 0,
+            "negative_cash_count": 0,           # 违反即抛 BacktestLedgerError，成功路径恒 0
+            "accounting_invariant_violations": 0,
+            "target_gross_by_date": {},          # execution_date -> Σ target weights
+        }
+        
         # 停牌 carry-forward 估值的最后可用价（derived 规则，非官方复牌基准）
         self._last_close: dict[str, float] = {}
         if self.portfolio.positions:
@@ -182,6 +196,9 @@ class BacktestEngine:
                     self._last_close[code] = px["close"]
             
             intents = self._generate_intents(target_weights, cycle_prices)
+            diag["intents_total"] += len(intents)
+            if target_weights:
+                diag["target_gross_by_date"][execution_date] = sum(target_weights.values())
             
             fills = []
             if intents:
@@ -200,6 +217,17 @@ class BacktestEngine:
                 fills = report.fills
                 for r in report.rejections:
                     rej_counters[r.reason] = rej_counters.get(r.reason, 0) + 1
+                
+                # partial fill / zero-price 防御计数（意图目标 vs 实际成交）
+                fmap = {}
+                for f in fills:
+                    fmap[(f.code, f.side)] = f.qty
+                    if f.price <= 0:
+                        diag["zero_price_trade_count"] += 1
+                for it in intents:
+                    fq = fmap.get((it.code, it.side))
+                    if fq is not None and fq < it.target_qty:
+                        diag["partial_fill_count"] += 1
                 
                 # 6. 组合更新（唯一记账入口）+ 现金非负不变量
                 self.portfolio.apply_fills(fills, execution_date, {})
@@ -220,6 +248,7 @@ class BacktestEngine:
                     valuation_prices[pos.code] = {"close": cycle_prices[pos.code]["close"]}
                 elif pos.code in self._last_close:
                     valuation_prices[pos.code] = {"close": self._last_close[pos.code]}
+                    diag["carried_events"] += 1
                 # 两者皆无 → 不入表，交由 get_equity 严格抛错
             equity = self.portfolio.get_equity(valuation_prices, valuation_date=execution_date)
             
@@ -297,6 +326,7 @@ class BacktestEngine:
                 "date": pl.Date, "code": pl.Utf8, "qty": pl.Int64, "cost": pl.Float64, "market_value": pl.Float64
             }),
             metrics=metrics,
+            execution_diagnostics=diag,
         )
     
     def _prime_last_close(self, codes: list[str], before: datetime.date, lookback_days: int = 60):
