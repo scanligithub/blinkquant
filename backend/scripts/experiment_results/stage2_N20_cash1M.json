@@ -1,0 +1,66 @@
+{
+  "config": {
+    "commit": "6be4217",
+    "year": 2024,
+    "formula": "CLOSE > MA(CLOSE, 20)",
+    "timeframe": "D",
+    "initial_cash": 1000000,
+    "top_n": 20,
+    "rebalance": "weekly",
+    "target_per_stock": 50000
+  },
+  "metrics": {
+    "performance.total_return": -0.18934811084962788,
+    "performance.annualized_return": -0.19562623882673902,
+    "performance.max_drawdown": -0.6022977046119496,
+    "performance.drawdown_duration": 242,
+    "trading.trade_count": 1444,
+    "trading.buy_count": 652,
+    "trading.sell_count": 792,
+    "trading.trade_days": 52,
+    "trading.gross_buy": 17100225.011885166,
+    "trading.gross_sell": 16203246.601758957,
+    "trading.total_fees": 18379.26,
+    "trading.avg_trade_value": 23063.34599282834,
+    "trading.turnover": 25.861341415027688,
+    "trading.active_position_days": 4766,
+    "exposure.deployment_mean": 0.970787478550706,
+    "exposure.deployment_median": 0.9896478884385935,
+    "exposure.deployment_min": 0.0,
+    "exposure.deployment_p10": 0.9725666104774243,
+    "exposure.deployment_p25": 0.9810351021825878,
+    "exposure.deployment_p75": 0.9985556390595103,
+    "exposure.deployment_p90": 0.9994394267317098,
+    "exposure.deployment_max": 0.9999934366571033,
+    "exposure.cash_drag": 0.029212521449293982,
+    "exposure.target_fill_ratio": 0.9707874785507058,
+    "execution_quality.partial_fill_count": 645,
+    "execution_quality.partial_fill_ratio": 0.409004438807863,
+    "execution_quality.dust_reject_count": 97,
+    "execution_quality.dust_reject_ratio": 0.061509194673430564,
+    "execution_quality.limit_blocked_count": 12,
+    "execution_quality.limit_blocked_ratio": 0.007609384908053266,
+    "execution_quality.carried_events": 10,
+    "execution_quality.carried_event_ratio": 0.00209819555182543,
+    "integrity.zero_price_trade_count": 0,
+    "integrity.t1_violation_count": 0,
+    "integrity.negative_cash_count": 0,
+    "integrity.accounting_invariant_violations": 0
+  },
+  "diag": {
+    "intents_total": 1577,
+    "rej_counters": {
+      "CASH_STARVED": 8,
+      "BELOW_LOT": 97,
+      "LIMIT_BLOCKED": 12,
+      "FROZEN": 16
+    }
+  },
+  "experiment": {
+    "deterministic": true,
+    "integrity_ok": true,
+    "fee_ratio": 0.018379259999999998,
+    "actual_position_count_mean": 19.9,
+    "elapsed_s": 14.4
+  }
+}
