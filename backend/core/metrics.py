@@ -62,6 +62,14 @@ class ExposureMetrics:
 
 
 @dataclass
+class ConcentrationMetrics:
+    """组合集中度指标：实际权重分布与目标等权的偏离程度。"""
+    hhi_mean: float = 0.0               # Herfindahl-Hirschman Index = Σ(weight_i²)，日均值
+    effective_n_mean: float = 0.0       # 1 / HHI，越接近 top_n 越接近理想分散
+    weight_deviation_mean: float = 0.0  # mean(|actual_weight - target_weight|) 跨持仓跨日
+
+
+@dataclass
 class ExecutionQualityMetrics:
     partial_fill_count: int = 0
     partial_fill_ratio: float = 0.0     # / total intents
@@ -86,12 +94,14 @@ class BacktestMetrics:
     performance: PerformanceMetrics = field(default_factory=PerformanceMetrics)
     trading: TradingMetrics = field(default_factory=TradingMetrics)
     exposure: ExposureMetrics = field(default_factory=ExposureMetrics)
+    concentration: ConcentrationMetrics = field(default_factory=ConcentrationMetrics)
     execution_quality: ExecutionQualityMetrics = field(default_factory=ExecutionQualityMetrics)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
 
     def to_flat_dict(self) -> dict:
         out = {}
         for group_name in ("performance", "trading", "exposure",
+                           "concentration",
                            "execution_quality", "integrity"):
             for k, v in getattr(self, group_name).__dict__.items():
                 out[f"{group_name}.{k}"] = v
@@ -219,5 +229,33 @@ def compute_metrics(result, initial_cash: float) -> BacktestMetrics:
     i.t1_violation_count = diag.get("t1_violation_count", 0)
     i.negative_cash_count = diag.get("negative_cash_count", 0)
     i.accounting_invariant_violations = diag.get("accounting_invariant_violations", 0)
+
+    # ---------------- concentration ----------------
+    c = m.concentration
+    if pdl.height > 0:
+        daily_hhi = (
+            pdl.with_columns(
+                (pl.col("market_value") / pl.col("market_value").sum().over("date"))
+                .alias("weight")
+            )
+            .group_by("date")
+            .agg((pl.col("weight") ** 2).sum().alias("hhi"),
+                 pl.len().alias("n_pos"))
+            .sort("date")
+        )
+        hhi_vals = daily_hhi["hhi"].to_list()
+        if hhi_vals:
+            c.hhi_mean = sum(hhi_vals) / len(hhi_vals)
+            c.effective_n_mean = (1.0 / c.hhi_mean) if c.hhi_mean > _EPS else 0.0
+
+        # weight_deviation: |effective_n - actual_n| / actual_n，日均值
+        n_vals = daily_hhi["n_pos"].to_list()
+        devs = []
+        for h, np_ in zip(hhi_vals, n_vals):
+            if np_ > 0 and h > _EPS:
+                eff = 1.0 / h
+                devs.append(abs(eff - np_) / np_)
+        if devs:
+            c.weight_deviation_mean = sum(devs) / len(devs)
 
     return m

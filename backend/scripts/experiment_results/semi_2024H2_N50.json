@@ -1,0 +1,13 @@
+{
+  "segment": "2024H2",
+  "top_n": 50,
+  "total_return": 0.8440754766669456,
+  "max_drawdown": -0.23930220431704308,
+  "deployment_mean": 0.9568798060047109,
+  "dust_reject_ratio": 0.012130801687763712,
+  "turnover": 10.191367219082258,
+  "trade_count": 1775,
+  "concentration_hhi": 0.020332,
+  "effective_n_mean": 49.2,
+  "weight_deviation": 0.014532
+}
