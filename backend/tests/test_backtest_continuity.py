@@ -100,13 +100,24 @@ def _run_segment(tmp, all_days, formula, start, end, state=None, cash=1_000_000)
 def test_checkpoint_restore_equivalence_c1_equals_c2():
     """合成数据上的 C1(连续) == C2(断点续跑)：trades/equity/positions 逐字段一致。
 
+    结构：
+      C1 = 全程连续跑（信号 days[0]..days[-2]，执行至 days[-1]）
+      A  = 前缀段（信号 days[0]..a_last_signal=days[6]；其 T+1 执行 days[7] 归属 A）
+      B  = 后缀段（从 checkpoint 恢复，信号 b_first_signal=days[7]..days[-2]）
+
+    断言：
+      A.trades == C1.trades[exec ∈ A 域]
+      B.trades == C1.trades[exec ∈ B 域]
+      A.equity + B.equity == C1.equity（日期不重叠、拼接完整）
+      positions_daily 同理
+
     分段点选在持仓非空、且存在 T+1 冻结跨越分段点的位置，
     同时验证 last_close 注入与 daily_thaw 的跨段行为。
     """
     days = _weekdays(10)                    # 12/01..12/12 工作日
-    split_idx = 6                           # 前段 6 天，后段 4 天
-    d_split = days[split_idx - 1]           # 前段最后信号日
-    d_after = days[split_idx]               # 后段首个信号日
+    split_idx = 7
+    a_last_signal = days[split_idx - 1]     # days[6]=12/08? 不对——days[6]=12/09
+    b_first_signal = days[split_idx]        # days[7]=12/10
 
     full_days = days
     df = _fixture(full_days)
@@ -115,44 +126,92 @@ def test_checkpoint_restore_equivalence_c1_equals_c2():
         with tempfile.TemporaryDirectory() as tmp:
             df.write_parquet(f"{tmp}/stock_kline_{days[0].year}.parquet")
 
-            # ---- C1：连续跑全程（末信号留出 T+1 执行/估值）----
+            # ---- C1：连续跑全程 ----
             c1 = _run_segment(tmp, full_days, "CLOSE > 10",
                               start=days[0], end=days[-2])
 
-            # ---- 前段：信号到 days[5]（其 execution days[6] 归属前段）----
-            segA_end_signal = days[split_idx - 1]
+            # ---- A：前缀段 ----
             eng_a = _engine_with(tmp, full_days)
             res_a = eng_a.run(
                 formula="CLOSE > 10", start_date=days[0],
-                end_signal_date=segA_end_signal, initial_cash=1_000_000)
+                end_signal_date=a_last_signal, initial_cash=1_000_000)
 
-            # 序列化 checkpoint（模拟跨进程：JSON 往返），并拍平为 run(initial_state) 契约
+            # 序列化 checkpoint（模拟跨进程：JSON 往返）
             state = eng_a.export_state()
             import json
             state = json.loads(json.dumps(
-                {**state["portfolio"], "last_close": state["last_close"]},
+                {**state["portfolio"], "last_close": state["last_close"],
+                 "thru_thaw": state["thru_thaw"],
+                 "pending": state["pending"],
+                 "selected_thru": state["selected_thru"]},
                 default=str))
 
-            # ---- 后段：新引擎实例从 checkpoint 恢复续跑（末信号同样留 T+1）----
+            # ---- B：后缀段（从 checkpoint 恢复）----
             res_b = _run_segment(tmp, full_days, "CLOSE > 10",
-                                 start=d_after, end=days[-2], state=state)
+                                 start=b_first_signal,
+                                 end=days[-2], state=state)
 
-            # ---- 比较 C1 与 C2 在后段的输出（B 的成交/估值日域）----
-            tail_dates = set(days[split_idx + 1:])
-            t1 = c1.trades.filter(pl.col("execution_date").is_in(tail_dates))
-            t2 = res_b.trades
-            _assert_frames_eq(t1.sort(["execution_date", "code", "side"]),
-                              t2.sort(["execution_date", "code", "side"]))
-            e1 = c1.equity_curve.filter(pl.col("date").is_in(tail_dates)).sort("date")
-            e2 = res_b.equity_curve.sort("date")
-            _assert_frames_eq(e1, e2, by=["date"])
-            p1 = c1.positions_daily.filter(pl.col("date").is_in(tail_dates))
-            p2 = res_b.positions_daily
-            _assert_frames_eq(p1.sort(["date", "code"]), p2.sort(["date", "code"]),
-                              by=["date", "code"])
+            # ---- 比较三段输出 ----
+            a_exec_domain = set(range(0, split_idx + 1))  # A 的 exec 落在 days[1..7]
+            b_exec_domain = set(range(split_idx + 1, len(days)))  # B 的 exec 落在 days[8..9]
+
+            ta = res_a.trades.filter(pl.col("execution_date").is_in(
+                {days[i] for i in a_exec_domain}))
+            tb = res_b.trades.filter(pl.col("execution_date").is_in(
+                {days[i] for i in b_exec_domain}))
+            tc = c1.trades
+
+            # C1 trades 按 exec 日期分为 A/B 两段，且分别与独立段一致
+            tc_a = tc.filter(pl.col("execution_date").is_in(
+                {days[i] for i in a_exec_domain}))
+            tc_b = tc.filter(pl.col("execution_date").is_in(
+                {days[i] for i in b_exec_domain}))
+
+            # A 段 trades 与 C1 前缀一致
+            if tc_a.height > 0 or ta.height > 0:
+                _assert_frames_eq(ta.sort(["execution_date", "code", "side"]),
+                                  tc_a.sort(["execution_date", "code", "side"]))
+
+            # B 段 trades 与 C1 后缀一致
+            if tc_b.height > 0 or tb.height > 0:
+                _assert_frames_eq(tb.sort(["execution_date", "code", "side"]),
+                                  tc_b.sort(["execution_date", "code", "side"]))
+
+            # equity curve：按日期域分段比较（边界日 days[split_idx] 双方均有属正常）
+            ea = res_a.equity_curve
+            eb = res_b.equity_curve
+            ec = c1.equity_curve
+
+            # A 域：日期 <= a_last_signal 的执行日（即 < b_first_signal）
+            ec_a_part = ec.filter(pl.col("date") < b_first_signal)
+            _assert_frames_eq(ea.filter(pl.col("date") < b_first_signal).drop("signal_date"),
+                              ec_a_part.drop("signal_date"), by=["date"])
+
+            # B 域：日期 >= b_first_signal 的执行日
+            ec_b_part = ec.filter(pl.col("date") >= b_first_signal)
+            eb_sorted = eb.drop("signal_date").sort("date")
+            ec_b_sorted = ec_b_part.drop("signal_date").sort("date")
+            assert eb_sorted.height == ec_b_sorted.height, \
+                f"B equity {eb_sorted.height} vs C1 {ec_b_sorted.height}"
+            _assert_frames_eq(eb_sorted, ec_b_sorted, by=["date"])
+
+            # positions_daily 同理
+            pa = res_a.positions_daily.filter(pl.col("date") < b_first_signal)
+            pc_a = c1.positions_daily.filter(pl.col("date") < b_first_signal)
+            if pa.height > 0 or pc_a.height > 0:
+                _assert_frames_eq(pa.sort(["date", "code"]),
+                                  pc_a.sort(["date", "code"]), by=["date", "code"])
+
+            pb = res_b.positions_daily
+            pc_b = c1.positions_daily.filter(pl.col("date") >= b_first_signal)
+            pb_sorted = pb.sort(["date", "code"])
+            pc_b_sorted = pc_b.sort(["date", "code"])
+            assert pb_sorted.height == pc_b_sorted.height, \
+                f"pos B {pb_sorted.height} vs C1 {pc_b_sorted.height}"
+            _assert_frames_eq(pb_sorted, pc_b_sorted, by=["date", "code"])
 
             # 后段必须有成交（否则等价性无意义）
-            assert t2.height > 0
+            assert tb.height > 0
     finally:
         data_manager.df_daily = None
         data_manager.df_weekly = None

@@ -95,22 +95,21 @@ def test_micro_end_to_end_hand_computed():
             assert t["price"] == 10.0          # raw open（非 qfq、非 signal 收盘）
             assert abs(t["fee"] - 259.74) < 0.01
 
-            # ---- equity curve：单行，估值日 = execution_date ----
-            assert result.equity_curve.height == 1
-            row = result.equity_curve.to_dicts()[0]
-            assert row["date"] == D2
+            # ---- equity curve：每个交易日一行（含信号日 D1 的空仓估值行）----
+            assert result.equity_curve.height == 2
+            rows = {r["date"]: r for r in result.equity_curve.to_dicts()}
+            d1_row = rows[D1]
+            assert abs(d1_row["equity"] - 1_000_000) < 1e-9      # 信号日收盘尚未建仓
+            assert d1_row["signal_date"] is None                  # 无执行归属
+            row = rows[D2]
             assert abs(row["cash"] - 740.26) < 1e-6
             assert abs(row["positions_value"] - 1_198_800.0) < 1e-6
             assert abs(row["equity"] - 1_199_540.26) < 1e-6
+            assert row["signal_date"] == D1
 
             # ---- 恒等式与风控断言 ----
             assert abs(row["equity"] - (row["cash"] + row["positions_value"])) < 1e-9
             assert row["cash"] >= 0
-
-            # ---- metrics 一致性（单行曲线：total_return 为曲线内首尾相对，恒为 0；
-            #      绝对收益水平已由上方 equity 精确断言）----
-            assert result.metrics["total_days"] == 1
-            assert result.metrics["total_return"] == 0.0
 
             # ---- positions_daily 审计输出 ----
             assert result.positions_daily.height == 1
@@ -120,13 +119,15 @@ def test_micro_end_to_end_hand_computed():
             # ---- MetricsCalculator 集成（纯后处理，手算数字复验）----
             from core.metrics import compute_metrics
             m = compute_metrics(result, initial_cash=1_000_000)
-            assert abs(m.performance.total_return - 0.0) < 1e-12      # 单行曲线首尾相对
+            # 双行曲线：期初 1,000,000 → 期末 1,199,540.26，真实期间收益
+            assert abs(m.performance.total_return - (1_199_540.26 / 1_000_000 - 1)) < 1e-9
             assert m.trading.trade_count == 1 and m.trading.buy_count == 1
             assert m.trading.trade_days == 1
             assert abs(m.trading.gross_buy - 999_000.0) < 1e-6
             assert abs(m.trading.total_fees - 259.74) < 0.01
-            assert abs(m.exposure.deployment_mean - 1198800.0 / 1199540.26) < 1e-9
-            assert abs(m.exposure.cash_drag - (740.26 / 1199540.26)) < 1e-9
+            mean_dep = (0.0 + 1198800.0 / 1199540.26) / 2
+            assert abs(m.exposure.deployment_mean - mean_dep) < 1e-9
+            assert abs(m.exposure.cash_drag - (1 - mean_dep)) < 1e-9
             assert m.execution_quality.dust_reject_count == 0
             assert m.execution_quality.carried_events == 0
             flat = m.to_flat_dict()
@@ -183,12 +184,14 @@ def test_suspended_holding_carries_forward_last_close():
                     ),
                 },
             )
-            # D2 估值：sz.SUSP 停牌 → 沿用 D1 close=5.0
-            row = result.equity_curve.to_dicts()[0]
-            assert row["date"] == D2
-            assert abs(row["cash"] - 1_000_000) < 1e-9
-            assert abs(row["positions_value"] - 500.0) < 1e-9
-            assert abs(row["equity"] - 1_000_500.0) < 1e-9
+            # D2 估值：sz.SUSP 停牌 → 沿用 D1 close=5.0（D1 行为正常估值 500）
+            rows = {x["date"]: x for x in result.equity_curve.to_dicts()}
+            assert abs(rows[D1]["positions_value"] - 500.0) < 1e-9
+            assert abs(rows[D2]["cash"] - 1_000_000) < 1e-9
+            assert abs(rows[D2]["positions_value"] - 500.0) < 1e-9
+            assert abs(rows[D2]["equity"] - 1_000_500.0) < 1e-9
+            # carried_events 应至少记录一次停牌 carry
+            assert result.execution_diagnostics["carried_events"] >= 1
     finally:
         data_manager.df_daily = None
         data_manager.df_weekly = None

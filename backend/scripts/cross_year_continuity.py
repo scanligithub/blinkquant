@@ -137,7 +137,8 @@ def main():
     log("run C2: subprocess restore -> 2025 segment (incl boundary signal) ...")
     sp = Path(__file__).resolve()
     state_file, out_file = sp.parent / "_ckpt_tmp.json", sp.parent / "_segB_out.json"
-    flat_state = {**stateA["portfolio"], "last_close": stateA["last_close"]}
+    flat_state = {**stateA["portfolio"], "last_close": stateA["last_close"],
+                  "thru_thaw": stateA["thru_thaw"].isoformat()}
     payload = {"state": flat_state,
                "seg_start": D2025[0].isoformat(),      # 下一个未消费信号（12-31 已被 A 消费）
                "seg_end": D2025[1].isoformat()}

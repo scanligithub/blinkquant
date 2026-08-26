@@ -61,6 +61,26 @@ class TradingCalendar:
         
         return [d for d in self._trade_dates if start_date <= d <= end_signal_date]
 
+    def trade_range(self, start_date: datetime.date, end_date: datetime.date) -> list[datetime.date]:
+        """[start, end] 内全部交易日（估值连续性用）。"""
+        return self.signal_range(start_date, end_date)
+
+    def weekly_signal_dates(self, start_date: datetime.date,
+                            end_signal_date: datetime.date) -> set[datetime.date]:
+        """每周最后一个交易日（ISO 周分组，继承日历语义而非 weekday()==4）。
+
+        节假日截短的周自动取该周实际最后交易日。
+        """
+        in_range = self.trade_range(start_date, end_signal_date)
+        weeks: dict[tuple[int, int], datetime.date] = {}
+        for d in in_range:
+            iso = d.isocalendar()
+            key = (iso[0], iso[1])
+            prev = weeks.get(key)
+            if prev is None or d > prev:
+                weeks[key] = d
+        return set(weeks.values())
+
 
 @dataclass
 class BacktestResult:
@@ -117,6 +137,7 @@ class BacktestEngine:
         initial_cash: float = 1_000_000,
         initial_positions: dict[str, Position] = None,
         initial_state: dict = None,
+        rebalance_freq: str = "daily",
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -130,7 +151,12 @@ class BacktestEngine:
             initial_state: 完整 checkpoint（export_state 输出，含 cash/positions/
                 last_close）；给定时代替 initial_positions，并覆盖停牌 carry 价缓存，
                 实现 C2 式跨进程断点续跑。
+            rebalance_freq: "daily"（每交易日调仓）或 "weekly"（每周最后一个交易日
+                产生信号，次一交易日开盘执行）。仅控制 signal/order 生成频率；
+                **估值仍逐日进行**，保证跨频率收益/回撤可比。
         """
+        if rebalance_freq not in ("daily", "weekly"):
+            raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
         # 初始化组合（Phase 0 契约：initial_positions 可选，默认空仓）
         self.portfolio = Portfolio(initial_cash=initial_cash)
         if initial_state:
@@ -180,103 +206,154 @@ class BacktestEngine:
         
         prev_equity = initial_cash
         
-        # 获取信号日期序列
-        signal_dates = self.calendar.signal_range(start_date, end_signal_date)
-        
-        for signal_date in signal_dates:
-            execution_date = self.calendar.next_trade_day(signal_date)
-            if execution_date <= signal_date:
-                raise BacktestLedgerError(
-                    f"T+1 边界违反：signal {signal_date} 的 execution_date "
-                    f"={execution_date} 不晚于信号日"
-                )
-            
-            # 1. 每日开盘前解冻（T+1 冻结 → T+2 解冻）
-            self.portfolio.daily_thaw()
-            
-            # 2. 策略信号
-            selection_result = self.selection_engine.execute_selector(
-                formula, "D", None, target_date=signal_date
-            )
-            
-            if isinstance(selection_result, dict) and "error" in selection_result:
-                continue
-            
-            target_codes = selection_result.codes
-            
-            # 3. 目标组合权重（空目标 = 全现金组合，仍需走统一管线以退出旧仓）
-            target_weights = self.allocator(target_codes, signal_date)
-            
-            # 4. 单次加载本 cycle raw 行情：open 供执行、close 供估值（同一数据贯穿）
-            execution_date = self.calendar.next_trade_day(signal_date)
-            cycle_prices_df = self.raw_price_store.load_execution_prices([execution_date])
-            cycle_prices = {
-                row["code"]: {"open": row["open"], "close": row["close"]}
-                for row in cycle_prices_df.iter_rows(named=True)
-            }
-            # 维护最后可用价（仅收正价），供停牌 carry-forward 估值
-            for code, px in cycle_prices.items():
-                if px["close"] and px["close"] > 0:
-                    self._last_close[code] = px["close"]
-            
-            intents = self._generate_intents(target_weights, cycle_prices)
-            diag["intents_total"] += len(intents)
-            if target_weights:
-                diag["target_gross_by_date"][execution_date] = sum(target_weights.values())
-            
+        # ---- 调仓日集合与估值日序列（signal/order 频率与估值频率解耦）----
+        allowed_signals = set(self.calendar.signal_range(start_date, end_signal_date))
+        if rebalance_freq == "weekly":
+            allowed_signals &= self.calendar.weekly_signal_dates(start_date, end_signal_date)
+
+        if allowed_signals:
+            exec_end = self.calendar.next_trade_day(max(allowed_signals))  # 越界 fail-fast
+        else:
+            exec_end = start_date
+        all_days = self.calendar.trade_range(start_date, exec_end)
+
+        # 待执行意图（信号日调度，次一交易日开盘执行）
+        self._pend_sig = None
+        self._pend_exec = None
+        self._pend_intents: list = []
+        self._pend_prices: dict = {}
+
+        # 解冻游标：checkpoint 续跑时避免重复解冻同一交易日
+        _tt = (initial_state or {}).get("thru_thaw")
+        if isinstance(_tt, str):
+            _tt = datetime.date.fromisoformat(_tt)
+        self._thru_thaw = _tt
+        # 选股游标与在途意图恢复（跨段不重不漏）
+        self._selected_thru = None
+        st_pending = (initial_state or {}).get("pending")
+        if st_pending:
+            ps = st_pending.get("signal_date")
+            pe = st_pending.get("execution_date")
+            if isinstance(ps, str):
+                ps = datetime.date.fromisoformat(ps)
+            if isinstance(pe, str):
+                pe = datetime.date.fromisoformat(pe)
+            self._pend_sig, self._pend_exec = ps, pe
+            self._pend_intents = [OrderIntent(**o) for o in st_pending.get("intents", [])]
+            self._pend_prices = st_pending.get("prices", {})
+        if (initial_state or {}).get("selected_thru"):
+            _stt = initial_state["selected_thru"]
+            if isinstance(_stt, str):
+                _stt = datetime.date.fromisoformat(_stt)
+            self._selected_thru = _stt
+
+        for t in all_days:
+            # 0. 开盘前解冻（T+1 冻结 → 次交易日可卖）；游标去重防跨进程双解冻
+            if self._thru_thaw is None or t > self._thru_thaw:
+                self.portfolio.daily_thaw()
+                self._thru_thaw = t
+
+            # 1. 选股调度（先于执行：状态口径 = 前一交易日收盘，与基线逐字节一致；
+            #    调度结果写入 new_pending，待本日执行块提交，避免覆写今日到期意图）
+            new_sig = new_exec = None
+            new_intents: list = []
+            new_prices: dict = {}
+            skip_select = (self._selected_thru is not None and t <= self._selected_thru)
+            if t in allowed_signals and not skip_select:
+                exec_d = self.calendar.next_trade_day(t)
+                px_df = self.raw_price_store.load_execution_prices([exec_d])
+                new_prices = {
+                    row["code"]: {"open": row["open"], "close": row["close"]}
+                    for row in px_df.iter_rows(named=True)
+                }
+                sel = self.selection_engine.execute_selector(
+                    formula, "D", None, target_date=t)
+                if not (isinstance(sel, dict) and "error" in sel):
+                    weights = self.allocator(sel.codes, t)
+                    new_intents = self._generate_intents(weights, new_prices)
+                    diag["intents_total"] += len(new_intents)
+                    if weights:
+                        diag["target_gross_by_date"][exec_d] = sum(weights.values())
+                    new_sig, new_exec = t, exec_d
+
+            # 2. 执行上一信号日的到期意图（open 价）——唯一成交路径
             fills = []
-            if intents:
-                intent_codes = [intent.code for intent in intents]
-                limit_flags = data_manager.get_limit_flags(execution_date, intent_codes)
-                
-                # 5. 执行订单（只产出 Fill + 可解释拒绝标签）
+            cur_signal_date = None
+            cur_prices = None
+            if self._pend_sig is not None and t == self._pend_exec:
+                cur_signal_date = self._pend_sig
+                cur_prices = self._pend_prices
+                intent_codes = [i.code for i in self._pend_intents]
+                limit_flags = (data_manager.get_limit_flags(t, intent_codes)
+                               if intent_codes else {})
                 report = self.execution_engine.execute(
-                    execution_date=execution_date,
-                    intents=intents,
+                    execution_date=t,
+                    intents=self._pend_intents,
                     positions=self.portfolio.positions,
-                    raw_prices=cycle_prices,
+                    raw_prices=self._pend_prices,
                     cash=self.portfolio.cash,
                     limit_flags=limit_flags,
                 )
                 fills = report.fills
                 for r in report.rejections:
                     rej_counters[r.reason] = rej_counters.get(r.reason, 0) + 1
-                
-                # partial fill / zero-price 防御计数（意图目标 vs 实际成交）
+
                 fmap = {}
                 for f in fills:
                     fmap[(f.code, f.side)] = f.qty
                     if f.price <= 0:
                         diag["zero_price_trade_count"] += 1
-                for it in intents:
+                for it in self._pend_intents:
                     fq = fmap.get((it.code, it.side))
                     if fq is not None and fq < it.target_qty:
                         diag["partial_fill_count"] += 1
-                
-                # 6. 组合更新（唯一记账入口）+ 现金非负不变量
-                self.portfolio.apply_fills(fills, execution_date, {})
+
+                self.portfolio.apply_fills(fills, t, {})
                 if self.portfolio.cash < -1e-6:
                     raise BacktestLedgerError(
-                        f"execution {execution_date} 后现金为负: {self.portfolio.cash:.2f}"
+                        f"execution {t} 后现金为负: {self.portfolio.cash:.2f}"
                     )
-            
-            # 7. 估值三分类：
+
+                for fill in fills:
+                    trades_rows.append({
+                        "signal_date": cur_signal_date,
+                        "execution_date": t,
+                        "code": fill.code, "side": fill.side,
+                        "qty": fill.qty, "price": fill.price, "fee": fill.fee,
+                    })
+
+            # 3. 提交本日新调度（无论今日是否有成交）
+            if new_sig is not None:
+                self._pend_sig, self._pend_exec = new_sig, new_exec
+                self._pend_intents, self._pend_prices = new_intents, new_prices
+                self._selected_thru = t
+            # 4. 当日行情（执行日复用当日已加载 bars；其余交易日单独加载）
+            if cur_signal_date is not None:
+                day_px = {c: {"close": v["close"]} for c, v in cur_prices.items()}
+            else:
+                px_today = self.raw_price_store.load_execution_prices([t])
+                day_px = {row["code"]: {"close": row["close"]}
+                          for row in px_today.iter_rows(named=True)}
+            for code, v in day_px.items():
+                if v["close"] and v["close"] > 0:
+                    self._last_close[code] = v["close"]
+
+            # 5. 估值三分类：
             #    a) 当日有 raw close → 正常估值
-            #    b) 当日缺行情但存在历史价 → 停牌，carry-forward 最后可用价（derived 规则）
-            #    c) 从未有任何价格 → BacktestDataIntegrityError（未知资产，fail-fast）
+            #    b) 缺行情但有历史价 → 停牌 carry-forward（derived 规则）
+            #    c) 从未有任何价格 → BacktestDataIntegrityError（fail-fast）
             valuation_prices = {}
             for pos in self.portfolio.positions.values():
                 if pos.total_qty <= 0:
                     continue
-                if pos.code in cycle_prices and cycle_prices[pos.code]["close"]:
-                    valuation_prices[pos.code] = {"close": cycle_prices[pos.code]["close"]}
+                if pos.code in day_px and day_px[pos.code]["close"]:
+                    valuation_prices[pos.code] = {"close": day_px[pos.code]["close"]}
                 elif pos.code in self._last_close:
                     valuation_prices[pos.code] = {"close": self._last_close[pos.code]}
                     diag["carried_events"] += 1
-                # 两者皆无 → 不入表，交由 get_equity 严格抛错
-            equity = self.portfolio.get_equity(valuation_prices, valuation_date=execution_date)
-            
-            # 8. 账本恒等式：equity == cash + Σ(total_qty × raw_close)
+            equity = self.portfolio.get_equity(valuation_prices, valuation_date=t)
+
+            # 6. 账本恒等式：equity == cash + Σ(total_qty × raw_close)
             positions_value = sum(
                 pos.total_qty * valuation_prices[code]["close"]
                 for code, pos in self.portfolio.positions.items()
@@ -284,42 +361,27 @@ class BacktestEngine:
             )
             if abs(equity - (self.portfolio.cash + positions_value)) > 1e-4:
                 raise BacktestLedgerError(
-                    f"valuation {execution_date}: equity({equity:.4f}) != "
+                    f"valuation {t}: equity({equity:.4f}) != "
                     f"cash({self.portfolio.cash:.4f}) + positions({positions_value:.4f})"
                 )
-            
-            # 记录权益曲线（估值日期 = execution_date；保留 signal_date 审计）
+
+            # 7. 权益曲线（每个交易日一行；signal_date=当日执行的归属信号，可空）
             equity_curve_rows.append({
-                "date": execution_date,
+                "date": t,
                 "equity": equity,
                 "cash": self.portfolio.cash,
                 "positions_value": positions_value,
-                "signal_date": signal_date,
+                "signal_date": cur_signal_date,
             })
-            
-            # 记录持仓快照
+
+            # 8. 持仓快照
             for code, pos in self.portfolio.positions.items():
                 if pos.total_qty > 0:
                     positions_daily_rows.append({
-                        "date": execution_date,
-                        "code": code,
-                        "qty": pos.total_qty,
-                        "cost": pos.avg_cost,
-                        "market_value": pos.market_value,
+                        "date": t, "code": code, "qty": pos.total_qty,
+                        "cost": pos.avg_cost, "market_value": pos.market_value,
                     })
-            
-            # 记录交易
-            for fill in fills:
-                trades_rows.append({
-                    "signal_date": signal_date,
-                    "execution_date": execution_date,
-                    "code": fill.code,
-                    "side": fill.side,
-                    "qty": fill.qty,
-                    "price": fill.price,
-                    "fee": fill.fee,
-                })
-        
+
         # 构建结果
         equity_curve = pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
             "date": pl.Date, "equity": pl.Float64, "cash": pl.Float64, "positions_value": pl.Float64, "signal_date": pl.Date
@@ -354,13 +416,25 @@ class BacktestEngine:
         )
     
     def export_state(self) -> dict:
-        """导出 checkpoint（账户状态 + 停牌 carry 价缓存），供断点续跑。
-
-        与 run(initial_state=...) 配对构成 C2 序列化/恢复契约。
-        """
+        """导出 checkpoint（账户状态 + carry 缓存 + 解冻/选股游标 + 在途意图）。"""
         return {
             "portfolio": self.portfolio.export_state(),
             "last_close": dict(self._last_close),
+            "thru_thaw": self._thru_thaw,
+            "selected_thru": self._selected_thru,
+            "pending": {
+                "signal_date": self._pend_sig,
+                "execution_date": self._pend_exec,
+                "intents": [
+                    {"code": o.code, "side": o.side,
+                     "target_qty": o.target_qty, "target_weight": o.target_weight}
+                    for o in self._pend_intents
+                ],
+                "prices": {
+                    c: {"open": v["open"], "close": v["close"]}
+                    for c, v in self._pend_prices.items()
+                },
+            } if self._pend_sig is not None else None,
         }
 
     def _prime_last_close(self, codes: list[str], before: datetime.date, lookback_days: int = 60):

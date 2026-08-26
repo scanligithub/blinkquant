@@ -544,9 +544,15 @@ class DataManager:
     def get_limit_flags(self, date: datetime.date, codes: list[str]) -> dict[str, dict]:
         """
         获取指定日期和股票代码的涨跌停/停牌标记。
-        
+
+        注意：is_suspended 为 **derived suspension flag**（volume==0/amount==0 推导，
+        或当日无该 code 数据），并非交易所正式停牌状态字段；长期应引入独立
+        PIT-safe market-status 数据源。
+
         Returns:
-            dict: {code: {"is_limit_up": bool, "is_limit_down": bool, "is_suspended": bool}}
+            dict: {code: {"is_limit_up": bool, "is_touch_limit_up": bool,
+                          "is_limit_down": bool, "is_touch_limit_down": bool,
+                          "is_suspended": bool}}
         """
         if self.df_daily is None:
             return {}

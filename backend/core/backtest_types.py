@@ -56,6 +56,21 @@ def equal_weight_allocator(codes: list[str], signal_date: datetime.date) -> dict
     return {code: weight for code in codes}
 
 
+def top_n_equal_weight_allocator(n: int) -> Allocator:
+    """Top-N 等权分配器（实验契约：N = 最终持仓数量上限）。
+
+    确定性排序：code 升序——公式无 score 时以 code asc 为唯一序，
+    杜绝 PYTHONHASHSEED 类跨进程不确定性混入组合构建。
+    """
+    def _alloc(codes: list[str], signal_date: datetime.date) -> dict[str, float]:
+        picked = sorted(codes)[:n] if n and n > 0 else []
+        if not picked:
+            return {}
+        w = 1.0 / len(picked)
+        return {c: w for c in picked}
+    return _alloc
+
+
 @dataclass
 class SelectionResult:
     """选股结果契约。
