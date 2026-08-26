@@ -114,6 +114,34 @@ class Portfolio:
                 market_value=pos.market_value,
             )
 
+    def export_state(self) -> dict:
+        """导出完整账户状态（跨年 checkpoint / restore 契约）。
+
+        last_close 由引擎层随 state 一并序列化（见 BacktestEngine.export_state）。
+        """
+        return {
+            "cash": self.cash,
+            "positions": [
+                {"code": p.code, "total_qty": p.total_qty,
+                 "available_qty": p.available_qty, "frozen_qty": p.frozen_qty,
+                 "avg_cost": p.avg_cost, "market_value": p.market_value}
+                for p in self.positions.values()
+            ],
+        }
+
+    def import_state(self, state: dict):
+        """恢复账户状态（cash + positions），校验持仓不变量。"""
+        self.cash = float(state["cash"])
+        positions = {}
+        for p in state.get("positions", []):
+            pos = Position(
+                code=p["code"], total_qty=p["total_qty"],
+                available_qty=p["available_qty"], frozen_qty=p["frozen_qty"],
+                avg_cost=p["avg_cost"], market_value=p.get("market_value", 0.0),
+            )   # Position.__post_init__ 会 fail-fast 校验不变量
+            positions[p["code"]] = pos
+        self.positions = positions
+
     def get_equity(self, raw_prices: dict[str, dict], valuation_date=None) -> float:
         """总权益 = 现金 + 持仓市值（按 raw_close 估值）。
 

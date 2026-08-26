@@ -28,17 +28,25 @@ class TradingCalendar:
         self._date_set = set(self._trade_dates)
     
     def next_trade_day(self, date: datetime.date) -> datetime.date:
-        """获取下一个交易日。"""
+        """获取严格晚于 date 的下一个交易日。
+
+        越界（日历不覆盖）时 fail-fast 抛错——静默折叠到同日会违反 T+1 契约
+        （真实案例：2024-12-31 信号曾被折叠为同日执行/估值）。
+        """
         if not self._trade_dates:
             next_day = date + datetime.timedelta(days=1)
             while next_day.weekday() >= 5:
                 next_day += datetime.timedelta(days=1)
             return next_day
-        
+
         for d in self._trade_dates:
             if d > date:
                 return d
-        return self._trade_dates[-1]
+        raise ValueError(
+            f"TradingCalendar 不覆盖 {date} 之后的交易日："
+            f"数据窗口必须包含 end_signal_date 的次一交易日（T+1 执行/估值需要）。"
+            f"当前日历范围 {self._trade_dates[0]} .. {self._trade_dates[-1]}"
+        )
     
     def signal_range(self, start_date: datetime.date, end_signal_date: datetime.date) -> list[datetime.date]:
         """获取 [start_date, end_signal_date] 内的所有交易日。"""
@@ -108,20 +116,26 @@ class BacktestEngine:
         end_signal_date: datetime.date,
         initial_cash: float = 1_000_000,
         initial_positions: dict[str, Position] = None,
+        initial_state: dict = None,
     ) -> 'BacktestResult':
         """
         运行回测。
-        
+
         Args:
             formula: 选股公式
             start_date: 回测开始日期（signal_date 起始）
             end_signal_date: 最后允许产生信号的日期
             initial_cash: 初始资金
             initial_positions: 初始持仓（可选）
+            initial_state: 完整 checkpoint（export_state 输出，含 cash/positions/
+                last_close）；给定时代替 initial_positions，并覆盖停牌 carry 价缓存，
+                实现 C2 式跨进程断点续跑。
         """
         # 初始化组合（Phase 0 契约：initial_positions 可选，默认空仓）
         self.portfolio = Portfolio(initial_cash=initial_cash)
-        if initial_positions:
+        if initial_state:
+            self.portfolio.import_state(initial_state)
+        elif initial_positions:
             self.portfolio.load_initial_positions(initial_positions)
         
         # 初始化执行引擎（使用注入的配置）
@@ -158,6 +172,11 @@ class BacktestEngine:
                 codes=list(self.portfolio.positions.keys()),
                 before=start_date,
             )
+        if initial_state and initial_state.get("last_close"):
+            # checkpoint 注入优先：覆盖 prime 结果，保证与连续跑逐字段一致
+            self._last_close.update(initial_state["last_close"])
+
+        self._initial_state = initial_state
         
         prev_equity = initial_cash
         
@@ -166,6 +185,11 @@ class BacktestEngine:
         
         for signal_date in signal_dates:
             execution_date = self.calendar.next_trade_day(signal_date)
+            if execution_date <= signal_date:
+                raise BacktestLedgerError(
+                    f"T+1 边界违反：signal {signal_date} 的 execution_date "
+                    f"={execution_date} 不晚于信号日"
+                )
             
             # 1. 每日开盘前解冻（T+1 冻结 → T+2 解冻）
             self.portfolio.daily_thaw()
@@ -329,6 +353,16 @@ class BacktestEngine:
             execution_diagnostics=diag,
         )
     
+    def export_state(self) -> dict:
+        """导出 checkpoint（账户状态 + 停牌 carry 价缓存），供断点续跑。
+
+        与 run(initial_state=...) 配对构成 C2 序列化/恢复契约。
+        """
+        return {
+            "portfolio": self.portfolio.export_state(),
+            "last_close": dict(self._last_close),
+        }
+
     def _prime_last_close(self, codes: list[str], before: datetime.date, lookback_days: int = 60):
         """回看播种初始持仓的最后可用 raw close（供首周期停牌 carry-forward 估值）。
 

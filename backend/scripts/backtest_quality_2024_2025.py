@@ -41,7 +41,8 @@ def log(msg):
 def build_df_daily(year: int) -> DataManager:
     dm = DataManager()
     parts = []
-    for y in (year - 1, year):                      # MA20 需上一年暖机
+    # Y-1 暖机 MA20；Y+1 解决 end_signal(12-31) 的 T+1 执行/估值跨界
+    for y in (year - 1, year, year + 1):
         p = hf_hub_download(repo_id=REPO, filename=f"stock_kline_{y}.parquet",
                             repo_type="dataset", token=TOKEN)
         df = pl.read_parquet(p)
