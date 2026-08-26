@@ -370,7 +370,9 @@ class BacktestEngine:
 
         all_codes = set(target_weights.keys()) | set(self.portfolio.positions.keys())
 
-        for code in all_codes:
+        # 跨进程确定性：set 迭代顺序受 PYTHONHASHSEED 影响，
+        # 多 BUY 现金受限时顺序即决定成交分布 —— 必须排序遍历（验收标准 §7）
+        for code in sorted(all_codes):
             weight = target_weights.get(code, 0.0)
             target_value = weight * total_equity
             pos = self.portfolio.positions.get(code)
