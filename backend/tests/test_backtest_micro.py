@@ -123,13 +123,70 @@ def test_micro_end_to_end_hand_computed():
         data_manager._asof_frame_cache.clear()
 
 
-def test_missing_valuation_close_raises_integrity_error():
-    """持仓股估值日缺失 raw close → BacktestDataIntegrityError（数据缺失 ≠ 停牌）。"""
+def test_suspended_holding_carries_forward_last_close():
+    """停牌持仓（曾有价、当日缺行情）→ 沿用最后可用价估值（derived 规则），不报错。"""
     D3 = datetime.date(2025, 1, 6)
     rows = [
         (D1, "sh.X", 10.0, 10.0, 10.2, 9.8),
         (D2, "sh.X", 10.0, 10.0, 10.2, 9.8),
-        (D1, "sz.MISS", 5.0, 5.0, 5.2, 4.8),   # 仅 D1 有行情
+        (D1, "sz.SUSP", 5.0, 5.0, 5.2, 4.8),   # 仅 D1 有行情 → 之后视为停牌
+    ]
+    df = pl.DataFrame({
+        "date": [r[0] for r in rows],
+        "code": [r[1] for r in rows],
+        "open": [r[2] for r in rows],
+        "close": [r[3] for r in rows],
+        "high": [r[4] for r in rows],
+        "low": [r[5] for r in rows],
+        "volume": [1_000_000.0] * len(rows),
+        "amount": [10_000_000.0] * len(rows),
+    }).sort(["code", "date"])
+    _install(df)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df.write_parquet(f"{tmpdir}/stock_kline_2025.parquet")
+            calendar = TradingCalendar()
+            calendar.set_trade_dates(sorted({D1, D2}))
+
+            engine = BacktestEngine(
+                calendar=calendar,
+                selection_engine=selection_engine,
+                raw_price_store=RawPriceStore(data_root=tmpdir),
+                fee_config=FeeConfig(),
+                execution_config=MVP_EXECUTION_CONFIG,
+                allocator=equal_weight_allocator,
+            )
+            result = engine.run(
+                formula="CLOSE > 1000000",   # 无新信号
+                start_date=D1,
+                end_signal_date=D1,
+                initial_cash=1_000_000,
+                initial_positions={
+                    "sz.SUSP": Position(
+                        code="sz.SUSP", total_qty=100, available_qty=100,
+                        frozen_qty=0, avg_cost=5.0, market_value=500.0,
+                    ),
+                },
+            )
+            # D2 估值：sz.SUSP 停牌 → 沿用 D1 close=5.0
+            row = result.equity_curve.to_dicts()[0]
+            assert row["date"] == D2
+            assert abs(row["cash"] - 1_000_000) < 1e-9
+            assert abs(row["positions_value"] - 500.0) < 1e-9
+            assert abs(row["equity"] - 1_000_500.0) < 1e-9
+    finally:
+        data_manager.df_daily = None
+        data_manager.df_weekly = None
+        data_manager.df_monthly = None
+        data_manager._asof_frame_cache.clear()
+
+
+def test_never_priced_holding_raises_integrity_error():
+    """未知资产（窗口内从未有任何价格）→ BacktestDataIntegrityError（fail-fast）。"""
+    rows = [
+        (D1, "sh.X", 10.0, 10.0, 10.2, 9.8),
+        (D2, "sh.X", 10.0, 10.0, 10.2, 9.8),
+        # 注意：sz.GHOST 无任何行情行
     ]
     df = pl.DataFrame({
         "date": [r[0] for r in rows],
@@ -158,18 +215,18 @@ def test_missing_valuation_close_raises_integrity_error():
             )
             with pytest.raises(BacktestDataIntegrityError) as ei:
                 engine.run(
-                    formula="CLOSE > 1000000",   # 无新信号 → 只做估值
+                    formula="CLOSE > 1000000",
                     start_date=D1,
                     end_signal_date=D1,
                     initial_cash=1_000_000,
                     initial_positions={
-                        "sz.MISS": Position(
-                            code="sz.MISS", total_qty=100, available_qty=100,
+                        "sz.GHOST": Position(
+                            code="sz.GHOST", total_qty=100, available_qty=100,
                             frozen_qty=0, avg_cost=5.0, market_value=500.0,
                         ),
                     },
                 )
-            assert "sz.MISS" in str(ei.value)
+            assert "sz.GHOST" in str(ei.value)
     finally:
         data_manager.df_daily = None
         data_manager.df_weekly = None

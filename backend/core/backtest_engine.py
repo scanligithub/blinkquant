@@ -134,6 +134,14 @@ class BacktestEngine:
         trades_rows = []
         positions_daily_rows = []
         
+        # 停牌 carry-forward 估值的最后可用价（derived 规则，非官方复牌基准）
+        self._last_close: dict[str, float] = {}
+        if self.portfolio.positions:
+            self._prime_last_close(
+                codes=list(self.portfolio.positions.keys()),
+                before=start_date,
+            )
+        
         prev_equity = initial_cash
         
         # 获取信号日期序列
@@ -165,6 +173,10 @@ class BacktestEngine:
                 row["code"]: {"open": row["open"], "close": row["close"]}
                 for row in cycle_prices_df.iter_rows(named=True)
             }
+            # 维护最后可用价（仅收正价），供停牌 carry-forward 估值
+            for code, px in cycle_prices.items():
+                if px["close"] and px["close"] > 0:
+                    self._last_close[code] = px["close"]
             
             intents = self._generate_intents(target_weights, cycle_prices)
             
@@ -190,10 +202,19 @@ class BacktestEngine:
                         f"execution {execution_date} 后现金为负: {self.portfolio.cash:.2f}"
                     )
             
-            # 7. 估值：持仓股缺 close → BacktestDataIntegrityError（严格语义）
-            valuation_prices = {
-                code: {"close": px["close"]} for code, px in cycle_prices.items()
-            }
+            # 7. 估值三分类：
+            #    a) 当日有 raw close → 正常估值
+            #    b) 当日缺行情但存在历史价 → 停牌，carry-forward 最后可用价（derived 规则）
+            #    c) 从未有任何价格 → BacktestDataIntegrityError（未知资产，fail-fast）
+            valuation_prices = {}
+            for pos in self.portfolio.positions.values():
+                if pos.total_qty <= 0:
+                    continue
+                if pos.code in cycle_prices and cycle_prices[pos.code]["close"]:
+                    valuation_prices[pos.code] = {"close": cycle_prices[pos.code]["close"]}
+                elif pos.code in self._last_close:
+                    valuation_prices[pos.code] = {"close": self._last_close[pos.code]}
+                # 两者皆无 → 不入表，交由 get_equity 严格抛错
             equity = self.portfolio.get_equity(valuation_prices, valuation_date=execution_date)
             
             # 8. 账本恒等式：equity == cash + Σ(total_qty × raw_close)
@@ -268,6 +289,27 @@ class BacktestEngine:
             metrics=metrics,
         )
     
+    def _prime_last_close(self, codes: list[str], before: datetime.date, lookback_days: int = 60):
+        """回看播种初始持仓的最后可用 raw close（供首周期停牌 carry-forward 估值）。
+
+        窗口 [before-lookback, before]（含信号日当日收盘，PIT 安全）；
+        仍找不到价的 code 留空，交由严格估值抛错。
+        """
+        try:
+            start = before - datetime.timedelta(days=lookback_days)
+            hist = (
+                self.raw_price_store.scan_window(start, before)
+                .filter(pl.col("code").is_in(codes) & (pl.col("close") > 0))
+                .sort(["code", "date"])
+                .group_by("code")
+                .agg(pl.col("close").last().alias("last_close"))
+                .collect()
+            )
+            for row in hist.iter_rows(named=True):
+                self._last_close[row["code"]] = float(row["last_close"])
+        except Exception as e:
+            logger.warning(f"prime_last_close failed (will fail-fast at valuation if needed): {e}")
+
     def _generate_intents(self, target_weights: dict[str, float], execution_prices: dict) -> list:
         """生成目标订单意图（Rebalance Planner）。
 
