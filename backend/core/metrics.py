@@ -63,10 +63,17 @@ class ExposureMetrics:
 
 @dataclass
 class ConcentrationMetrics:
-    """组合集中度指标：实际权重分布与目标等权的偏离程度。"""
-    hhi_mean: float = 0.0               # Herfindahl-Hirschman Index = Σ(weight_i²)，日均值
-    effective_n_mean: float = 0.0       # 1 / HHI，越接近 top_n 越接近理想分散
-    weight_deviation_mean: float = 0.0  # mean(|actual_weight - target_weight|) 跨持仓跨日
+    """组合集中度指标。
+
+    actual_n_mean: 每日实际持仓股票数的均值
+    effective_n_mean: mean(每日 1/HHI)，越接近 target_n 越接近理想分散
+    hhi_mean: mean(每日 Σ(weight_i²))
+    target_weight_mae: mean(|actual_weight - 1/n_pos|)（等权目标的绝对偏离）
+    """
+    actual_n_mean: float = 0.0
+    effective_n_mean: float = 0.0
+    hhi_mean: float = 0.0
+    target_weight_mae: float = 0.0
 
 
 @dataclass
@@ -233,29 +240,31 @@ def compute_metrics(result, initial_cash: float) -> BacktestMetrics:
     # ---------------- concentration ----------------
     c = m.concentration
     if pdl.height > 0:
-        daily_hhi = (
+        daily_stats = (
             pdl.with_columns(
                 (pl.col("market_value") / pl.col("market_value").sum().over("date"))
                 .alias("weight")
             )
             .group_by("date")
-            .agg((pl.col("weight") ** 2).sum().alias("hhi"),
-                 pl.len().alias("n_pos"))
+            .agg(
+                (pl.col("weight") ** 2).sum().alias("hhi"),
+                (pl.col("weight") - 1.0 / pl.len()).abs().mean().alias("w_mae"),
+                pl.len().alias("n_pos"),
+            )
             .sort("date")
         )
-        hhi_vals = daily_hhi["hhi"].to_list()
+        hhi_vals = daily_hhi["hhi"].to_list() if False else daily_stats["hhi"].to_list()
+        eff_vals = [(1.0 / h) if h > _EPS else 0.0 for h in hhi_vals]
+        n_vals = daily_stats["n_pos"].to_list()
+        wae_vals = daily_stats["w_mae"].to_list()
+
+        if n_vals:
+            c.actual_n_mean = sum(n_vals) / len(n_vals)
+        if eff_vals:
+            c.effective_n_mean = sum(eff_vals) / len(eff_vals)
         if hhi_vals:
             c.hhi_mean = sum(hhi_vals) / len(hhi_vals)
-            c.effective_n_mean = (1.0 / c.hhi_mean) if c.hhi_mean > _EPS else 0.0
-
-        # weight_deviation: |effective_n - actual_n| / actual_n，日均值
-        n_vals = daily_hhi["n_pos"].to_list()
-        devs = []
-        for h, np_ in zip(hhi_vals, n_vals):
-            if np_ > 0 and h > _EPS:
-                eff = 1.0 / h
-                devs.append(abs(eff - np_) / np_)
-        if devs:
-            c.weight_deviation_mean = sum(devs) / len(devs)
+        if wae_vals:
+            c.target_weight_mae = sum(wae_vals) / len(wae_vals)
 
     return m
