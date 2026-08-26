@@ -15,7 +15,7 @@ def test_position_freeze_and_thaw():
     )
     
     # T+1 买入 200，冻结
-    pos.buy(frozen_qty=200, price=11.0)
+    pos.buy(qty=200, price=11.0)
     assert pos.total_qty == 700
     assert pos.available_qty == 500
     assert pos.frozen_qty == 200
@@ -86,7 +86,7 @@ def test_position_buy_updates_avg_cost():
     )
     
     # 买入 200 股 @ 12.0 (冻结)
-    pos.buy(frozen_qty=200, price=12.0)
+    pos.buy(qty=200, price=12.0)
     
     # 新 avg_cost = (500*10 + 200*12) / 700 = 7400/700 = 10.5714...
     expected_avg = (500 * 10.0 + 200 * 12.0) / 700

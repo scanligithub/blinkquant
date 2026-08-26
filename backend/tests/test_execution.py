@@ -41,19 +41,98 @@ def test_sell_first_then_buy_cash_available():
     portfolio = Portfolio(initial_cash=10000.0)
     portfolio.positions = {"sh.600000": Position(code="sh.600000", total_qty=1000, available_qty=1000, frozen_qty=0, avg_cost=10.0, market_value=10000.0)}
     portfolio.apply_fills(fills, datetime.date(2025, 1, 3), {"sh.600000": {"close": 11.0}, "sz.000001": {"close": 20.0}})
-    
+
     sell_fills = [f for f in fills if f.side == "SELL"]
     buy_fills = [f for f in fills if f.side == "BUY"]
     assert len(sell_fills) == 1
     assert sell_fills[0].qty == 500
     assert sell_fills[0].price == 11.0
     assert len(buy_fills) == 1
-    assert buy_fills[0].qty == 250
+    # 整手取整：BUY 意图 250 股 → 向下取整手 200 股
+    assert buy_fills[0].qty == 200
     assert buy_fills[0].price == 20.0
-    # 卖出 500 * 11.0 = 5500, fee ≈ 7.81, 净收入 ≈ 5492.19
-    # 买入 250 * 20.0 = 5000, fee ≈ 5.05
-    # 现金变化：10000 + 5492.19 - 5005.05 = 10487.14
-    assert abs(portfolio.cash - 10487.14) < 0.1
+    # 卖出 500*11=5500，fee=max(5500*.00025,5)+5500*.0005+5500*.00001=5+2.75+0.06=7.81 → 净入 5492.19
+    # 买入 200*20=4000，fee=max(4000*.00025,5)+0.04=5.04 → 成本 4005.04
+    # 现金：10000 + 5492.19 - 4005.04 = 11487.15
+    assert abs(portfolio.cash - 11487.15) < 0.1
+
+
+def test_buy_floors_to_lot_size():
+    """BUY 目标数量向下取整手：537 股意图 → 成交 500 股。"""
+    engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
+    fills = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=[OrderIntent(code="sh.600000", side="BUY", target_qty=537, target_weight=0.5)],
+        positions={},
+        raw_prices={"sh.600000": {"open": 10.0, "close": 10.0}},
+        cash=1_000_000.0,
+    )
+    assert len(fills) == 1
+    assert fills[0].side == "BUY"
+    assert fills[0].qty == 500
+    assert fills[0].qty % 100 == 0
+
+
+def test_buy_below_one_lot_is_dropped():
+    """不足一手的 BUY 意图直接丢弃。"""
+    engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
+    fills = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=[OrderIntent(code="sh.600000", side="BUY", target_qty=53, target_weight=0.5)],
+        positions={},
+        raw_prices={"sh.600000": {"open": 10.0, "close": 10.0}},
+        cash=1_000_000.0,
+    )
+    assert len(fills) == 0
+
+
+def test_buy_min_commission_is_per_order():
+    """最低佣金按一笔订单判断：小额买入佣金取 commission_min。"""
+    fee_config = FeeConfig(commission_rate=0.00025, commission_min=5.0)
+    engine = ExecutionEngine(MVP_EXECUTION_CONFIG, fee_config)
+    # 100 股 @10 = 1000 元；佣金 max(0.25, 5)=5；现金恰好覆盖 1005 + 过户费 0.01 → 可成交一手
+    fills = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=[OrderIntent(code="sh.600000", side="BUY", target_qty=100, target_weight=1.0)],
+        positions={},
+        raw_prices={"sh.600000": {"open": 10.0, "close": 10.0}},
+        cash=1005.02,
+    )
+    assert len(fills) == 1
+    assert fills[0].qty == 100
+    # 现金再少一手都买不起时（<1005.01），应零成交
+    fills2 = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=[OrderIntent(code="sh.600000", side="BUY", target_qty=100, target_weight=1.0)],
+        positions={},
+        raw_prices={"sh.600000": {"open": 10.0, "close": 10.0}},
+        cash=1004.99,
+    )
+    assert len(fills2) == 0
+
+
+def test_multi_buy_sequenced_cash():
+    """同一 cycle 多笔 BUY 顺序扣减现金：第二笔受第一笔占用约束。"""
+    engine = ExecutionEngine(MVP_EXECUTION_CONFIG, FeeConfig())
+    fills = engine.execute(
+        execution_date=datetime.date(2025, 1, 3),
+        intents=[
+            OrderIntent(code="sh.600000", side="BUY", target_qty=500, target_weight=0.5),   # 需 ~5003
+            OrderIntent(code="sz.000001", side="BUY", target_qty=500, target_weight=0.5),   # 剩余现金只够少量
+        ],
+        positions={},
+        raw_prices={
+            "sh.600000": {"open": 10.0, "close": 10.0},
+            "sz.000001": {"open": 20.0, "close": 20.0},
+        },
+        cash=10000.0,
+    )
+    buys = {f.code: f for f in fills if f.side == "BUY"}
+    assert buys["sh.600000"].qty == 500
+    # 第一笔后剩余 ≈ 10000-5002.51=4997.49；@20 一手 2000+fee≈2000.51 → 可买 200 股（2 手）
+    assert "sz.000001" in buys
+    assert buys["sz.000001"].qty % 100 == 0
+    assert buys["sz.000001"].qty * 20 <= 4998  # 不超支
 
 
 def test_t1_buy_cannot_sell_same_day():

@@ -125,11 +125,17 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             initial_cash=req.initial_cash,
         )
 
+        # 估值截止日 = equity curve 最后一条（可能超出 end_signal_date，属冻结语义）
+        valuation_end_date = None
+        if not result.equity_curve.is_empty():
+            valuation_end_date = result.equity_curve["date"].max().isoformat()
+
         # 返回结果
         return {
             "formula": req.formula,
             "start_date": req.start_date.isoformat(),
-            "end_signal_date": req.end_signal_date.isoformat(),
+            "signal_end_date": req.end_signal_date.isoformat(),
+            "valuation_end_date": valuation_end_date,
             "initial_cash": req.initial_cash,
             "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
             "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
