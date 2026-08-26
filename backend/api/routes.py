@@ -103,14 +103,19 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
         trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
         calendar.set_trade_dates(trade_dates)
 
-    raw_price_store = RawPriceStore(data_root="data")  # 实际路径需配置
-    raw_price_store.data_root = "data"  # 临时
+    # raw 数据源：本地目录仅限开发调试（env 覆写）；生产默认走 HF Dataset 按年懒下载
+    raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
+    if raw_data_root:
+        raw_price_store = RawPriceStore(data_root=raw_data_root)
+    else:
+        raw_price_store = RawPriceStore(hf_repo_id=data_manager.repo_id)
+    logger.info(f"Backtest raw price source: {raw_price_store.source_type}")
 
-    # 创建回测引擎 - 使用已配置的 calendar
+    # 创建回测引擎 - 使用已配置的 calendar 与单一 raw store 实例
     backtest_engine = BacktestEngine(
         calendar=calendar,
         selection_engine=selection_engine,
-        raw_price_store=RawPriceStore(data_root="data"),
+        raw_price_store=raw_price_store,
         fee_config=FeeConfig(),
         execution_config=MVP_EXECUTION_CONFIG,
         allocator=equal_weight_allocator,

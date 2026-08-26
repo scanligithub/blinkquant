@@ -136,3 +136,48 @@ def test_cache_returns_query_plan_not_collected():
         # Should return cached LazyFrame (same object)
         assert lf1 is lf2
         assert isinstance(lf1, pl.LazyFrame)
+
+
+def test_backend_selection_local_hf_and_error():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = RawPriceStore(data_root=tmpdir)
+        assert store.source_type.startswith("local:")
+    store_hf = RawPriceStore(hf_repo_id="fake/repo", hf_token="x")
+    assert store_hf.source_type == "hf:fake/repo"
+    try:
+        RawPriceStore()
+        assert False, "should require data_root or hf_repo_id"
+    except ValueError:
+        pass
+
+
+def test_scan_window_normalizes_string_dates():
+    """HF 数据集 date 为 Utf8 字符串：归一化到 Date 后范围过滤必须生效。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        df = pl.DataFrame({
+            "date": ["2025-01-02", "2025-01-03", "2025-01-06"],
+            "code": ["sh.600000"] * 3,
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.2, 10.7, 11.2],
+            "low": [9.8, 10.3, 10.8],
+            "close": [10.1, 10.6, 11.1],
+            "volume": [1000000] * 3,
+            "amount": [10000000] * 3,
+        })
+        df.write_parquet(f"{tmpdir}/stock_kline_2025.parquet")
+        store = RawPriceStore(data_root=tmpdir)
+        out = store.scan_window(datetime.date(2025, 1, 2), datetime.date(2025, 1, 3)).collect()
+        assert out.height == 2
+        assert out.schema["date"] == pl.Date
+        assert out["date"].max() == datetime.date(2025, 1, 3)
+
+
+def test_missing_year_returns_empty_lazyframe():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = RawPriceStore(data_root=tmpdir)
+        lf = store.scan_window(datetime.date(2030, 1, 1), datetime.date(2030, 12, 31))
+        assert isinstance(lf, pl.LazyFrame)
+        assert lf.collect().height == 0

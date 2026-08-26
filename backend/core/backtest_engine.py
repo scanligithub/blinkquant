@@ -8,7 +8,11 @@ from core.raw_price_store import RawPriceStore
 from core.portfolio import Portfolio, Position
 from core.execution import ExecutionEngine, OrderIntent, Fill
 from core.data_manager import data_manager
-from core.backtest_types import FeeConfig, ExecutionConfig, Allocator, MVP_EXECUTION_CONFIG, equal_weight_allocator, SelectionResult
+from core.backtest_types import (
+    FeeConfig, ExecutionConfig, Allocator, MVP_EXECUTION_CONFIG,
+    equal_weight_allocator, SelectionResult,
+    BacktestDataIntegrityError, BacktestLedgerError,
+)
 
 
 class TradingCalendar:
@@ -154,74 +158,75 @@ class BacktestEngine:
             # 3. 目标组合权重（空目标 = 全现金组合，仍需走统一管线以退出旧仓）
             target_weights = self.allocator(target_codes, signal_date)
             
-            # 4. 生成订单意图
+            # 4. 单次加载本 cycle raw 行情：open 供执行、close 供估值（同一数据贯穿）
             execution_date = self.calendar.next_trade_day(signal_date)
-            execution_prices = self.raw_price_store.load_execution_prices([execution_date])
-            execution_prices_dict = {
+            cycle_prices_df = self.raw_price_store.load_execution_prices([execution_date])
+            cycle_prices = {
                 row["code"]: {"open": row["open"], "close": row["close"]}
-                for row in execution_prices.iter_rows(named=True)
+                for row in cycle_prices_df.iter_rows(named=True)
             }
             
-            intents = self._generate_intents(target_weights, execution_prices_dict)
+            intents = self._generate_intents(target_weights, cycle_prices)
             
             fills = []
             if intents:
-                # 获取限制标记
-                all_codes = set()
-                for intent in intents:
-                    all_codes.add(intent.code)
-                limit_flags = data_manager.get_limit_flags(execution_date, list(all_codes))
+                intent_codes = [intent.code for intent in intents]
+                limit_flags = data_manager.get_limit_flags(execution_date, intent_codes)
                 
-                # 5. 执行订单
+                # 5. 执行订单（只产出 Fill）
                 fills = self.execution_engine.execute(
                     execution_date=execution_date,
                     intents=intents,
                     positions=self.portfolio.positions,
-                    raw_prices=execution_prices_dict,
+                    raw_prices=cycle_prices,
                     cash=self.portfolio.cash,
                     limit_flags=limit_flags,
                 )
                 
-                # 7. 组合更新（唯一入口）
+                # 6. 组合更新（唯一记账入口）+ 现金非负不变量
                 self.portfolio.apply_fills(fills, execution_date, {})
+                if self.portfolio.cash < -1e-6:
+                    raise BacktestLedgerError(
+                        f"execution {execution_date} 后现金为负: {self.portfolio.cash:.2f}"
+                    )
             
-            # 7. 估值（使用 execution_date 的 raw_close）
-            execution_date = self.calendar.next_trade_day(signal_date)
-            raw_prices = self.raw_price_store.load_execution_prices([execution_date])
-            raw_prices_dict = {
-                row["code"]: {"close": row["close"]}
-                for row in raw_prices.iter_rows(named=True)
+            # 7. 估值：持仓股缺 close → BacktestDataIntegrityError（严格语义）
+            valuation_prices = {
+                code: {"close": px["close"]} for code, px in cycle_prices.items()
             }
+            equity = self.portfolio.get_equity(valuation_prices, valuation_date=execution_date)
             
-            # 更新持仓市值
-            for code, pos in self.portfolio.positions.items():
-                if pos.total_qty > 0:
-                    raw_close = raw_prices_dict.get(pos.code, {}).get("close", 0)
-                    if raw_close > 0:
-                        pos.update_market_value(raw_close)
+            # 8. 账本恒等式：equity == cash + Σ(total_qty × raw_close)
+            positions_value = sum(
+                pos.total_qty * valuation_prices[code]["close"]
+                for code, pos in self.portfolio.positions.items()
+                if pos.total_qty > 0
+            )
+            if abs(equity - (self.portfolio.cash + positions_value)) > 1e-4:
+                raise BacktestLedgerError(
+                    f"valuation {execution_date}: equity({equity:.4f}) != "
+                    f"cash({self.portfolio.cash:.4f}) + positions({positions_value:.4f})"
+                )
             
-            # 记录权益曲线（使用 execution_date 作为估值日期）
-            equity = self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values())
+            # 记录权益曲线（估值日期 = execution_date；保留 signal_date 审计）
             equity_curve_rows.append({
-                "date": execution_date,  # 估值日期 = execution_date
-                "equity": self.portfolio.cash + sum(p.market_value for p in self.portfolio.positions.values()),
+                "date": execution_date,
+                "equity": equity,
                 "cash": self.portfolio.cash,
-                "positions_value": sum(p.market_value for p in self.portfolio.positions.values()),
-                "signal_date": signal_date,  # 保留 signal_date 用于审计
+                "positions_value": positions_value,
+                "signal_date": signal_date,
             })
             
             # 记录持仓快照
             for code, pos in self.portfolio.positions.items():
                 if pos.total_qty > 0:
-                    raw_close = raw_prices_dict.get(pos.code, {}).get("close", 0)
-                    if raw_close > 0:
-                        positions_daily_rows.append({
-                            "date": execution_date,
-                            "code": code,
-                            "qty": pos.total_qty,
-                            "cost": pos.avg_cost,
-                            "market_value": pos.market_value,
-                        })
+                    positions_daily_rows.append({
+                        "date": execution_date,
+                        "code": code,
+                        "qty": pos.total_qty,
+                        "cost": pos.avg_cost,
+                        "market_value": pos.market_value,
+                    })
             
             # 记录交易
             for fill in fills:
@@ -314,30 +319,30 @@ class BacktestEngine:
         return intents
     
     def _calculate_metrics(self, equity_curve: 'pl.DataFrame') -> dict:
-        """计算回测指标。"""
+        """计算回测指标（单行净值也给出 total_return/cagr，风险指标需 ≥2 点）。"""
         if equity_curve.is_empty():
             return {}
-        
-        returns = equity_curve["equity"].pct_change().drop_nulls()
-        if len(returns) == 0:
-            return {}
-        
-        total_return = (equity_curve["equity"][-1] / equity_curve["equity"][0]) - 1
+
+        eq = equity_curve["equity"]
+        first_equity = eq.head(1)[0]
+        last_equity = eq.tail(1)[0]
+        total_return = (last_equity / first_equity) - 1
         n_days = len(equity_curve)
         years = n_days / 252
         cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
-        
-        std = returns.std()
+
+        returns = eq.pct_change().drop_nulls()
+        std = returns.std() if len(returns) > 0 else None
         sharpe = (returns.mean() / std * (252 ** 0.5)) if (std is not None and std > 0) else 0
-        
-        peak = equity_curve["equity"].cum_max()
-        drawdown = (equity_curve["equity"] - peak) / peak
-        max_dd = drawdown.min()
-        
+
+        peak = eq.cum_max()
+        drawdown = (eq - peak) / peak
+        max_dd = drawdown.min() if len(returns) > 0 else 0
+
         return {
             "total_return": total_return,
             "cagr": cagr,
             "sharpe": sharpe,
             "max_drawdown": max_dd,
-            "total_days": len(equity_curve),
+            "total_days": n_days,
         }

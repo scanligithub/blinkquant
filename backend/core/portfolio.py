@@ -2,6 +2,8 @@ import datetime
 from dataclasses import dataclass
 from typing import Optional
 
+from core.backtest_types import BacktestDataIntegrityError
+
 
 @dataclass
 class Position:
@@ -112,15 +114,20 @@ class Portfolio:
                 market_value=pos.market_value,
             )
 
-    def get_equity(self, raw_prices: dict[str, dict]) -> float:
-        """总权益 = 现金 + 持仓市值（按 raw_close 估值）。"""
+    def get_equity(self, raw_prices: dict[str, dict], valuation_date=None) -> float:
+        """总权益 = 现金 + 持仓市值（按 raw_close 估值）。
+
+        严格语义：任何持仓股在估值日缺失 close 或 close<=0 →
+        抛 BacktestDataIntegrityError（数据缺失 ≠ 停牌，不允许静默跳过或沿用陈旧市值）。
+        """
         positions_value = 0.0
         for code, pos in self.positions.items():
             if pos.total_qty > 0:
                 raw_close = raw_prices.get(code, {}).get("close", 0)
-                if raw_close > 0:
-                    pos.update_market_value(raw_close)
-                    positions_value += pos.market_value
+                if not raw_close or raw_close <= 0:
+                    raise BacktestDataIntegrityError(code, valuation_date)
+                pos.update_market_value(raw_close)
+                positions_value += pos.market_value
         return self.cash + positions_value
 
     def get_equity_curve_value(self, raw_prices: dict[str, dict]) -> float:
@@ -182,8 +189,8 @@ class Portfolio:
         return total
 
     def snapshot(self, date: datetime.date, raw_prices: dict) -> 'AccountSnapshot':
-        """生成当日快照（equity 按 raw_prices 估值）。"""
-        equity = self.get_equity(raw_prices)
+        """生成当日快照（equity 按 raw_prices 严格估值）。"""
+        equity = self.get_equity(raw_prices, valuation_date=date)
         return AccountSnapshot(
             date=date,
             cash=self.cash,

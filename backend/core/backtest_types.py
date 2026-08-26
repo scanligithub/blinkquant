@@ -90,3 +90,23 @@ class Position:
     frozen_qty: int
     avg_cost: float
     market_value: float
+
+
+class BacktestDataIntegrityError(RuntimeError):
+    """回测数据完整性错误：持仓股在估值日缺失 raw close 等不可恢复缺口。
+
+    与"停牌"严格区分——数据缺失不允许静默跳过或沿用陈旧市值。
+    """
+    def __init__(self, code: str, date):
+        self.code = code
+        self.date = date
+        super().__init__(
+            f"Data integrity error: 持仓 {code} 在 {date} 缺失有效 raw close，"
+            f"拒绝估值（数据缺失 ≠ 停牌）"
+        )
+
+
+class BacktestLedgerError(RuntimeError):
+    """回测账本恒等式违反：cash 为负 / equity != cash + positions_value 等。"""
+    def __init__(self, message: str):
+        super().__init__(f"Ledger invariant violated: {message}")
