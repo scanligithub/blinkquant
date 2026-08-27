@@ -23,6 +23,8 @@ class FeeSchedule:
     entries: list
 
     def __post_init__(self):
+        if not self.entries:
+            raise ValueError("FeeSchedule requires at least one entry")
         self.entries = sorted(self.entries, key=lambda e: e.date_start or datetime.date.min)
 
     def get_fee_config(self, date: datetime.date) -> FeeConfig:

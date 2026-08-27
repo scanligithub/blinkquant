@@ -1,4 +1,5 @@
 import datetime
+import pytest
 from core.backtest_types import FeeConfig, FeeSchedule
 
 
@@ -25,3 +26,9 @@ def test_fee_schedule_before_first_entry():
     ])
     fee = schedule.get_fee_config(datetime.date(2022, 1, 1))
     assert fee.commission_rate == 0.0003
+
+
+def test_empty_fee_schedule_rejected():
+    """FeeSchedule 空 entries → ValueError（构造时 fail-fast）。"""
+    with pytest.raises(ValueError, match="requires at least one entry"):
+        FeeSchedule(entries=[])

@@ -15,6 +15,11 @@ class UnsupportedInBacktestError(RuntimeError):
     pass
 
 
+class BacktestSelectionError(RuntimeError):
+    """回测模式下选股失败，立即中止回测（不允许 fail-silent）。"""
+    pass
+
+
 class SelectionEngine:
     def __init__(self):
         _funcs = "|".join(WINDOW_NAMES)
@@ -83,11 +88,12 @@ class SelectionEngine:
                 logger.info(f"Hot-JIT Broadcast: Mounted {len(new_exprs)} cols to {attr_name}")
 
     def execute_selector(self, formula: str, timeframe: str, background_tasks, target_date=None,
-                         backtest_mode: bool = False):
+                         backtest_mode: bool = False, raise_on_error: bool = False):
         """执行选股。
 
         target_date（datetime.date）可选：指定时回退到 ≤ 该日的最近交易日，未指定用数据最新日。
         backtest_mode: True 时禁止使用板块/行业字段（防止 PIT leakage）。
+        raise_on_error: True 时异常直接抛出（回测模式），False 时返回 error dict（API 兼容）。
 
         多周期支持：
         - 检测 W./M. 前缀 → 使用 parse_multi_tf → plan tree
@@ -128,9 +134,13 @@ class SelectionEngine:
         has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', clean_expr))
 
         if has_mtf:
-            result_dict = self._execute_mtf(formula, timeframe, target_date, backtest_mode=backtest_mode)
+            result_dict = self._execute_mtf(formula, timeframe, target_date,
+                                            backtest_mode=backtest_mode,
+                                            raise_on_error=raise_on_error)
         else:
-            result_dict = self._execute_single(formula, timeframe, target_date, backtest_mode=backtest_mode)
+            result_dict = self._execute_single(formula, timeframe, target_date,
+                                               backtest_mode=backtest_mode,
+                                               raise_on_error=raise_on_error)
 
         # 返回 SelectionResult（保持错误 dict 兼容）
         if isinstance(result_dict, dict) and "error" in result_dict:
@@ -275,7 +285,7 @@ class SelectionEngine:
             )
 
     def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date,
-                        backtest_mode: bool = False):
+                        backtest_mode: bool = False, raise_on_error: bool = False):
         """单周期执行路径（向后兼容）。"""
         # P0-1: 回测模式下禁止板块/行业字段（PIT leakage）
         if backtest_mode:
@@ -298,18 +308,19 @@ class SelectionEngine:
             return {"error": "Data not loaded."}
         lf = df.lazy()
 
-        # 关联板块 (Safe Join)
-        df_mapping = getattr(data_manager, 'df_mapping', None)
-        if df_mapping is not None and s_df is not None:
-            try:
-                sector_exprs = [pl.col("date"), pl.col("code").alias("sector_code"), pl.col("close").alias("s_close")]
-                if "pctChg" in s_df.columns:
-                    sector_exprs.append(pl.col("pctChg").alias("s_pctChg"))
-                s_lazy = s_df.lazy().select(sector_exprs)
-                lf = (lf.join(df_mapping.lazy(), on="code", how="left")
-                      .join(s_lazy, on=["date", "sector_code"], how="left"))
-            except Exception as e:
-                logger.warning(f"Sector join failed: {e}")
+        # 关联板块 (Safe Join) — backtest_mode 下跳过，避免无用计算
+        if not backtest_mode:
+            df_mapping = getattr(data_manager, 'df_mapping', None)
+            if df_mapping is not None and s_df is not None:
+                try:
+                    sector_exprs = [pl.col("date"), pl.col("code").alias("sector_code"), pl.col("close").alias("s_close")]
+                    if "pctChg" in s_df.columns:
+                        sector_exprs.append(pl.col("pctChg").alias("s_pctChg"))
+                    s_lazy = s_df.lazy().select(sector_exprs)
+                    lf = (lf.join(df_mapping.lazy(), on="code", how="left")
+                          .join(s_lazy, on=["date", "sector_code"], how="left"))
+                except Exception as e:
+                    logger.warning(f"Sector join failed: {e}")
 
         try:
             # 解析与计算
@@ -335,10 +346,14 @@ class SelectionEngine:
 
             return {"codes": result_df["code"].to_list(), "date": target_date.isoformat()}
         except Exception as e:
+            if raise_on_error:
+                raise BacktestSelectionError(
+                    f"Selection failed: formula={formula!r}, "
+                    f"target_date={target_date}: {e}") from e
             return {"error": str(e)}
 
     def _execute_mtf(self, formula: str, base_tf: str, target_date: datetime.date,
-                     backtest_mode: bool = False):
+                     backtest_mode: bool = False, raise_on_error: bool = False):
         """多周期执行路径。
 
         流程：
@@ -349,21 +364,32 @@ class SelectionEngine:
         try:
             plan = blink_parser.parse_multi_tf(formula, base_tf)
         except Exception as e:
+            if raise_on_error:
+                raise BacktestSelectionError(
+                    f"MTF parse failed: formula={formula!r}, "
+                    f"target_date={target_date}: {e}") from e
             return {"error": f"Parse error: {e}"}
 
         # 递归折叠 plan tree
-        result_set = self._fold_plan(plan, target_date, base_tf, backtest_mode=backtest_mode)
+        result_set = self._fold_plan(plan, target_date, base_tf,
+                                     backtest_mode=backtest_mode,
+                                     raise_on_error=raise_on_error)
         codes = sorted(result_set) if result_set else set()
 
         return {"codes": list(codes), "date": target_date.isoformat()}
 
     def _fold_plan(self, plan: dict, target_date: datetime.date, base_tf: str,
-                   backtest_mode: bool = False) -> set:
+                   backtest_mode: bool = False, raise_on_error: bool = False) -> set:
         """递归折叠 plan tree，返回 code set。"""
         if plan["type"] == "atom":
-            return self._eval_atom(plan, target_date, base_tf, backtest_mode=backtest_mode)
+            return self._eval_atom(plan, target_date, base_tf,
+                                   backtest_mode=backtest_mode,
+                                   raise_on_error=raise_on_error)
         elif plan["type"] == "bool":
-            child_sets = [self._fold_plan(c, target_date, base_tf, backtest_mode=backtest_mode) for c in plan["children"]]
+            child_sets = [self._fold_plan(c, target_date, base_tf,
+                                          backtest_mode=backtest_mode,
+                                          raise_on_error=raise_on_error)
+                          for c in plan["children"]]
             if plan["op"] == "AND":
                 return set.intersection(*child_sets) if child_sets else set()
             else:  # OR
@@ -371,7 +397,7 @@ class SelectionEngine:
         return set()
 
     def _eval_atom(self, atom: dict, target_date: datetime.date, base_tf: str,
-                   backtest_mode: bool = False) -> set:
+                   backtest_mode: bool = False, raise_on_error: bool = False) -> set:
         """对单个 atom 求值，返回 code set。
 
         契约：返回“每一只股票在 target_date 的 as-of bar 上，该 atom 是否成立”的集合。
@@ -421,6 +447,11 @@ class SelectionEngine:
             )
             result_codes = set(signal_df["code"].to_list())
         except Exception as e:
+            if raise_on_error:
+                raise BacktestSelectionError(
+                    f"MTF atom eval failed: tf={tf}, "
+                    f"target_date={target_date}, "
+                    f"atom={atom.get('source', '?')}: {e}") from e
             logger.warning(f"Atom eval failed for {tf}: {e}")
             result_codes = set()
 

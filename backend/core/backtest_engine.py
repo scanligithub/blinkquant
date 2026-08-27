@@ -290,7 +290,8 @@ class BacktestEngine:
                 if ranking_fn is not None:
                     # Ranking path: eligibility filter → ranking → Top-N
                     sel = self.selection_engine.execute_selector(
-                        formula, "D", None, target_date=t, backtest_mode=True)
+                        formula, "D", None, target_date=t,
+                        backtest_mode=True, raise_on_error=True)
                     if hasattr(sel, 'codes') and sel.codes:
                         eligible = sel.codes
                         # P1-2: UniverseFilter 过滤
@@ -315,7 +316,8 @@ class BacktestEngine:
                         new_sig, new_exec = t, exec_d
                 else:
                     sel = self.selection_engine.execute_selector(
-                        formula, "D", None, target_date=t, backtest_mode=True)
+                        formula, "D", None, target_date=t,
+                        backtest_mode=True, raise_on_error=True)
                     if not (isinstance(sel, dict) and "error" in sel):
                         codes = sel.codes
                         # P1-2: UniverseFilter 过滤
