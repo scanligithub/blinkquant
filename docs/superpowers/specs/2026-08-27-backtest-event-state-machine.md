@@ -31,9 +31,12 @@
 │ POST_EXECUTION (执行后持仓确定)                                 │
 │   └── Portfolio state boundary（真实 T 开盘后持仓）             │
 │                                                                  │
-│ SIGNAL (收盘前信号生成)                                          │
+│ MARKET_CLOSE (收盘)                                             │
+│   └── T 日收盘价已确定                                           │
+│                                                                  │
+│ POST_CLOSE_SIGNAL (收盘后信号生成)                               │
 │   ├── signal_date = T                                           │
-│   ├── SELECTION                 ← 选股公式评估                   │
+│   ├── SELECTION                 ← 选股公式评估（可使用 T close） │
 │   ├── TARGET_PORTFOLIO          ← allocator → 目标权重           │
 │   └── CREATE_PENDING            ← 生成 T→T+1 的待执行意图       │
 │                                                                  │
@@ -51,7 +54,8 @@
 |---|---|---|
 | PRE_OPEN | T-1 订单已执行，T-1 frozen 已解冻 | 否（仍有未完成事件） |
 | POST_EXECUTION | Portfolio 反映真实 T 开盘后持仓 | 否（仍有未完成事件） |
-| SIGNAL | T 信号已生成，pending 订单已创建 | 否（估值未完成） |
+| MARKET_CLOSE | T 收盘价已确定 | 否 |
+| POST_CLOSE_SIGNAL | T 信号已生成，pending 订单已创建 | 否（估值未完成） |
 | VALUATION | equity/positions 已记录 | **是（day 事务完整完成）** |
 
 ---
@@ -63,37 +67,46 @@
 ```python
 @dataclass
 class BacktestCursors:
-    """显式进度游标，替代 selected_thru / thru_thaw / pending"""
+    """显式进度游标，替代 selected_thru / thru_thaw / pending
     
-    # 最后完成的 valuation 日期（含该日）
+    语义约定：
+    - *_through 字段 = phase progress cursor（该 phase 已处理到的最后一个 trading day）
+      即使当天无实际 event，phase 完成即推进
+    - last_*_date 字段（如需要）= last occurrence cursor（最后实际发生该 event 的日期）
+    """
+    
+    # 唯一 resume authority：最后完成的 valuation 日期（含该日）
     # None = 尚未开始
     valuation_through: Optional[date] = None
     
-    # 最后完成的 signal 日期（含该日）
-    # None = 尚未产生任何信号
+    # signal phase progress：最后完成 signal phase 的 trading day
+    # None = 尚未开始
     signal_through: Optional[date] = None
     
-    # 最后完成的 execution 日期（含该日）
+    # execution phase progress：最后完成 execution phase 的 trading day
     # None = 尚未执行任何订单
+    # 即使当天无 pending order，execution phase 完成即推进
     execution_through: Optional[date] = None
+    
+    # thaw phase progress：最后完成 thaw 的 trading day
+    thaw_through: Optional[date] = None
     
     # 当前在途订单（已生成、待执行）
     # signal_date → execution_date 的映射
     pending_orders: Dict[date, PendingOrderBundle] = field(default_factory=dict)
     
-    # 最后一次 thaw 完成的日期
-    # None = 尚未 thaw
-    thaw_through: Optional[date] = None
+    # 可选：最后实际产生 signal 的日期（审计用，非 resume authority）
+    last_signal_date: Optional[date] = None
 ```
 
 ### 3.2 与现有字段映射
 
 | 现有字段 | 新游标 | 说明 |
 |---|---|---|
-| `selected_thru` | `signal_through` | 重命名，语义明确 |
-| `thru_thaw` | `thaw_through` | 重命名，语义明确 |
+| `selected_thru` | `signal_through` | 重命名，语义明确（phase progress） |
+| `thru_thaw` | `thaw_through` | 重命名，语义明确（phase progress） |
 | `pending` (signal_date + execution_date + intents) | `pending_orders[signal_date]` | 结构化，支持多信号日并存 |
-| `_last_close` | 内部缓存，不序列化 | 估值用，checkpoint 不存 |
+| `_last_close` | 内部缓存，不序列化 | 估值用，checkpoint 存 snapshot |
 
 ---
 
@@ -126,7 +139,7 @@ class BacktestCheckpoint:
     portfolio: PortfolioState
     
     # 估值缓存（可选，用于 carry-forward）
-    # 注意：不存 _last_close，恢复时从 raw data 重建
+    # 注意：存的是 snapshot(copy)，不是运行时 _last_close 对象引用
     last_close_cache: Optional[Dict[str, float]] = None
     
     # 元数据
@@ -143,11 +156,12 @@ def restore_from_checkpoint(checkpoint: BacktestCheckpoint,
     恢复语义：从“最后一个已完成 valuation 的下一个 trading day”继续。
     
     步骤：
-    1. 验证 checkpoint.cursors.valuation_through >= start_date - 1
+    1. 验证 checkpoint.cursors.valuation_through >= calendar.prev_trade_day(start_date)
+       （若 start_date 本身是 trading day，则 prev_trade_day 返回 start_date）
     2. 恢复 Portfolio
-    3. 恢复 pending_orders（这些订单的 execution_date > valuation_through）
+    3. 恢复 pending_orders（这些订单的 execution_date >= resume_date）
     4. 恢复游标
-    5. 计算恢复起始日：next_trade_day(valuation_through)
+    5. 计算恢复起始日：resume_date = next_trade_day(valuation_through)
     6. 从该日开始 run()
     """
 ```
@@ -164,9 +178,10 @@ def restore_from_checkpoint(checkpoint: BacktestCheckpoint,
 | PRE_OPEN | CorporateAction 完成 | PRE_OPEN |  |
 | PRE_OPEN | Thaw 完成 | PRE_OPEN |  |
 | PRE_OPEN | ExecutePending 完成 | POST_EXECUTION |  |
-| POST_EXECUTION | Signal 完成 | SIGNAL | T ∈ allowed_signals |
-| POST_EXECUTION | (无信号日) | VALUATION | T ∉ allowed_signals |
-| SIGNAL | CreatePending 完成 | VALUATION |  |
+| POST_EXECUTION | MarketClose | MARKET_CLOSE |  |
+| MARKET_CLOSE | Signal 完成 | POST_CLOSE_SIGNAL | T ∈ allowed_signals |
+| MARKET_CLOSE | (无信号日) | VALUATION | T ∉ allowed_signals |
+| POST_CLOSE_SIGNAL | CreatePending 完成 | VALUATION |  |
 | VALUATION | Valuation 完成 | CHECKPOINT |  |
 | CHECKPOINT | 序列化完成 | IDLE (下一天) |  |
 
@@ -180,9 +195,50 @@ def restore_from_checkpoint(checkpoint: BacktestCheckpoint,
 | Signal(T) | 不变 | = T | 不变 | 不变 | 新增 T→T+1 |
 | Valuation(T) | = T | 不变 | 不变 | 不变 | 不变 |
 
+**游标语义澄清：**
+- `signal_through` / `execution_through` / `thaw_through` = **phase progress cursor**
+  - 即使当天无实际 event，phase 完成即推进
+  - 例如：T 无 pending order，ExecutePending 完成后 `execution_through = T`
+- `last_signal_date`（可选）= **last occurrence cursor**
+  - 仅记录最后实际产生 signal 的日期，不参与 resume 计算
+
 ---
 
 ## 6. 关键场景处理
+
+### 6.0 CorporateAction × PendingOrder 交互规则（MVP 冻结）
+
+```text
+PRE_OPEN 阶段顺序：
+1. CORPORATE_ACTION
+2. THAW
+3. EXECUTE_PENDING
+```
+
+**MVP 规则：CorporateAction 发生在 ExecutePending 之前时，必须同步调整 pending order 的 quantity / price semantics。**
+
+```python
+# 伪码示例
+if corporate_action_store:
+    actions = corporate_action_store.query(t, t)
+    for action in actions:
+        if action.code in pending_orders:
+            # 1:1 split
+            if action.action_type == SPLIT and action.ratio == 2.0:
+                for intent in pending_orders[action.code]:
+                    intent.target_qty *= 2
+                    intent.target_price /= 2
+            # 10送3
+            elif action.action_type == BONUS and action.ratio == 1.3:
+                for intent in pending_orders[action.code]:
+                    intent.target_qty = int(intent.target_qty * 1.3)
+                    intent.target_price /= 1.3
+            # 现金分红不调整 pending order qty/price
+```
+
+> 订单一旦生成，其经济数量**随后续 CorporateAction 自动调整**；若发生冲突（如权利变更导致标的不存在），订单标记 REJECTED。
+
+---
 
 ### 6.1 连续跑（无 checkpoint）
 
@@ -218,7 +274,9 @@ def run(self, start_date, end_signal_date, ..., initial_state=None):
         # 3. 验证 pending 订单的 execution_date >= resume_date
         # （execution_date < resume_date 的订单应已执行完毕，不应存在）
         for sig_date, bundle in self.cursors.pending_orders.items():
-            assert bundle.execution_date >= resume_date
+            if bundle.execution_date < resume_date:
+                raise BacktestStateError(
+                    f"Checkpoint pending order execution_date {bundle.execution_date} < resume_date {resume_date}")
         
         # 4. 计算新的 all_days
         all_days = calendar.trade_range(resume_date, end_signal_date)
@@ -236,7 +294,7 @@ def run(self, start_date, end_signal_date, ..., initial_state=None):
 ```text
 Weekly 时：
 - allowed_signals 只包含每周最后一个交易日
-- signal_through 仍按自然日推进（只在信号日更新）
+- signal_through 只在实际产生信号的 trading day 更新
 - execution_through 按实际执行日更新
 - valuation_through 每日更新
 ```
@@ -259,11 +317,12 @@ Weekly 时：
 ```python
 def export_state(self) -> BacktestCheckpoint:
     """仅允许在 VALUATION 完成后调用"""
-    assert self._current_phase == Phase.VALUATION_COMPLETE
+    # phase 是瞬态运行状态，不序列化
+    # checkpoint 只包含 cursors / portfolio / pending / last_close_cache / metadata
     return BacktestCheckpoint(
         cursors=self.cursors,
         portfolio=self.portfolio.export_state(),
-        last_close_cache=dict(self._last_close),
+        last_close_cache=dict(self._last_close),  # snapshot(copy)，非运行时引用
         metadata=CheckpointMetadata(
             created_at=datetime.now(),
             engine_version="1.1.0",
