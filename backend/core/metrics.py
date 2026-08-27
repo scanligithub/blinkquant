@@ -104,6 +104,12 @@ class BacktestMetrics:
     concentration: ConcentrationMetrics = field(default_factory=ConcentrationMetrics)
     execution_quality: ExecutionQualityMetrics = field(default_factory=ExecutionQualityMetrics)
     integrity: IntegrityMetrics = field(default_factory=IntegrityMetrics)
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    benchmark_alpha: float = 0.0
+    benchmark_beta: float = 0.0
+    benchmark_tracking_error: float = 0.0
+    benchmark_information_ratio: float = 0.0
 
     def to_flat_dict(self) -> dict:
         out = {}
@@ -112,6 +118,10 @@ class BacktestMetrics:
                            "execution_quality", "integrity"):
             for k, v in getattr(self, group_name).__dict__.items():
                 out[f"{group_name}.{k}"] = v
+        for k in ("sortino_ratio", "calmar_ratio", "benchmark_alpha",
+                   "benchmark_beta", "benchmark_tracking_error",
+                   "benchmark_information_ratio"):
+            out[k] = getattr(self, k)
         return out
 
 
@@ -124,6 +134,49 @@ def _percentile(sorted_vals, p: float) -> float:
     lo, hi = int(idx), min(int(idx) + 1, len(sorted_vals) - 1)
     frac = idx - lo
     return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
+
+
+def _sortino_ratio(returns: list[float], risk_free: float = 0.0,
+                   periods_per_year: int = 252) -> float:
+    if not returns or len(returns) < 2:
+        return 0.0
+    excess = [r - risk_free for r in returns]
+    mean_excess = sum(excess) / len(excess)
+    downside = [min(0, r) ** 2 for r in excess]
+    downside_dev = (sum(downside) / len(downside)) ** 0.5
+    if downside_dev == 0:
+        return 0.0
+    return mean_excess / downside_dev * (periods_per_year ** 0.5)
+
+
+def _calmar_ratio(annualized_return: float, max_drawdown: float) -> float:
+    if abs(max_drawdown) < 1e-10:
+        return 0.0
+    return annualized_return / abs(max_drawdown)
+
+
+def compute_benchmark_metrics(portfolio_returns: list[float],
+                               benchmark_returns: list[float]) -> dict:
+    import numpy as np
+    if not portfolio_returns or not benchmark_returns:
+        return {"alpha": 0, "beta": 0, "tracking_error": 0, "information_ratio": 0}
+    n = min(len(portfolio_returns), len(benchmark_returns))
+    p = np.array(portfolio_returns[:n])
+    b = np.array(benchmark_returns[:n])
+    cov_pb = np.cov(p, b)[0][1]
+    var_b = np.var(b, ddof=1)
+    beta = cov_pb / var_b if var_b > 0 else 0.0
+    alpha_daily = np.mean(p) - beta * np.mean(b)
+    alpha = alpha_daily * 252
+    active = p - b
+    tracking_error = float(np.std(active, ddof=1)) * (252 ** 0.5)
+    ir = (alpha / tracking_error) if tracking_error > 0 else 0.0
+    return {
+        "alpha": float(alpha),
+        "beta": float(beta),
+        "tracking_error": float(tracking_error),
+        "information_ratio": float(ir),
+    }
 
 
 def _max_drawdown_and_duration(equities) -> tuple:
@@ -163,6 +216,15 @@ def compute_metrics(result, initial_cash: float) -> BacktestMetrics:
         p.annualized_return = ((last / first) ** (1 / years) - 1
                                ) if first > 0 and years > 0 else 0.0
         p.max_drawdown, p.drawdown_duration = _max_drawdown_and_duration(eq.to_list())
+
+        eq_list = eq.to_list()
+        if len(eq_list) >= 2:
+            daily_returns = [
+                (eq_list[i] / eq_list[i - 1]) - 1
+                for i in range(1, len(eq_list))
+            ]
+            m.sortino_ratio = _sortino_ratio(daily_returns)
+            m.calmar_ratio = _calmar_ratio(p.annualized_return, p.max_drawdown)
 
     # ---------------- trading ----------------
     t = m.trading

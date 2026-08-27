@@ -138,6 +138,9 @@ class BacktestEngine:
         initial_positions: dict[str, Position] = None,
         initial_state: dict = None,
         rebalance_freq: str = "daily",
+        ranking_fn=None,
+        top_n: int = 20,
+        corporate_action_store: 'CorporateActionStore' = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -154,6 +157,12 @@ class BacktestEngine:
             rebalance_freq: "daily"（每交易日调仓）或 "weekly"（每周最后一个交易日
                 产生信号，次一交易日开盘执行）。仅控制 signal/order 生成频率；
                 **估值仍逐日进行**，保证跨频率收益/回撤可比。
+            ranking_fn: 可选 ranking 函数，用于在 eligible set 内评分排序。
+                        None 时使用 code_asc（向后兼容）。
+            top_n: ranking 模式下的最大持仓数量
+            corporate_action_store: 可选公司行为存储。每个交易日查询当天发生的
+                分红/送股/拆股等行为，自动调整 Portfolio 的持股数量、成本和现金。
+                None 时跳过公司行为处理（向后兼容）。
         """
         if rebalance_freq not in ("daily", "weekly"):
             raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
@@ -253,6 +262,12 @@ class BacktestEngine:
                 self.portfolio.daily_thaw()
                 self._thru_thaw = t
 
+            # 0b. 公司行为处理（分红入账、拆股调量，影响后续估值与选股）
+            if corporate_action_store is not None:
+                today_actions = corporate_action_store.query_all(t, t)
+                for action in today_actions:
+                    self.portfolio.apply_corporate_action(action)
+
             # 1. 选股调度（先于执行：状态口径 = 前一交易日收盘，与基线逐字节一致；
             #    调度结果写入 new_pending，待本日执行块提交，避免覆写今日到期意图）
             new_sig = new_exec = None
@@ -266,15 +281,39 @@ class BacktestEngine:
                     row["code"]: {"open": row["open"], "close": row["close"]}
                     for row in px_df.iter_rows(named=True)
                 }
-                sel = self.selection_engine.execute_selector(
-                    formula, "D", None, target_date=t)
-                if not (isinstance(sel, dict) and "error" in sel):
-                    weights = self.allocator(sel.codes, t)
-                    new_intents = self._generate_intents(weights, new_prices)
-                    diag["intents_total"] += len(new_intents)
-                    if weights:
-                        diag["target_gross_by_date"][exec_d] = sum(weights.values())
-                    new_sig, new_exec = t, exec_d
+                if ranking_fn is not None:
+                    # Ranking path: eligibility filter → ranking → Top-N
+                    sel = self.selection_engine.execute_selector(
+                        formula, "D", None, target_date=t)
+                    if hasattr(sel, 'codes') and sel.codes:
+                        eligible = sel.codes
+                        # 构建 ranking frame（含历史窗口供 MA20 等指标）
+                        import datetime as _dt
+                        lookback_start = t - _dt.timedelta(days=75)
+                        frame = data_manager.df_daily.filter(
+                            (pl.col("date") >= lookback_start) & (pl.col("date") <= t)
+                        ).filter(pl.col("code").is_in(eligible)) if data_manager.df_daily is not None and eligible else pl.DataFrame()
+                        ranked = ranking_fn(frame, t) if not frame.is_empty() else pl.DataFrame()
+                        if not ranked.is_empty():
+                            picked = ranked["code"].to_list()[:top_n]
+                            weights = {c: 1.0 / len(picked) for c in picked} if picked else {}
+                        else:
+                            weights = {}
+                        new_intents = self._generate_intents(weights, new_prices)
+                        diag["intents_total"] += len(new_intents)
+                        if weights:
+                            diag["target_gross_by_date"][exec_d] = sum(weights.values())
+                        new_sig, new_exec = t, exec_d
+                else:
+                    sel = self.selection_engine.execute_selector(
+                        formula, "D", None, target_date=t)
+                    if not (isinstance(sel, dict) and "error" in sel):
+                        weights = self.allocator(sel.codes, t)
+                        new_intents = self._generate_intents(weights, new_prices)
+                        diag["intents_total"] += len(new_intents)
+                        if weights:
+                            diag["target_gross_by_date"][exec_d] = sum(weights.values())
+                        new_sig, new_exec = t, exec_d
 
             # 2. 执行上一信号日的到期意图（open 价）——唯一成交路径
             fills = []

@@ -143,3 +143,28 @@ def test_position_market_value_update():
     
     pos.update_market_value(raw_close=11.0)
     assert pos.market_value == 11000.0
+
+
+def test_avg_cost_after_dividend_and_split():
+    """分红 + 送股后 avg_cost 正确。"""
+    from datetime import date
+    from core.portfolio import Portfolio, Position
+    from core.corporate_actions import CorporateAction, ActionType
+
+    p = Portfolio(initial_cash=100000.0)
+    p.positions["000001"] = Position(
+        code="000001", total_qty=1000, available_qty=1000,
+        frozen_qty=0, avg_cost=20.0, market_value=0.0)
+    # 分红 0.5
+    p.apply_corporate_action(CorporateAction(
+        date=date(2024, 7, 1), code="000001",
+        action_type=ActionType.CASH_DIVIDEND,
+        cash_dividend_per_share=0.5))
+    # 10 送 10
+    p.apply_corporate_action(CorporateAction(
+        date=date(2024, 12, 25), code="000001",
+        action_type=ActionType.STOCK_SPLIT,
+        split_ratio=2.0))
+    # 验证：avg_cost = (20 - 0.5) / 2 = 9.75
+    assert p.positions["000001"].total_qty == 2000
+    assert abs(p.positions["000001"].avg_cost - 9.75) < 1e-6

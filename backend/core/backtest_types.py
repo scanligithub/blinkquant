@@ -1,6 +1,7 @@
-from dataclasses import dataclass
-from typing import Callable, Optional
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Protocol
 import datetime
+import polars as pl
 
 
 @dataclass
@@ -10,10 +11,28 @@ class FeeConfig:
     Default values are RESEARCH DEFAULTS, not historical actual rates.
     For production backtests, use historical_fee_schedule(date) extension.
     """
-    commission_rate: float = 0.00025      # 佣金费率
-    commission_min: float = 5.0           # 最低佣金
-    stamp_tax_rate: float = 0.0005        # 印花税费率（单边卖出）
-    transfer_fee_rate: float = 0.00001    # 过户费费率（双向）
+    commission_rate: float = 0.00025
+    commission_min: float = 5.0
+    stamp_tax_rate: float = 0.0005
+    transfer_fee_rate: float = 0.00001
+    date_start: Optional[datetime.date] = None
+
+
+@dataclass
+class FeeSchedule:
+    entries: list
+
+    def __post_init__(self):
+        self.entries = sorted(self.entries, key=lambda e: e.date_start or datetime.date.min)
+
+    def get_fee_config(self, date: datetime.date) -> FeeConfig:
+        result = self.entries[0]
+        for entry in self.entries:
+            if entry.date_start is None or entry.date_start <= date:
+                result = entry
+            else:
+                break
+        return result
 
 
 @dataclass
@@ -64,6 +83,40 @@ def top_n_equal_weight_allocator(n: int) -> Allocator:
     """
     def _alloc(codes: list[str], signal_date: datetime.date) -> dict[str, float]:
         picked = sorted(codes)[:n] if n and n > 0 else []
+        if not picked:
+            return {}
+        w = 1.0 / len(picked)
+        return {c: w for c in picked}
+    return _alloc
+
+
+class RankingFn(Protocol):
+    """Ranking 函数签名：对候选集评分并排序。
+
+    输入：frame 包含 ≤ signal_date 的 daily 数据
+    输出：pl.DataFrame[code, score]，按 score desc 排序，相同 score 按 code asc tie-break
+    """
+    def __call__(self, frame: pl.DataFrame, signal_date: datetime.date) -> pl.DataFrame:
+        ...
+
+
+def top_n_ranked_allocator(ranking_fn: 'RankingFn', n: int) -> Allocator:
+    """基于 ranking 评分的 Top-N 等权分配器。
+
+    确定性保证：ranking_fn 内部已做 tie-break（相同 score → code asc），
+    allocator 仅负责按 score 降序取前 N 并等权分配。
+
+    注意：此 allocator 接收的 codes 参数为 eligibility pre-filter 结果，
+    ranking_fn 自行从 frame 中计算 score，不依赖 codes 参数的顺序。
+    """
+    def _alloc(codes: list[str], signal_date: datetime.date,
+               _frame=None, _ranking_fn=ranking_fn, _n=n) -> dict[str, float]:
+        if _frame is None or _frame.is_empty():
+            return {}
+        ranked = _ranking_fn(_frame, signal_date)
+        if ranked.is_empty():
+            return {}
+        picked = ranked["code"].to_list()[:_n]
         if not picked:
             return {}
         w = 1.0 / len(picked)
