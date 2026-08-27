@@ -227,5 +227,35 @@ class Portfolio:
             daily_pnl=self._daily_pnl,
         )
 
+    def apply_corporate_action(self, action: 'CorporateAction'):
+        """应用公司行为到持仓。
+
+        - 现金分红：增加现金，调低 avg_cost
+        - 送股/转增/拆股：调整持股数量和 avg_cost
+        - 配股：暂不实现（raise NotImplementedError）
+        """
+        from core.corporate_actions import ActionType, adjust_qty_for_split, adjust_avg_cost_for_dividend
+
+        if action.code not in self.positions:
+            return  # 不在持仓中，忽略
+
+        pos = self.positions[action.code]
+
+        if action.action_type == ActionType.CASH_DIVIDEND:
+            dividend_cash = pos.total_qty * action.cash_dividend_per_share
+            self.cash += dividend_cash
+            pos.avg_cost = adjust_avg_cost_for_dividend(
+                pos.avg_cost, action.cash_dividend_per_share)
+
+        elif action.action_type in (ActionType.STOCK_SPLIT, ActionType.BONUS_SHARES):
+            new_qty, new_cost = adjust_qty_for_split(
+                pos.total_qty, pos.avg_cost, action.split_ratio)
+            pos.total_qty = new_qty
+            pos.avg_cost = new_cost
+            pos.available_qty = new_qty
+
+        elif action.action_type == ActionType.RIGHTS_ISSUE:
+            raise NotImplementedError("配股暂未实现")
+
     def update_daily_pnl(self, prev_equity: float, current_equity: float):
         self._daily_pnl = current_equity - prev_equity

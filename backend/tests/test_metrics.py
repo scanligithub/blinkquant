@@ -5,6 +5,7 @@ import polars as pl
 
 from core.backtest_engine import BacktestResult
 from core.metrics import BacktestMetrics, compute_metrics
+from core.metrics import _sortino_ratio, _calmar_ratio, compute_benchmark_metrics
 
 
 def _result(equity, trades_rows=None, pos_rows=None, diag=None):
@@ -166,3 +167,44 @@ def test_flat_dict_schema_complete():
     ]
     for k in required:
         assert k in flat, f"schema 缺字段 {k}"
+
+
+# ------------------------------------------------ risk ratios ----
+
+def test_sortino_ratio():
+    returns = [0.01, 0.02, -0.005, 0.015, -0.01, 0.008]
+    sr = _sortino_ratio(returns, risk_free=0.0)
+    assert sr > 0
+
+
+def test_calmar_ratio():
+    calmar = _calmar_ratio(annualized_return=0.15, max_drawdown=0.20)
+    assert abs(calmar - 0.75) < 1e-6
+
+
+def test_benchmark_relative():
+    port_returns = [0.01, 0.02, -0.005, 0.015, -0.01]
+    bench_returns = [0.005, 0.01, -0.002, 0.008, -0.005]
+    result = compute_benchmark_metrics(port_returns, bench_returns)
+    assert "alpha" in result
+    assert "beta" in result
+    assert "tracking_error" in result
+    assert "information_ratio" in result
+
+
+def test_sortino_populated_in_compute_metrics():
+    r = compute_metrics(_result([100.0, 105.0, 98.0, 103.0, 101.0]), initial_cash=100.0)
+    assert r.sortino_ratio != 0.0
+
+
+def test_calmar_populated_in_compute_metrics():
+    r = compute_metrics(_result([100.0, 95.0, 90.0, 85.0, 110.0]), initial_cash=100.0)
+    assert r.calmar_ratio != 0.0
+
+
+def test_benchmark_fields_zero_without_data():
+    r = compute_metrics(_result([100.0, 101.0]), initial_cash=100.0)
+    assert r.benchmark_alpha == 0.0
+    assert r.benchmark_beta == 0.0
+    assert r.benchmark_tracking_error == 0.0
+    assert r.benchmark_information_ratio == 0.0

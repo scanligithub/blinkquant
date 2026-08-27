@@ -132,6 +132,131 @@ class SelectionEngine:
             }
         )
 
+    def execute_selector_ranked(self, formula: str, target_date: datetime.date,
+                                ranking_fn, top_n: int = 20,
+                                eligible_codes: list = None,
+                                requested_date: datetime.date = None):
+        """Ranking-aware selection：eligibility filter → ranking → Top-N → codes。
+
+        与 execute_selector 的区别：
+        1. 加载 ≤ target_date 的 daily 数据（含历史窗口供 ranking 计算指标）
+        2. 对所有 eligible codes 应用 ranking_fn 评分
+        3. 按 score desc 取前 top_n（相同 score → code asc tie-break）
+
+        Returns:
+            SelectionResult with codes 和 metadata['scores'] dict
+        """
+        import polars as pl
+        from core.data_manager import data_manager
+
+        # 历史窗口：信号日往前 60 天（供 MA20 等指标计算）
+        lookback_days = 60 if ranking_fn is not None else 0
+        history_start = target_date - datetime.timedelta(days=lookback_days + 15)
+
+        # 加载 daily frame（含历史）
+        if data_manager.df_daily is None:
+            return SelectionResult(
+                requested_date=requested_date,
+                signal_date=target_date,
+                codes=[],
+                metadata={"formula": formula, "has_ranking": True, "error": "Data not loaded"}
+            )
+
+        df = data_manager.df_daily.filter(
+            (pl.col("date") >= history_start) & (pl.col("date") <= target_date)
+        )
+        if eligible_codes:
+            df = df.filter(pl.col("code").is_in(eligible_codes))
+
+        if df.is_empty():
+            return SelectionResult(
+                requested_date=requested_date,
+                signal_date=target_date,
+                codes=[],
+                metadata={"formula": formula, "has_ranking": True}
+            )
+
+        # 评估公式表达式（在历史窗口上）
+        from core.blink_parser import blink_parser
+        has_mtf = any(tok in formula for tok in ['W.', 'w.', 'M.', 'm.'])
+        timeframe = 'W' if has_mtf else 'D'
+
+        try:
+            expr = blink_parser.parse_expression(formula, timeframe)
+            blink_parser.mount_enabled = True
+
+            # 计算 _signal 和 score 在同一趟扫描
+            scored = (
+                df.sort(["code", "date"])
+                .with_columns(expr.alias("_signal"))
+            )
+
+            # 取 signal_date 的信号
+            signal_day = scored.filter(pl.col("date") == target_date)
+            codes_with_signal = (
+                signal_day
+                .filter(pl.col("_signal"))
+                .select("code")
+                .to_series()
+                .to_list()
+            )
+
+            # 如果没有 ranking_fn，直接返回 code asc
+            if ranking_fn is None:
+                return SelectionResult(
+                    requested_date=requested_date,
+                    signal_date=target_date,
+                    codes=sorted(codes_with_signal),
+                    metadata={"formula": formula, "has_ranking": False}
+                )
+
+            # ranking 评分（在历史窗口上）
+            ranked = ranking_fn(df, target_date)
+            if ranked.is_empty():
+                return SelectionResult(
+                    requested_date=requested_date,
+                    signal_date=target_date,
+                    codes=[],
+                    metadata={"formula": formula, "has_ranking": True}
+                )
+
+            # 只保留通过 eligibility 的 codes
+            ranked = ranked.filter(pl.col("code").is_in(codes_with_signal))
+            if ranked.is_empty():
+                return SelectionResult(
+                    requested_date=requested_date,
+                    signal_date=target_date,
+                    codes=[],
+                    metadata={"formula": formula, "has_ranking": True}
+                )
+
+            # 取 Top-N
+            picked_codes = ranked["code"].to_list()[:top_n]
+            scores = dict(zip(ranked["code"].to_list(),
+                              [round(s, 6) for s in ranked["score"].to_list()]))
+
+            return SelectionResult(
+                requested_date=requested_date,
+                signal_date=target_date,
+                codes=picked_codes,
+                metadata={
+                    "formula": formula,
+                    "has_ranking": True,
+                    "ranking_fn": ranking_fn.__name__ if hasattr(ranking_fn, '__name__') else str(ranking_fn),
+                    "scores": {c: scores.get(c, 0.0) for c in picked_codes},
+                    "eligible_count": len(codes_with_signal),
+                }
+            )
+
+        except Exception as e:
+            logger.warning(f"Ranked selection failed: {e}")
+            return SelectionResult(
+                requested_date=requested_date,
+                signal_date=target_date,
+                codes=[],
+                metadata={"formula": formula, "has_ranking": True, "error": str(e)}
+            )
+
     def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date):
         """单周期执行路径（向后兼容）。"""
         # 选择当前执行周期的数据表
