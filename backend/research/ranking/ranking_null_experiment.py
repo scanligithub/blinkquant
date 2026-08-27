@@ -20,7 +20,7 @@ import time
 import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import polars as pl
 from backtest_quality_2024_2025 import build_df_daily

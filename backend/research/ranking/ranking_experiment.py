@@ -11,7 +11,7 @@ import time
 import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import polars as pl
 from backtest_quality_2024_2025 import build_df_daily
@@ -20,7 +20,7 @@ from core.backtest_engine import BacktestEngine, TradingCalendar
 from core.raw_price_store import RawPriceStore
 from core.metrics import compute_metrics
 from core.backtest_types import FeeConfig, MVP_EXECUTION_CONFIG
-from core.ranking import code_asc_ranking, strength_desc_ranking, strength_asc_ranking
+from research.ranking.ranking import code_asc_ranking, strength_desc_ranking, strength_asc_ranking
 import core.data_manager as dmm
 from core.engine import selection_engine
 
