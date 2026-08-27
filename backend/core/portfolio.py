@@ -248,11 +248,12 @@ class Portfolio:
                 pos.avg_cost, action.cash_dividend_per_share)
 
         elif action.action_type in (ActionType.STOCK_SPLIT, ActionType.BONUS_SHARES):
-            new_qty, new_cost = adjust_qty_for_split(
-                pos.total_qty, pos.avg_cost, action.split_ratio)
-            pos.total_qty = new_qty
+            new_total, new_cost, new_avail, new_frozen = adjust_qty_for_split(
+                pos.total_qty, pos.avg_cost, action.split_ratio, pos.frozen_qty)
+            pos.total_qty = new_total
             pos.avg_cost = new_cost
-            pos.available_qty = new_qty
+            pos.available_qty = new_avail
+            pos.frozen_qty = new_frozen
 
         elif action.action_type == ActionType.RIGHTS_ISSUE:
             raise NotImplementedError("配股暂未实现")

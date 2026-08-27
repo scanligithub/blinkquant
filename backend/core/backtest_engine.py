@@ -10,7 +10,7 @@ from core.execution import ExecutionEngine, OrderIntent, Fill
 from core.data_manager import data_manager
 from core.backtest_types import (
     FeeConfig, ExecutionConfig, Allocator, MVP_EXECUTION_CONFIG,
-    equal_weight_allocator, SelectionResult,
+    equal_weight_allocator, SelectionResult, FeeSchedule,
     BacktestDataIntegrityError, BacktestLedgerError,
 )
 
@@ -141,6 +141,8 @@ class BacktestEngine:
         ranking_fn=None,
         top_n: int = 20,
         corporate_action_store: 'CorporateActionStore' = None,
+        universe_filter: 'UniverseFilter' = None,
+        fee_schedule: 'FeeSchedule' = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -163,6 +165,10 @@ class BacktestEngine:
             corporate_action_store: 可选公司行为存储。每个交易日查询当天发生的
                 分红/送股/拆股等行为，自动调整 Portfolio 的持股数量、成本和现金。
                 None 时跳过公司行为处理（向后兼容）。
+            universe_filter: 可选 UniverseFilter，用于在 selection 前过滤 eligible
+                codes（如 IPO 不足 N 天、排除 ST 等）。None 时不过滤（向后兼容）。
+            fee_schedule: 可选 FeeSchedule，用于按日期查询历史费率。None 时使用
+                固定 fee_config（向后兼容）。
         """
         if rebalance_freq not in ("daily", "weekly"):
             raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
@@ -284,9 +290,12 @@ class BacktestEngine:
                 if ranking_fn is not None:
                     # Ranking path: eligibility filter → ranking → Top-N
                     sel = self.selection_engine.execute_selector(
-                        formula, "D", None, target_date=t)
+                        formula, "D", None, target_date=t, backtest_mode=True)
                     if hasattr(sel, 'codes') and sel.codes:
                         eligible = sel.codes
+                        # P1-2: UniverseFilter 过滤
+                        if universe_filter is not None and eligible:
+                            eligible = universe_filter.filter(eligible, t)
                         # 构建 ranking frame（含历史窗口供 MA20 等指标）
                         import datetime as _dt
                         lookback_start = t - _dt.timedelta(days=75)
@@ -306,9 +315,13 @@ class BacktestEngine:
                         new_sig, new_exec = t, exec_d
                 else:
                     sel = self.selection_engine.execute_selector(
-                        formula, "D", None, target_date=t)
+                        formula, "D", None, target_date=t, backtest_mode=True)
                     if not (isinstance(sel, dict) and "error" in sel):
-                        weights = self.allocator(sel.codes, t)
+                        codes = sel.codes
+                        # P1-2: UniverseFilter 过滤
+                        if universe_filter is not None and codes:
+                            codes = universe_filter.filter(codes, t)
+                        weights = self.allocator(codes, t)
                         new_intents = self._generate_intents(weights, new_prices)
                         diag["intents_total"] += len(new_intents)
                         if weights:
@@ -332,6 +345,7 @@ class BacktestEngine:
                     raw_prices=self._pend_prices,
                     cash=self.portfolio.cash,
                     limit_flags=limit_flags,
+                    fee_config=fee_schedule.get_fee_config(t) if fee_schedule is not None else None,
                 )
                 fills = report.fills
                 for r in report.rejections:
