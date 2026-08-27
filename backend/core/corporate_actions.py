@@ -28,13 +28,20 @@ class CorporateAction:
 
 
 def adjust_qty_for_split(total_qty: int, avg_cost: float,
-                         split_ratio: float) -> tuple[int, float]:
-    """送股/转增/拆股后调整持股数量和成本。"""
+                         split_ratio: float,
+                         frozen_qty: int = 0) -> tuple[int, float, int, int]:
+    """送股/转增/拆股后调整持股数量和成本。
+
+    Returns:
+        (new_total, new_cost, new_available, new_frozen)
+    """
     if split_ratio <= 0 or split_ratio == 1.0:
-        return total_qty, avg_cost
-    new_qty = int(total_qty * split_ratio)
+        return total_qty, avg_cost, total_qty - frozen_qty, frozen_qty
+    new_total = int(total_qty * split_ratio)
+    new_frozen = int(frozen_qty * split_ratio)
+    new_available = new_total - new_frozen
     new_cost = avg_cost / split_ratio if split_ratio > 0 else 0.0
-    return new_qty, new_cost
+    return new_total, new_cost, new_available, new_frozen
 
 
 def adjust_avg_cost_for_dividend(avg_cost: float,

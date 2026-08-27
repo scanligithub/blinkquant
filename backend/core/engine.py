@@ -10,6 +10,11 @@ from .selection_result import SelectionResult
 logger = logging.getLogger(__name__)
 
 
+class UnsupportedInBacktestError(RuntimeError):
+    """回测模式下禁止使用板块/行业字段（PIT leakage 风险）。"""
+    pass
+
+
 class SelectionEngine:
     def __init__(self):
         _funcs = "|".join(WINDOW_NAMES)
@@ -77,16 +82,28 @@ class SelectionEngine:
                 setattr(data_manager, attr_name, updated_df)
                 logger.info(f"Hot-JIT Broadcast: Mounted {len(new_exprs)} cols to {attr_name}")
 
-    def execute_selector(self, formula: str, timeframe: str, background_tasks, target_date=None):
+    def execute_selector(self, formula: str, timeframe: str, background_tasks, target_date=None,
+                         backtest_mode: bool = False):
         """执行选股。
 
         target_date（datetime.date）可选：指定时回退到 ≤ 该日的最近交易日，未指定用数据最新日。
+        backtest_mode: True 时禁止使用板块/行业字段（防止 PIT leakage）。
 
         多周期支持：
         - 检测 W./M. 前缀 → 使用 parse_multi_tf → plan tree
         - 无前缀 → 单周期路径（向后兼容）
         """
-        # 0. 统一 target_date：未指定 → df_daily 最新日；指定 → 归一到 ≤ 该日的最近交易日
+        # 0. P0-1: 回测模式下禁止板块/行业字段（在任何数据加载之前拦截）
+        if backtest_mode:
+            _sector_kw = re.compile(r'\b(?:S_CLOSE|S_PCT_CHG|INDUSTRY_\w+|SECTOR_\w+)\b', re.IGNORECASE)
+            if _sector_kw.search(formula):
+                raise UnsupportedInBacktestError(
+                    f"回测模式禁止使用板块/行业字段: {formula!r}。"
+                    f"历史板块映射为静态数据，存在 PIT leakage 风险。"
+                    f"实时选股（backtest_mode=False）可正常使用。"
+                )
+
+        # 1. 统一 target_date：未指定 → df_daily 最新日；指定 → 归一到 ≤ 该日的最近交易日
         # 记录用户原始输入用于审计
         requested_date = target_date
         if target_date is None:
@@ -103,7 +120,7 @@ class SelectionEngine:
                 return {"error": f"指定日期 {target_date} 早于数据起点，无可用交易日数据"}
             target_date = eff
 
-        # 1. 执行全周期热挂载
+        # 2. 执行全周期热挂载
         self._prepare_hot_jit(formula)
 
         # 2. 检测是否有 MTF 前缀
@@ -111,9 +128,9 @@ class SelectionEngine:
         has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', clean_expr))
 
         if has_mtf:
-            result_dict = self._execute_mtf(formula, timeframe, target_date)
+            result_dict = self._execute_mtf(formula, timeframe, target_date, backtest_mode=backtest_mode)
         else:
-            result_dict = self._execute_single(formula, timeframe, target_date)
+            result_dict = self._execute_single(formula, timeframe, target_date, backtest_mode=backtest_mode)
 
         # 返回 SelectionResult（保持错误 dict 兼容）
         if isinstance(result_dict, dict) and "error" in result_dict:
@@ -257,8 +274,19 @@ class SelectionEngine:
                 metadata={"formula": formula, "has_ranking": True, "error": str(e)}
             )
 
-    def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date):
+    def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date,
+                        backtest_mode: bool = False):
         """单周期执行路径（向后兼容）。"""
+        # P0-1: 回测模式下禁止板块/行业字段（PIT leakage）
+        if backtest_mode:
+            _sector_kw = re.compile(r'\b(?:S_CLOSE|S_PCT_CHG|INDUSTRY_\w+|SECTOR_\w+)\b', re.IGNORECASE)
+            if _sector_kw.search(formula):
+                raise UnsupportedInBacktestError(
+                    f"回测模式禁止使用板块/行业字段: {formula!r}。"
+                    f"历史板块映射为静态数据，存在 PIT leakage 风险。"
+                    f"实时选股（backtest_mode=False）可正常使用。"
+                )
+
         # 选择当前执行周期的数据表
         df_attr = {'D': 'df_daily', 'W': 'df_weekly', 'M': 'df_monthly'}.get(timeframe, 'df_daily')
         df = getattr(data_manager, df_attr)
@@ -309,7 +337,8 @@ class SelectionEngine:
         except Exception as e:
             return {"error": str(e)}
 
-    def _execute_mtf(self, formula: str, base_tf: str, target_date: datetime.date):
+    def _execute_mtf(self, formula: str, base_tf: str, target_date: datetime.date,
+                     backtest_mode: bool = False):
         """多周期执行路径。
 
         流程：
@@ -323,24 +352,26 @@ class SelectionEngine:
             return {"error": f"Parse error: {e}"}
 
         # 递归折叠 plan tree
-        result_set = self._fold_plan(plan, target_date, base_tf)
+        result_set = self._fold_plan(plan, target_date, base_tf, backtest_mode=backtest_mode)
         codes = sorted(result_set) if result_set else set()
 
         return {"codes": list(codes), "date": target_date.isoformat()}
 
-    def _fold_plan(self, plan: dict, target_date: datetime.date, base_tf: str) -> set:
+    def _fold_plan(self, plan: dict, target_date: datetime.date, base_tf: str,
+                   backtest_mode: bool = False) -> set:
         """递归折叠 plan tree，返回 code set。"""
         if plan["type"] == "atom":
-            return self._eval_atom(plan, target_date, base_tf)
+            return self._eval_atom(plan, target_date, base_tf, backtest_mode=backtest_mode)
         elif plan["type"] == "bool":
-            child_sets = [self._fold_plan(c, target_date, base_tf) for c in plan["children"]]
+            child_sets = [self._fold_plan(c, target_date, base_tf, backtest_mode=backtest_mode) for c in plan["children"]]
             if plan["op"] == "AND":
                 return set.intersection(*child_sets) if child_sets else set()
             else:  # OR
                 return set.union(*child_sets) if child_sets else set()
         return set()
 
-    def _eval_atom(self, atom: dict, target_date: datetime.date, base_tf: str) -> set:
+    def _eval_atom(self, atom: dict, target_date: datetime.date, base_tf: str,
+                   backtest_mode: bool = False) -> set:
         """对单个 atom 求值，返回 code set。
 
         契约：返回“每一只股票在 target_date 的 as-of bar 上，该 atom 是否成立”的集合。
@@ -352,6 +383,16 @@ class SelectionEngine:
         """
         tf = atom["tf"]
         expr = atom["expr"]
+
+        # P0-1: 回测模式下禁止板块/行业字段（MTF atom 级别检查）
+        if backtest_mode:
+            atom_src = atom.get("source", "")
+            _sector_kw = re.compile(r'\b(?:S_CLOSE|S_PCT_CHG|INDUSTRY_\w+|SECTOR_\w+)\b', re.IGNORECASE)
+            if _sector_kw.search(atom_src):
+                raise UnsupportedInBacktestError(
+                    f"回测模式禁止使用板块/行业字段: {atom_src!r}。"
+                    f"历史板块映射为静态数据，存在 PIT leakage 风险。"
+                )
 
         # 生成 canonical key（用于 set cache，含 target_date 隔离）
         cache_key = self._canonical_atom_key(tf, target_date, atom.get("source", str(expr)))

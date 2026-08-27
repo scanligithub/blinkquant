@@ -84,6 +84,7 @@ class ExecutionEngine:
         raw_prices: dict[str, dict],
         cash: float,
         limit_flags: dict[str, dict] = None,
+        fee_config: FeeConfig = None,
     ) -> ExecutionReport:
         """执行订单意图。
 
@@ -118,7 +119,7 @@ class ExecutionEngine:
                 report.rejections.append(Rejection(intent.code, "SELL", R_ZERO_TARGET, intent.target_qty))
                 continue
 
-            fee = self._calc_fee(price * fill_qty, "SELL")
+            fee = self._calc_fee(price * fill_qty, "SELL", fee_config)
             report.fills.append(Fill(intent.code, "SELL", fill_qty, price, fee))
             available_cash += price * fill_qty - fee
 
@@ -145,7 +146,7 @@ class ExecutionEngine:
                 report.rejections.append(Rejection(intent.code, "BUY", R_CASH_STARVED, intent.target_qty))
                 continue
 
-            fee = self._calc_fee(price * fill_qty, "BUY")
+            fee = self._calc_fee(price * fill_qty, "BUY", fee_config)
             report.fills.append(Fill(intent.code, "BUY", fill_qty, price, fee))
             available_cash -= price * fill_qty + fee
 
@@ -186,9 +187,9 @@ class ExecutionEngine:
             qty -= LOT_SIZE
         return 0
 
-    def _calc_fee(self, amount: float, side: str) -> float:
+    def _calc_fee(self, amount: float, side: str, fee_config: FeeConfig = None) -> float:
         """单笔订单费用 = max(佣金率×金额, 最低佣金) + 印花税(仅卖出) + 过户费。"""
-        fc = self.fee_config
+        fc = fee_config if fee_config is not None else self.fee_config
         commission = max(amount * fc.commission_rate, fc.commission_min)
         stamp_tax = amount * fc.stamp_tax_rate if side == "SELL" else 0.0
         transfer = amount * fc.transfer_fee_rate

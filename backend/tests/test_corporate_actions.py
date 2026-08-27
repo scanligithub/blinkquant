@@ -15,15 +15,20 @@ def test_action_type_enum():
 
 def test_adjust_qty_for_split_2_to_1():
     """10 送 10（2:1 拆股）：qty × 2, avg_cost / 2"""
-    qty, cost = adjust_qty_for_split(total_qty=1000, avg_cost=20.0, split_ratio=2.0)
+    qty, cost, avail, frozen = adjust_qty_for_split(
+        total_qty=1000, avg_cost=20.0, split_ratio=2.0, frozen_qty=100)
     assert qty == 2000
+    assert avail == 1800
+    assert frozen == 200
     assert abs(cost - 10.0) < 1e-6
 
 
 def test_adjust_qty_for_bonus_shares():
     """10 送 3（bonus_ratio=0.3）：qty × 1.3, avg_cost / 1.3"""
-    qty, cost = adjust_qty_for_split(total_qty=1000, avg_cost=15.0, split_ratio=1.3)
+    qty, cost, avail, frozen = adjust_qty_for_split(
+        total_qty=1000, avg_cost=15.0, split_ratio=1.3, frozen_qty=50)
     assert qty == 1300
+    assert avail + frozen == qty
     assert abs(cost - 15.0 / 1.3) < 1e-6
 
 
