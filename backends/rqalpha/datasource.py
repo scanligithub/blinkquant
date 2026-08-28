@@ -175,10 +175,49 @@ class BlinkquantParquetDataSource(AbstractDataSource):
         }
 
     def get_dividend(self, instrument) -> Optional[np.ndarray]:
-        return None
+        code = instrument.order_book_id if hasattr(instrument, "order_book_id") else str(instrument)
+        import os, polars as pl
+        path = os.path.join(self._parquet_root, "dividends.parquet")
+        if not os.path.exists(path):
+            return None
+        df = pl.read_parquet(path)
+        rows = df.filter(pl.col("code") == code)
+        if rows.is_empty():
+            return None
+        dtype = [
+            ("book_closure_date", "<i8"),
+            ("announcement_date", "<i8"),
+            ("dividend_cash_before_tax", "<f8"),
+            ("ex_dividend_date", "<i8"),
+            ("payable_date", "<i8"),
+            ("round_lot", "<f8"),
+        ]
+        arr = np.zeros(len(rows), dtype=dtype)
+        for i, row in enumerate(rows.iter_rows(named=True)):
+            arr[i]["book_closure_date"] = int(row["book_closure_date"])
+            arr[i]["announcement_date"] = int(row.get("announcement_date", row["book_closure_date"]))
+            arr[i]["dividend_cash_before_tax"] = float(row["dividend_cash_before_tax"])
+            arr[i]["ex_dividend_date"] = int(row["ex_dividend_date"])
+            arr[i]["payable_date"] = int(row["payable_date"])
+            arr[i]["round_lot"] = float(row.get("round_lot", 10))
+        return arr
 
     def get_split(self, instrument) -> Optional[np.ndarray]:
-        return None
+        code = instrument.order_book_id if hasattr(instrument, "order_book_id") else str(instrument)
+        import os, polars as pl
+        path = os.path.join(self._parquet_root, "splits.parquet")
+        if not os.path.exists(path):
+            return None
+        df = pl.read_parquet(path)
+        rows = df.filter(pl.col("code") == code)
+        if rows.is_empty():
+            return None
+        dtype = [("ex_date", "<i8"), ("split_factor", "<f8")]
+        arr = np.zeros(len(rows), dtype=dtype)
+        for i, row in enumerate(rows.iter_rows(named=True)):
+            arr[i]["ex_date"] = int(row["ex_date"])
+            arr[i]["split_factor"] = float(row["split_factor"])
+        return arr
 
     def get_yield_curve(self, start_date, end_date, tenor=None) -> pd.DataFrame:
         return pd.DataFrame()
