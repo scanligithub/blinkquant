@@ -62,6 +62,13 @@ class BlinkquantParquetDataSource(AbstractDataSource):
                 "de_listed_date": str(row["delist_date"]) if row.get("delist_date") else None,
                 "type": INSTRUMENT_TYPE.CS,
                 "status": "Active",
+                "board_type": "主板",
+                "exchange": "XSHE" if code.startswith("sz.") else "XSHG",
+                "round_lot": 100,
+                "tick_size": 0.01,
+                "min_order_quantity": 100,
+                "order_step_size": 100,
+                "market_tplus": 1,
             }
             inst = Instrument(dic)
             self._instruments[code] = inst
