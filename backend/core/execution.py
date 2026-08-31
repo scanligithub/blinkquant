@@ -141,7 +141,7 @@ class ExecutionEngine:
                 report.rejections.append(Rejection(intent.code, "BUY", R_BELOW_LOT, intent.target_qty))
                 continue
 
-            fill_qty = self._max_affordable_lot_qty(price, available_cash, lot_qty)
+            fill_qty = self._max_affordable_lot_qty(price, available_cash, lot_qty, fee_config)
             if fill_qty <= 0:
                 report.rejections.append(Rejection(intent.code, "BUY", R_CASH_STARVED, intent.target_qty))
                 continue
@@ -171,7 +171,7 @@ class ExecutionEngine:
             return R_LIMIT_BLOCKED
         return None
 
-    def _max_affordable_lot_qty(self, price: float, cash: float, cap_qty: int) -> int:
+    def _max_affordable_lot_qty(self, price: float, cash: float, cap_qty: int, fee_config: FeeConfig = None) -> int:
         """按真实 FeeConfig 计算可负担的最大整手买入数量。
 
         最低佣金按"一笔订单"判断（max(amount*rate, min)），不做每股摊薄近似。
@@ -181,7 +181,7 @@ class ExecutionEngine:
             return 0
         qty = min(cap_qty, (int(cash / price) // LOT_SIZE) * LOT_SIZE)
         while qty > 0:
-            fee = self._calc_fee(price * qty, "BUY")
+            fee = self._calc_fee(price * qty, "BUY", fee_config)
             if price * qty + fee <= cash:
                 return qty
             qty -= LOT_SIZE

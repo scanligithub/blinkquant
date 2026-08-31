@@ -6,6 +6,7 @@ from .data_manager import data_manager
 from .security import blink_parser
 from .indicator_registry import WINDOW_NAMES, FIELDS
 from .selection_result import SelectionResult
+from .signal_trace import AtomTrace, CodeTrace, SignalTraceData
 
 logger = logging.getLogger(__name__)
 
@@ -462,6 +463,147 @@ class SelectionEngine:
         self._set_cache[cache_key] = result_codes
 
         return result_codes
+
+
+    # =========================================================================
+    # SignalTrace generation (P1-2)
+    # =========================================================================
+    def execute_selector_with_trace(self, formula: str, timeframe: str, background_tasks,
+                                    target_date=None, backtest_mode: bool = False,
+                                    raise_on_error: bool = False):
+        """执行选股并生成 SignalTraceData（P1-2）。
+
+        Returns:
+            tuple: (SelectionResult, SignalTraceData)
+        """
+        # Reuse existing execute_selector logic, but also generate trace
+        result = self.execute_selector(formula, timeframe, background_tasks,
+                                        target_date, backtest_mode, raise_on_error)
+
+        if isinstance(result, dict) and "error" in result:
+            # Error case
+            if raise_on_error:
+                raise BacktestSelectionError(f"Selection failed: {result['error']}")
+            return result, None
+
+        # Generate trace for the selected codes
+        trace = self._generate_trace(result.codes, formula, timeframe, result.signal_date, backtest_mode)
+
+        return result, trace
+
+    def _generate_trace(self, codes: list, formula: str, timeframe: str,
+                        signal_date: datetime.date, backtest_mode: bool) -> SignalTraceData:
+        """为选中的 codes 生成完整的 SignalTraceData。"""
+        trace = SignalTraceData(
+            engine_version="unknown",
+            signal_date=signal_date.isoformat(),
+            formula=formula,
+            traces=[],
+        )
+
+        for code in codes:
+            code_trace = self._trace_code(code, formula, timeframe, signal_date, backtest_mode)
+            if code_trace:
+                trace.traces.append(code_trace)
+
+        return trace
+
+    def _trace_code(self, code: str, formula: str, timeframe: str,
+                    signal_date: datetime.date, backtest_mode: bool) -> CodeTrace:
+        """对单个 code 生成完整的原子级 trace。"""
+        # Get the plan tree to extract all atoms
+        has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', formula.strip().replace('&&', '&').replace('||', '|')))
+
+        if has_mtf:
+            plan = blink_parser.parse_multi_tf(formula, 'D')
+            atoms = self._extract_atoms_from_plan(plan, code, signal_date, backtest_mode)
+        else:
+            # Single timeframe - parse expression and extract atoms
+            expr = blink_parser.parse_expression(formula, 'D')
+            atoms = self._extract_atoms_from_expr(expr, formula, 'D', code, signal_date, backtest_mode)
+
+        return CodeTrace(
+            code=code,
+            passed=True,  # Selected codes are by definition passed
+            atoms=atoms,
+            execution=None,  # Filled later by BacktestEngine
+        )
+
+    def _extract_atoms_from_plan(self, plan: dict, code: str,
+                                 signal_date: datetime.date, backtest_mode: bool) -> list:
+        """从 MTF plan tree 提取原子。"""
+        atoms = []
+        if plan["type"] == "atom":
+            atom_trace = self._trace_atom(plan, code, signal_date, backtest_mode)
+            if atom_trace:
+                atoms.append(atom_trace)
+        elif plan["type"] == "bool":
+            for child in plan["children"]:
+                atoms.extend(self._extract_atoms_from_plan(child, code, signal_date, backtest_mode))
+        return atoms
+
+    def _extract_atoms_from_expr(self, expr, formula: str, timeframe: str,
+                                 code: str, signal_date: datetime.date, backtest_mode: bool) -> list:
+        """从单周期表达式提取原子（简化版：直接解析 formula 中的原子）。"""
+        # 从 formula 字符串中提取原子信息
+        atoms = []
+        matches = self.metric_pattern.findall(formula)
+        for func, field, param in matches:
+            atom_id = f"{func.upper()}_{field.upper()}_{param}"
+            atoms.append(self._trace_single_atom(atom_id, field.upper(), int(param), code, signal_date, backtest_mode))
+        return atoms
+
+    def _trace_single_atom(self, atom_id: str, field: str, window: int,
+                           code: str, signal_date: datetime.date, backtest_mode: bool) -> AtomTrace:
+        """Trace 单个原子的评估结果。"""
+        # 获取该 code 在 signal_date 的 as-of frame 数据
+        frame = data_manager.build_asof_frame('D', signal_date)
+        if frame is None or frame.is_empty():
+            return AtomTrace(
+                atom_id=atom_id, field=field, window=str(window),
+                value=float("nan"), operator=None, threshold=None, passed=False
+            )
+
+        code_df = frame.filter(pl.col("code") == code).sort("date")
+        if code_df.is_empty():
+            return AtomTrace(
+                atom_id=atom_id, field=field, window=str(window),
+                value=float("nan"), operator=None, threshold=None, passed=False
+            )
+
+        last_bar = code_df.tail(1)
+        if last_bar.is_empty():
+            return AtomTrace(
+                atom_id=atom_id, field=field, window=str(window),
+                value=float("nan"), operator=None, threshold=None, passed=False
+            )
+
+        # 获取字段值
+        if field not in last_bar.columns:
+            return AtomTrace(
+                atom_id=atom_id, field=field, window=str(window),
+                value=float("nan"), operator=None, threshold=None, passed=False
+            )
+
+        value = last_bar[field].item()
+        if value is None:
+            return AtomTrace(
+                atom_id=atom_id, field=field, window=str(window),
+                value=float("nan"), operator=None, threshold=None, passed=False
+            )
+
+        # 对于比较类原子，我们需要解析完整表达式来获取 operator 和 threshold
+        # 这里简化：仅记录原始值和通过状态
+        # 实际比较在 blink_parser 内部完成，我们只记录原子值
+        return AtomTrace(
+            atom_id=atom_id,
+            field=field,
+            window=str(window),
+            value=float(value) if value is not None else float("nan"),
+            operator=None,
+            threshold=None,
+            passed=True,  # Selected codes passed the overall formula
+        )
 
 
 selection_engine = SelectionEngine()

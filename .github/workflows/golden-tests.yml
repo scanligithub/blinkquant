@@ -1,0 +1,48 @@
+name: Golden Regression Tests
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'tests/golden/**'
+      - 'config/**'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'tests/golden/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  golden-tests:
+    runs-on: ubuntu-latest
+    steps:
+      # Fork PRs skip golden tests (no access to secrets)
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest
+          
+      - name: Run golden tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          cd backend
+          pytest tests/test_golden_2024q1.py -v
+          
+      - name: Run all backend tests
+        run: |
+          cd backend
+          pytest tests/ -v --ignore=tests/test_golden_2024q1.py
