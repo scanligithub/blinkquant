@@ -13,6 +13,10 @@ from .indicator_registry import INDICATOR_FUNCS
 
 logger = logging.getLogger(__name__)
 
+# Columns to keep when loading kline parquets (P2-MEM: column pruning)
+KEEP_COLS = ["date", "code", "open", "high", "low", "close",
+             "volume", "amount", "adjustFactor", "pctChg", "isST"]
+
 # 主板 ST 涨跌幅与普通股并轨日：此前主板 ST 为 5%，此后统一 10%（见 security.py 板别注释）
 MAIN_BOARD_ST_UNIFY_DATE = datetime.date(2026, 7, 6)
 # 创业板注册制改革日：此前创业板限幅为 10%（数据集自 2005 年起，该规则实际生效）
