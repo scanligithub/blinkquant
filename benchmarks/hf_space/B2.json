@@ -1,0 +1,10 @@
+{
+  "benchmark": "B2",
+  "period": "2024-01-02..2024-12-30",
+  "trades": 1521,
+  "final_equity": 8661295.686334237,
+  "backtest_time_sec": 51.7,
+  "has_negative_cash": false,
+  "accounting_violations": 0,
+  "rejections": 59
+}

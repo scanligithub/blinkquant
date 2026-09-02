@@ -1,0 +1,51 @@
+{
+  "engine": "selection-v4",
+  "environment": "hf-space",
+  "golden_equivalence": true,
+  "oom": false,
+  "timeout": false,
+  "max_peak_rss_mb": 1050,
+  "node_count": 3,
+  "benchmarks": {
+    "B1": {
+      "status": "PASS",
+      "period": "2024-01-02..2024-03-29",
+      "trades": 395,
+      "final_equity": 6791917.78,
+      "backtest_time_sec": 14.7,
+      "golden_trades_match": true,
+      "golden_equity_match": true,
+      "has_negative_cash": false,
+      "accounting_violations": 0
+    },
+    "B2": {
+      "status": "PASS",
+      "period": "2024-01-02..2024-12-30",
+      "trades": 1521,
+      "final_equity": 8661295.69,
+      "backtest_time_sec": 51.7,
+      "has_negative_cash": false,
+      "accounting_violations": 0
+    },
+    "B3": {
+      "status": "PASS",
+      "period": "2019-01-02..2024-12-30",
+      "trades": 8867,
+      "final_equity": 10397456.32,
+      "backtest_time_sec": 228.4,
+      "has_negative_cash": false,
+      "accounting_violations": 0
+    },
+    "B4": {
+      "status": "PASS",
+      "period": "2010-01-04..2024-12-30",
+      "trades": 20678,
+      "final_equity": 3371518.82,
+      "backtest_time_sec": 322.7,
+      "golden_trades_match": true,
+      "golden_equity_match": true,
+      "has_negative_cash": false,
+      "accounting_violations": 0
+    }
+  }
+}
