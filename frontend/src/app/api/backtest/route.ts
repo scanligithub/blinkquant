@@ -4,6 +4,7 @@ import { requireAuth } from '@/lib/auth';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// v1: force deploy
 const NODES = [
   'https://scanli-blinkquant-node1.hf.space',
   'https://scanli-blinkquant-node2.hf.space',
