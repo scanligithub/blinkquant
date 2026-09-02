@@ -352,7 +352,10 @@ async def run_benchmark(req: BenchmarkRequest):
     # Build engine
     _sel._set_cache.clear()
     allocator = top_n_equal_weight_allocator(20)
-    fee_schedule = load_fee_schedule("config/fee_schedule.yaml")
+    fee_schedule_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'fee_schedule.yaml')
+    if not os.path.exists(fee_schedule_path):
+        fee_schedule_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'fee_schedule.yaml')
+    fee_schedule = load_fee_schedule(fee_schedule_path)
 
     engine = BacktestEngine(
         calendar=cal, selection_engine=_sel,
