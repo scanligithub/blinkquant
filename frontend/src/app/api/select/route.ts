@@ -59,14 +59,16 @@ export async function POST(req: NextRequest) {
           };
         }
         const json = await res.json();
+        const codes = Array.isArray(json.codes) ? json.codes : (Array.isArray(json.results) ? json.results : []);
+        const signalDate = typeof json.signal_date === 'string' ? json.signal_date : (typeof json.date === 'string' ? json.date : null);
         return {
           node: i + 1,
           ok: true,
-          count: typeof json.count === 'number' ? json.count : (json.results?.length ?? 0),
+          count: codes.length,
           error: null,
           detail: null,
-          date: typeof json.date === 'string' ? json.date : null,
-          results: Array.isArray(json.results) ? json.results : [],
+          date: signalDate,
+          results: codes,
         };
       })
       .catch((err): NodeOutcome => {
