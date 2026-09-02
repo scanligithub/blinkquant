@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from fastapi.responses import Response # New import
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 import datetime
@@ -8,6 +8,7 @@ import os
 import re
 import psutil
 import psycopg2
+import uuid
 from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
@@ -149,9 +150,88 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
             "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
             "metrics": result.metrics,
-        }
+}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Async backtest endpoints
+_backtest_jobs: dict[str, dict] = {}
+
+async def _run_backtest_async(job_id: str, req: BacktestRequest):
+    try:
+        if data_manager.df_daily is None:
+            _backtest_jobs[job_id] = {"status": "error", "error": "Nodes are loading data..."}
+            return
+
+        calendar = TradingCalendar()
+        if data_manager.df_daily is not None:
+            trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
+            calendar.set_trade_dates(trade_dates)
+
+        raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
+        if raw_data_root:
+            raw_price_store = RawPriceStore(data_root=raw_data_root)
+        else:
+            raw_price_store = RawPriceStore(hf_repo_id=data_manager.repo_id)
+        logger.info(f"Backtest raw price source: {raw_price_store.source_type}")
+
+        backtest_engine = BacktestEngine(
+            calendar=calendar,
+            selection_engine=selection_engine,
+            raw_price_store=raw_price_store,
+            fee_config=FeeConfig(),
+            execution_config=MVP_EXECUTION_CONFIG,
+            allocator=equal_weight_allocator,
+        )
+
+        result = backtest_engine.run(
+            formula=req.formula,
+            start_date=req.start_date,
+            end_signal_date=req.end_signal_date,
+            initial_cash=req.initial_cash,
+        )
+
+        valuation_end_date = None
+        if not result.equity_curve.is_empty():
+            valuation_end_date = result.equity_curve["date"].max().isoformat()
+
+        _backtest_jobs[job_id] = {
+            "status": "done",
+            "data": {
+                "formula": req.formula,
+                "start_date": req.start_date.isoformat(),
+                "signal_end_date": req.end_signal_date.isoformat(),
+                "valuation_end_date": valuation_end_date,
+                "initial_cash": req.initial_cash,
+                "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
+                "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
+                "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
+                "metrics": result.metrics,
+            }
+        }
+    except Exception as e:
+        _backtest_jobs[job_id] = {"status": "error", "error": str(e)}
+
+
+@router.post("/backtest/async")
+async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundTasks):
+    if data_manager.df_daily is None:
+        raise HTTPException(status_code=503, detail="Nodes are loading data...")
+
+    job_id = str(uuid.uuid4())
+    _backtest_jobs[job_id] = {"status": "pending"}
+    background_tasks.add_task(_run_backtest_async, job_id, req)
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/backtest/async/{job_id}")
+async def get_backtest_async(job_id: str):
+    job = _backtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
 
 @router.get("/kline")
 def get_kline(code: str, timeframe: str = "D"):
