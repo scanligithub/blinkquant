@@ -289,7 +289,6 @@ useEffect(() => {
     setBacktestLoading(true);
     setBacktestResult(null);
     try {
-      // 1. 提交任务
       const res = await fetch('/api/backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,37 +301,8 @@ useEffect(() => {
         alert(`回测失败: ${msg}`);
         return;
       }
-      const { jobId } = await res.json();
-      if (!jobId) {
-        alert('回测失败: 未获取到任务 ID');
-        return;
-      }
-
-      // 2. 轮询结果
-      const pollResult = async () => {
-        while (true) {
-          await new Promise((r) => setTimeout(r, 2000));
-          const pollRes = await fetch(`/api/backtest?jobId=${jobId}`);
-          if (!pollRes.ok) {
-            const text = await pollRes.text();
-            let msg = pollRes.statusText;
-            try { msg = JSON.parse(text).error || text; } catch { msg = text.slice(0, 200); }
-            alert(`回测失败: ${msg}`);
-            return;
-          }
-          const result = await pollRes.json();
-          if (result.status === 'done') {
-            setBacktestResult(result.data);
-            return;
-          }
-          if (result.status === 'error') {
-            alert(`回测失败: ${result.error}`);
-            return;
-          }
-          // status === 'pending' -> continue polling
-        }
-      };
-      await pollResult();
+      const data = await res.json();
+      setBacktestResult(data);
     } catch (e: any) {
       alert(`回测失败: ${e.message}`);
     } finally {
