@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import StockSearch from '../components/StockSearch';
 import AISelectModal from '../components/AISelectModal';
+import BacktestPanel from '../components/BacktestPanel';
+import BacktestResults from '../components/BacktestResults';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
@@ -41,10 +43,12 @@ export default function Home() {
   const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [showWatchlist, setShowWatchlist] = useState(false);
   const [showStrategies, setShowStrategies] = useState(false);
   const [saveStrategyOpen, setSaveStrategyOpen] = useState(false);
   const [showAISelect, setShowAISelect] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'results' | 'watchlist' | 'backtest'>('results');
+  const [backtestResult, setBacktestResult] = useState<any>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
   const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [selectDate, setSelectDate] = useState('');
@@ -276,6 +280,34 @@ useEffect(() => {
     }
   }, [strategyName, formula, timeframe]);
 
+  const handleBacktest = async (params: {
+    formula: string;
+    start_date: string;
+    end_signal_date: string;
+    initial_cash: number;
+  }) => {
+    setBacktestLoading(true);
+    setBacktestResult(null);
+    try {
+      const res = await fetch('/api/backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(`回测失败: ${err.error || res.statusText}`);
+        return;
+      }
+      const data = await res.json();
+      setBacktestResult(data);
+    } catch (e: any) {
+      alert(`回测失败: ${e.message}`);
+    } finally {
+      setBacktestLoading(false);
+    }
+  };
+
   const handleApplyStrategy = useCallback((strategyFormula: string, strategyTimeframe: string) => {
     setFormula(strategyFormula);
     setTimeframe(strategyTimeframe);
@@ -432,7 +464,7 @@ setDailyDataCache(dailyData);
                 </button>
                 {userMenuOpen && (
                   <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-                    <button onClick={() => { setUserMenuOpen(false); setShowWatchlist(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">自选股</button>
+                    <button onClick={() => { setUserMenuOpen(false); setSidebarTab('watchlist'); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">自选股</button>
                     <button onClick={() => { setUserMenuOpen(false); setShowStrategies(true); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">我的策略</button>
                     <button onClick={() => { setUserMenuOpen(false); downloadFromResponse('/api/me/export'); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">导出我的数据</button>
                     {user.role === 'admin' && (
@@ -533,19 +565,25 @@ setDailyDataCache(dailyData);
               <div className="p-4 border-b flex justify-between items-center bg-slate-50/50">
                 <div className="flex gap-1">
                   <button
-                    onClick={() => setShowWatchlist(false)}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg ${!showWatchlist ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                    onClick={() => setSidebarTab('results')}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
                   >
                     结果
                   </button>
                   <button
-                    onClick={() => setShowWatchlist(true)}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg ${showWatchlist ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                    onClick={() => setSidebarTab('watchlist')}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'watchlist' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
                   >
                     自选
                   </button>
+                  <button
+                    onClick={() => setSidebarTab('backtest')}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'backtest' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                  >
+                    回测
+                  </button>
                 </div>
-                {!showWatchlist && (
+                {sidebarTab === 'results' && (
                   <>
                     {selectMeta?.date && (
                       <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-mono">
@@ -556,12 +594,12 @@ setDailyDataCache(dailyData);
                   </>
                 )}
               </div>
-              {!showWatchlist && selectMeta?.degraded && (
+              {sidebarTab === 'results' && selectMeta?.degraded && (
                 <div className="mx-2 mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   部分计算节点响应失败，本次结果可能不完整，建议重试。
                 </div>
               )}
-              {showWatchlist ? (
+              {sidebarTab === 'watchlist' ? (
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                   <Watchlist
                     codes={watchlistCodes}
@@ -571,15 +609,30 @@ setDailyDataCache(dailyData);
                     stockList={stockList}
                   />
                 </div>
+              ) : sidebarTab === 'backtest' ? (
+                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
+                  <BacktestPanel initialFormula={formula} onRun={handleBacktest} loading={backtestLoading} />
+                  {backtestResult && <BacktestResults result={backtestResult} />}
+                </div>
               ) : (
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                 {results.map(code => {
                   const name = stockList.find(s => s.code === code)?.name || code;
                   return (
-                    <button key={code} onClick={() => viewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedStock?.code === code ? 'bg-blue-50 text-blue-700 font-bold border border-blue-100' : 'hover:bg-slate-50 text-slate-600'}`}>
-                      <span className="truncate">{name}</span>
-                      <span className="text-xs font-mono text-slate-400 ml-2">{code}</span>
-                    </button>
+                    <div key={code} className={`rounded-lg mb-1 ${selectedStock?.code === code ? 'bg-blue-50 border border-blue-100' : ''}`}>
+                      <button onClick={() => viewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedStock?.code === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                        <span className="truncate">{name}</span>
+                        <span className="text-xs font-mono text-slate-400 ml-2">{code}</span>
+                      </button>
+                      <div className="px-4 pb-2">
+                        <button
+                          onClick={() => setSidebarTab('backtest')}
+                          className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
+                        >
+                          回测此策略 →
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -588,6 +641,17 @@ setDailyDataCache(dailyData);
           </aside>
 
           <section className="lg:col-span-3 order-2 lg:order-2">
+            {sidebarTab === 'backtest' ? (
+              <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full p-4 overflow-y-auto">
+                {backtestResult ? (
+                  <BacktestResults result={backtestResult} />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-slate-400">
+                    {backtestLoading ? '回测计算中...' : '设置参数后点击"运行回测"'}
+                  </div>
+                )}
+              </div>
+            ) : (
             <div ref={chartWrapperRef} className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full">
               <div className="px-4 py-3 border-b flex flex-wrap justify-between items-center gap-2 bg-white z-10 shrink-0">
                 <StockSearch stockList={stockList} onSelect={viewStock} />
@@ -802,6 +866,7 @@ setDailyDataCache(dailyData);
                 )}
               </div>
             </div>
+            )}
           </section>
         </div>
       </div>
