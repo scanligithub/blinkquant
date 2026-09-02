@@ -1,0 +1,15 @@
+{
+  "selection_match": true,
+  "trade_count_full": 1506,
+  "trade_count_lazy": 1506,
+  "trade_keys_only_full": 0,
+  "trade_keys_only_lazy": 0,
+  "equity_full": 8657806.261830531,
+  "equity_lazy": 8657806.261830531,
+  "equity_diff": 0.0,
+  "equity_diff_pct": 0.0,
+  "first_divergent_date": null,
+  "first_divergent_full": null,
+  "first_divergent_lazy": null,
+  "max_eq_diff": 0.0
+}

@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "year": 2024,
+    "signal_start": "2024-01-02",
+    "signal_end": "2024-12-31",
+    "valuation_start": "2024-01-03",
+    "valuation_end": "2025-01-02",
+    "bt_s": 44.4,
+    "total_s": 46.9
+  },
+  "universe": 1778,
+  "diagnostics_raw": {
+    "intents_total": 203650,
+    "rej_counters": {
+      "BELOW_LOT": 148698,
+      "LIMIT_BLOCKED": 3570,
+      "CASH_STARVED": 2
+    },
+    "partial_fill_count": 16914,
+    "carried_events": 174,
+    "codes_universe": 1778,
+    "df_range": "2023-01-03..2025-12-31"
+  },
+  "metrics": {
+    "performance.total_return": -0.4527971771655269,
+    "performance.annualized_return": -0.4662621374103947,
+    "performance.max_drawdown": -0.47149863233696837,
+    "performance.drawdown_duration": 241,
+    "trading.trade_count": 51380,
+    "trading.buy_count": 17283,
+    "trading.sell_count": 34097,
+    "trading.trade_days": 242,
+    "trading.gross_buy": 18216227.995550632,
+    "trading.gross_sell": 17813498.299122453,
+    "trading.total_fees": 266141.72,
+    "trading.avg_trade_value": 701.2402937849959,
+    "trading.turnover": 26.63491316948718,
+    "trading.active_position_days": 93566,
+    "exposure.deployment_mean": 0.4951935363720334,
+    "exposure.deployment_median": 0.4714096246366385,
+    "exposure.deployment_min": 0.1917133889513493,
+    "exposure.deployment_p10": 0.2934614353035395,
+    "exposure.deployment_p25": 0.35386965921943153,
+    "exposure.deployment_p75": 0.6226110629751401,
+    "exposure.deployment_p90": 0.7420369179281265,
+    "exposure.deployment_max": 0.9992736399482807,
+    "exposure.cash_drag": 0.5048064636279666,
+    "exposure.target_fill_ratio": 0.4951935363720327,
+    "execution_quality.partial_fill_count": 16914,
+    "execution_quality.partial_fill_ratio": 0.08305425975939111,
+    "execution_quality.dust_reject_count": 148698,
+    "execution_quality.dust_reject_ratio": 0.7301644979130861,
+    "execution_quality.limit_blocked_count": 3570,
+    "execution_quality.limit_blocked_ratio": 0.01753007611097471,
+    "execution_quality.carried_events": 174,
+    "execution_quality.carried_event_ratio": 0.001859649872817049,
+    "integrity.zero_price_trade_count": 0,
+    "integrity.t1_violation_count": 0,
+    "integrity.negative_cash_count": 0,
+    "integrity.accounting_invariant_violations": 0
+  }
+}

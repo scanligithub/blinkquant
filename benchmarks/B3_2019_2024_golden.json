@@ -1,0 +1,29 @@
+{
+  "benchmark": "B3",
+  "period": "2019-2024",
+  "start_date": "2019-01-02",
+  "end_signal_date": "2024-12-30",
+  "valuation_days": 1511,
+  "n_signals": null,
+  "n_trades": 8827,
+  "final_equity": 9989063.09,
+  "has_negative_cash": false,
+  "accounting_invariant_violations": 0,
+  "peak_tracemalloc_bytes": null,
+  "backtest_sec": 1917.1,
+  "stage_timings": {
+    "Data": 35.4,
+    "CA": 0.018,
+    "Selection": 1819.518,
+    "Ranking": 0.0,
+    "Execution": 24.847,
+    "Portfolio": 71.235,
+    "Valuation": 0.121,
+    "Diagnostics": 0.0,
+    "Output": 0.021
+  },
+  "formula": "CLOSE > MA(CLOSE, 20)",
+  "rebalance_freq": "weekly",
+  "top_n": 20,
+  "initial_cash": 10000000
+}

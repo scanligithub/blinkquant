@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0.0",
+  "engine_version": "v1.0.3-16-gad9aefe",
+  "generated_at": "2026-09-02T01:43:56.017215+00:00",
+  "strategy": {
+    "name": "MA20_CSI300_TOP20",
+    "formula": "CLOSE > MA(CLOSE, 20)",
+    "rebalance_freq": "weekly",
+    "top_n": 20,
+    "allocator": "top_n_equal_weight",
+    "initial_cash": 10000000,
+    "fingerprint": "0448d820a4dcd44622c97bd921d14adb728bd16168aff32d7bbefb23e8333b73"
+  },
+  "data": {
+    "source": "huggingface",
+    "hf_repo": "scanli/stocka-data",
+    "snapshot": "936581ace2dd1917dd0cf50ec24911c48084f24f",
+    "universe": "csi300",
+    "start_date": "2010-01-04",
+    "end_signal_date": "2024-12-30"
+  },
+  "fee_schedule": {
+    "path": "config/fee_schedule.yaml",
+    "effective_rates": {
+      "commission_rate": 0.00025,
+      "commission_min": 5.0,
+      "stamp_tax_rate": 0.001,
+      "transfer_fee_rate": 1e-05
+    }
+  },
+  "reproducibility": {
+    "script": "backend/scripts/generate_golden.py",
+    "env_vars": [
+      "HF_TOKEN",
+      "HF_ENDPOINT"
+    ],
+    "command": "cd backend && python scripts/generate_golden.py"
+  },
+  "artifacts": {
+    "equity_curve": {
+      "file": "equity_curve.parquet",
+      "columns": [
+        "date",
+        "equity",
+        "cash",
+        "positions_value",
+        "signal_date"
+      ],
+      "types": [
+        "Date",
+        "Float64",
+        "Float64",
+        "Float64",
+        "Date"
+      ]
+    },
+    "trades": {
+      "file": "trades.parquet",
+      "columns": [
+        "signal_date",
+        "execution_date",
+        "code",
+        "side",
+        "qty",
+        "price",
+        "fee"
+      ],
+      "types": [
+        "Date",
+        "Date",
+        "Utf8",
+        "Utf8",
+        "Int64",
+        "Float64",
+        "Float64"
+      ]
+    },
+    "positions_daily": {
+      "file": "positions_daily.parquet",
+      "columns": [
+        "date",
+        "code",
+        "qty",
+        "cost",
+        "market_value"
+      ],
+      "types": [
+        "Date",
+        "Utf8",
+        "Int64",
+        "Float64",
+        "Float64"
+      ]
+    },
+    "metrics": {
+      "file": "metrics.json",
+      "required_keys": [
+        "total_return",
+        "cagr",
+        "sharpe",
+        "max_drawdown",
+        "total_days"
+      ]
+    },
+    "diagnostics": {
+      "file": "diagnostics.json",
+      "required_keys": [
+        "rej_counters",
+        "intents_total",
+        "partial_fill_count",
+        "carried_events"
+      ]
+    }
+  }
+}

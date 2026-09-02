@@ -1,0 +1,54 @@
+{
+  "id": "B4",
+  "period": "2024-2024",
+  "start_date": "2024-01-02",
+  "end_signal_date": "2024-03-31",
+  "universe": 5332,
+  "valuation_days": 59,
+  "n_signals": 12,
+  "n_trades": 395,
+  "final_equity": 6791917.78,
+  "data_load_sec": 3.52,
+  "backtest_sec": 51.14,
+  "total_sec": 54.66,
+  "peak_tracemalloc": "27.0 MB",
+  "peak_tracemalloc_bytes": 28298328,
+  "final_rss_mb": 0,
+  "has_negative_cash": false,
+  "stage_timings": {
+    "CA": 0.001,
+    "Selection": 38.693,
+    "Ranking": 0.0,
+    "Execution": 0.328,
+    "Portfolio": 12.062,
+    "Valuation": 0.004,
+    "Diagnostics": 0.0,
+    "Output": 0.001
+  },
+  "stage_pcts": {
+    "CA": 0.0,
+    "Selection": 75.7,
+    "Ranking": 0.0,
+    "Execution": 0.6,
+    "Portfolio": 23.6,
+    "Valuation": 0.0,
+    "Diagnostics": 0.0,
+    "Output": 0.0
+  },
+  "memory_per_year": [
+    {
+      "year": 2023,
+      "rows": 1229873,
+      "codes": 5232,
+      "load_time_s": 0.89,
+      "rss_mb": 0
+    },
+    {
+      "year": 2024,
+      "rows": 1276834,
+      "codes": 5332,
+      "load_time_s": 0.35,
+      "rss_mb": 0
+    }
+  ]
+}

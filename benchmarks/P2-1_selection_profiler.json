@@ -1,0 +1,29 @@
+{
+  "milestone": "P2-1",
+  "description": "Selection internal profiler",
+  "benchmark": "B3",
+  "period": "2019-2024",
+  "total_time_sec": 1663.0,
+  "without_trace_time_sec": 218.5,
+  "trace_overhead_sec": 1444.4,
+  "trace_overhead_pct": 661,
+  "speedup_if_no_trace": 7.6,
+  "stage_breakdown_with_trace": {
+    "TraceGen": {"time_sec": 1440.4, "pct": 86.6},
+    "HotJIT": {"time_sec": 70.7, "pct": 4.3},
+    "DateNorm": {"time_sec": 22.3, "pct": 1.3},
+    "ParseFormula": {"time_sec": 0.04, "pct": 0.0}
+  },
+  "stage_breakdown_without_trace": {
+    "HotJIT": {"time_sec": 71.4, "pct": 32.7},
+    "DateNorm": {"time_sec": 21.8, "pct": 10.0},
+    "ParseFormula": {"time_sec": 0.04, "pct": 0.0}
+  },
+  "key_finding": "TraceGen is the dominant cost (86.6%). Actual selection computation is only 5.6% of Selection time.",
+  "optimization_target": "TraceGen - consider lazy/batch/vectorized trace generation",
+  "verification": {
+    "trades_with_trace": 8827,
+    "trades_without_trace": 8827,
+    "results_identical": true
+  }
+}

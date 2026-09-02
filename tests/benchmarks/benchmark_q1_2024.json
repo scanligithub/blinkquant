@@ -1,0 +1,16 @@
+{
+  "universe": 1745,
+  "requested_period": "2024-01-02..2024-03-29",
+  "lookback_period": "2023-11-03..2024-01-01",
+  "effective_data_period": "2023-11-03..2024-12-31",
+  "valuation_days": 59,
+  "n_trade_days_raw": 484,
+  "n_signals": 12,
+  "n_trades": 390,
+  "final_equity": 6234031.385312512,
+  "data_load_sec": 20.88,
+  "backtest_sec": 23.15,
+  "total_sec": 44.03,
+  "peak_memory": "13.0 MB",
+  "peak_memory_bytes": 13655999
+}

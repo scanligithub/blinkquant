@@ -1,0 +1,16 @@
+{
+  "golden_trades": 20514,
+  "golden_equity": 3108413.95,
+  "full_trades": 20678,
+  "full_equity": 3371518.823194699,
+  "lazy_trades": 20678,
+  "lazy_equity": 3371518.823194699,
+  "full_time_sec": 241.74396133422852,
+  "lazy_time_sec": 255.91879081726074,
+  "full_vs_lazy_keys_diff": 0,
+  "full_vs_lazy_price_diffs": 0,
+  "full_vs_lazy_qty_diffs": 0,
+  "full_vs_lazy_fee_diffs": 0,
+  "max_equity_diff": 0.0,
+  "exact_match": false
+}

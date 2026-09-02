@@ -1,0 +1,40 @@
+name: Deploy Backend to HF Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 定义三个节点和对应的 Space 名称
+        node: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Push to HF Space Node ${{ matrix.node }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # 1. 进入后端目录
+          cd backend
+          
+          # 2. 初始化临时 Git 仓库
+          git init
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          
+          # 3. 添加所有文件
+          git add .
+          git commit -m "Deploy Node ${{ matrix.node }}"
+          
+          # 4. 强制推送到对应的 HF Space
+          # 注意：这里的 URL 拼接了你的 HF 用户名 scanli 和 Space 名称
+          git push -f https://scanli:$HF_TOKEN@huggingface.co/spaces/scanli/blinkquant-node${{ matrix.node }} master:main

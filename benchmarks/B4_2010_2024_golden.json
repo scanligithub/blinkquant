@@ -1,0 +1,27 @@
+{
+  "benchmark": "B4-V4-Golden-Replay",
+  "period": "2010-2024",
+  "start_date": "2010-01-04",
+  "end_signal_date": "2024-12-30",
+  "valuation_days": 3643,
+  "n_signals": null,
+  "n_trades": 20678,
+  "final_equity": 3371518.82,
+  "has_negative_cash": false,
+  "accounting_invariant_violations": 0,
+  "backtest_sec": 241.7,
+  "formula": "CLOSE > MA(CLOSE, 20)",
+  "rebalance_freq": "weekly",
+  "top_n": 20,
+  "initial_cash": 10000000,
+  "engine_version": "v1.0.3-16-gad9aefe",
+  "generated_at": "2026-09-02",
+  "notes": "Regenerated with V4 engine (Lazy/Full both produce identical 20678 trades, 3371518.82 equity). Previous golden (20514 trades, 3108413.95) was generated with older engine code pre-v1.0.3.",
+  "metrics": {
+    "total_return": -0.6628481177,
+    "cagr": -0.072448736,
+    "sharpe": -0.1127409013,
+    "max_drawdown": -0.8465031332,
+    "total_days": 3643
+  }
+}

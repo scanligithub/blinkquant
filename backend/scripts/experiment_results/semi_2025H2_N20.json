@@ -1,0 +1,13 @@
+{
+  "segment": "2025H2",
+  "top_n": 20,
+  "total_return": 0.014799537308300081,
+  "max_drawdown": -0.21754159463168576,
+  "deployment_mean": 0.9609928010259738,
+  "dust_reject_ratio": 0.008433734939759036,
+  "turnover": 15.13234732448927,
+  "trade_count": 819,
+  "concentration_hhi": 0.050755,
+  "effective_n_mean": 19.7,
+  "weight_deviation": 0.008918
+}

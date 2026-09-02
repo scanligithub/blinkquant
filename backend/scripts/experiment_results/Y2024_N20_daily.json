@@ -1,0 +1,75 @@
+{
+  "config": {
+    "commit": "bbd7834",
+    "year": 2024,
+    "formula": "CLOSE > MA(CLOSE, 20)",
+    "timeframe": "D",
+    "initial_cash": 1000000,
+    "top_n": 20,
+    "rebalance": "daily",
+    "allocator": "top_20_equal_weight",
+    "fee_config": {
+      "commission_rate": 0.00025,
+      "commission_min": 5.0,
+      "stamp_tax_rate": 0.0005,
+      "transfer_fee_rate": 1e-05
+    }
+  },
+  "metrics": {
+    "performance.total_return": -0.2647019881001912,
+    "performance.annualized_return": -0.2730281548475384,
+    "performance.max_drawdown": -0.635809410087086,
+    "performance.drawdown_duration": 240,
+    "trading.trade_count": 4640,
+    "trading.buy_count": 2200,
+    "trading.sell_count": 2440,
+    "trading.trade_days": 242,
+    "trading.gross_buy": 44770455.003488064,
+    "trading.gross_sell": 43822534.926510215,
+    "trading.total_fees": 52028.52,
+    "trading.avg_trade_value": 19093.316795258248,
+    "trading.turnover": 72.77965558799433,
+    "trading.active_position_days": 4686,
+    "exposure.deployment_mean": 0.99291018962835,
+    "exposure.deployment_median": 0.9995876530217532,
+    "exposure.deployment_min": 0.0,
+    "exposure.deployment_p10": 0.9956229066010547,
+    "exposure.deployment_p25": 0.9990981472057099,
+    "exposure.deployment_p75": 0.9998223888785971,
+    "exposure.deployment_p90": 0.9999338478208083,
+    "exposure.deployment_max": 0.9999966862260408,
+    "exposure.cash_drag": 0.007089810371650018,
+    "exposure.target_fill_ratio": 0.9929101896283498,
+    "execution_quality.partial_fill_count": 2730,
+    "execution_quality.partial_fill_ratio": 0.412573673870334,
+    "execution_quality.dust_reject_count": 429,
+    "execution_quality.dust_reject_ratio": 0.06483300589390963,
+    "execution_quality.limit_blocked_count": 35,
+    "execution_quality.limit_blocked_ratio": 0.005289406075260692,
+    "execution_quality.carried_events": 10,
+    "execution_quality.carried_event_ratio": 0.002134016218523261,
+    "integrity.zero_price_trade_count": 0,
+    "integrity.t1_violation_count": 0,
+    "integrity.negative_cash_count": 0,
+    "integrity.accounting_invariant_violations": 0
+  },
+  "diag": {
+    "intents_total": 6617,
+    "rej_counters": {
+      "CASH_STARVED": 727,
+      "LIMIT_BLOCKED": 35,
+      "BELOW_LOT": 429,
+      "FROZEN": 786
+    },
+    "partial_fill_count": 2730,
+    "carried_events": 10
+  },
+  "experiment": {
+    "actual_position_count_mean": 19.4,
+    "valuation_days": 243,
+    "trade_days": 242,
+    "deterministic": true,
+    "integrity_ok": true,
+    "elapsed_s": 39.9
+  }
+}

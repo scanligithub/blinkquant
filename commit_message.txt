@@ -1,0 +1,11 @@
+feat: Add golden tests CI integration
+
+- Created CI integration specification document
+- Added Makefile for unified test runner commands
+- Created GitHub Actions workflow for golden tests
+- Documented manual regeneration workflow
+
+Files created:
+- docs/superpowers/specs/2026-08-28-golden-ci-integration.md
+- Makefile
+- .github/workflows/golden-tests.yml

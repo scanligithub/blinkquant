@@ -1,0 +1,152 @@
+{
+  "id": "B4",
+  "period": "2010-2024",
+  "start_date": "2010-01-04",
+  "end_signal_date": "2024-12-30",
+  "universe": 5332,
+  "valuation_days": 3643,
+  "n_signals": 767,
+  "n_trades": 20514,
+  "final_equity": 3108413.95,
+  "data_load_sec": 35.41,
+  "backtest_sec": 4904.65,
+  "total_sec": 4940.06,
+  "peak_tracemalloc": "808.6 MB",
+  "peak_tracemalloc_bytes": 847903271,
+  "final_rss_mb": 0,
+  "has_negative_cash": false,
+  "stage_timings": {
+    "CA": 0.045,
+    "Selection": 4665.278,
+    "Ranking": 0.0,
+    "Execution": 101.187,
+    "Portfolio": 133.717,
+    "Valuation": 0.287,
+    "Diagnostics": 0.0,
+    "Output": 0.072
+  },
+  "stage_pcts": {
+    "CA": 0.0,
+    "Selection": 95.1,
+    "Ranking": 0.0,
+    "Execution": 2.1,
+    "Portfolio": 2.7,
+    "Valuation": 0.0,
+    "Diagnostics": 0.0,
+    "Output": 0.0
+  },
+  "memory_per_year": [
+    {
+      "year": 2009,
+      "rows": 337173,
+      "codes": 1503,
+      "load_time_s": 16.13,
+      "rss_mb": 0
+    },
+    {
+      "year": 2010,
+      "rows": 390123,
+      "codes": 1823,
+      "load_time_s": 0.72,
+      "rss_mb": 0
+    },
+    {
+      "year": 2011,
+      "rows": 465040,
+      "codes": 2089,
+      "load_time_s": 0.63,
+      "rss_mb": 0
+    },
+    {
+      "year": 2012,
+      "rows": 515777,
+      "codes": 2232,
+      "load_time_s": 0.42,
+      "rss_mb": 0
+    },
+    {
+      "year": 2013,
+      "rows": 514974,
+      "codes": 2247,
+      "load_time_s": 0.38,
+      "rss_mb": 0
+    },
+    {
+      "year": 2014,
+      "rows": 522210,
+      "codes": 2364,
+      "load_time_s": 0.63,
+      "rss_mb": 0
+    },
+    {
+      "year": 2015,
+      "rows": 526936,
+      "codes": 2578,
+      "load_time_s": 0.39,
+      "rss_mb": 0
+    },
+    {
+      "year": 2016,
+      "rows": 593887,
+      "codes": 2804,
+      "load_time_s": 0.38,
+      "rss_mb": 0
+    },
+    {
+      "year": 2017,
+      "rows": 696220,
+      "codes": 3231,
+      "load_time_s": 0.38,
+      "rss_mb": 0
+    },
+    {
+      "year": 2018,
+      "rows": 768143,
+      "codes": 3336,
+      "load_time_s": 0.36,
+      "rss_mb": 0
+    },
+    {
+      "year": 2019,
+      "rows": 832173,
+      "codes": 3538,
+      "load_time_s": 0.36,
+      "rss_mb": 0
+    },
+    {
+      "year": 2020,
+      "rows": 900189,
+      "codes": 3971,
+      "load_time_s": 0.56,
+      "rss_mb": 0
+    },
+    {
+      "year": 2021,
+      "rows": 1026486,
+      "codes": 4491,
+      "load_time_s": 0.37,
+      "rss_mb": 0
+    },
+    {
+      "year": 2022,
+      "rows": 1132093,
+      "codes": 4919,
+      "load_time_s": 0.4,
+      "rss_mb": 0
+    },
+    {
+      "year": 2023,
+      "rows": 1229873,
+      "codes": 5232,
+      "load_time_s": 0.39,
+      "rss_mb": 0
+    },
+    {
+      "year": 2024,
+      "rows": 1276834,
+      "codes": 5332,
+      "load_time_s": 0.42,
+      "rss_mb": 0
+    }
+  ]
+}

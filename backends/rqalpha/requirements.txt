@@ -1,0 +1,5 @@
+rqalpha==6.3.0
+pytest>=7.0
+pandas>=2.0
+numpy>=1.24
+polars>=1.0
