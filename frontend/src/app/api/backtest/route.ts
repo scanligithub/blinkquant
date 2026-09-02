@@ -17,22 +17,34 @@ export async function POST(req: NextRequest) {
 
   const body = await req.text();
 
-  try {
-    const res = await fetch(`${NODES[0]}/api/v1/backtest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      signal: AbortSignal.timeout(600000),
-    });
+  for (const node of NODES) {
+    try {
+      const res = await fetch(`${node}/api/v1/backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(600000),
+      });
 
-    if (!res.ok) {
       const text = await res.text();
-      return NextResponse.json({ error: text }, { status: res.status });
-    }
 
-    const data = await res.json();
-    return NextResponse.json(data);
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 502 });
+      if (!res.ok) {
+        console.error(`[backtest] ${node} returned ${res.status}: ${text.slice(0, 200)}`);
+        continue;
+      }
+
+      try {
+        const data = JSON.parse(text);
+        return NextResponse.json(data);
+      } catch {
+        console.error(`[backtest] ${node} returned non-JSON: ${text.slice(0, 200)}`);
+        continue;
+      }
+    } catch (e: any) {
+      console.error(`[backtest] ${node} error: ${e.message}`);
+      continue;
+    }
   }
+
+  return NextResponse.json({ error: 'All nodes failed' }, { status: 502 });
 }
