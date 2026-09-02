@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 const NODES = [
   'https://scanli-blinkquant-node1.hf.space',
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
-        signal: AbortSignal.timeout(600000),
+        signal: AbortSignal.timeout(280000),
       });
 
       const text = await res.text();

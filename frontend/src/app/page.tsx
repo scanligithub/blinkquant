@@ -295,8 +295,10 @@ useEffect(() => {
         body: JSON.stringify(params),
       });
       if (!res.ok) {
-        const err = await res.json();
-        alert(`回测失败: ${err.error || res.statusText}`);
+        const text = await res.text();
+        let msg = res.statusText;
+        try { msg = JSON.parse(text).error || text; } catch { msg = text.slice(0, 200); }
+        alert(`回测失败: ${msg}`);
         return;
       }
       const data = await res.json();
