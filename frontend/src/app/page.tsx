@@ -241,25 +241,10 @@ useEffect(() => {
       const pollSavedJob = async () => {
         setBacktestLoading(true);
         try {
-          // 先获取 token
-          const tokenRes = await fetch('/api/auth/token', { cache: 'no-store' });
-          if (!tokenRes.ok) {
-            localStorage.removeItem('backtestJobId');
-            localStorage.removeItem('backtestNode');
-            return;
-          }
-          const { token } = await tokenRes.json();
-          if (!token) {
-            localStorage.removeItem('backtestJobId');
-            localStorage.removeItem('backtestNode');
-            return;
-          }
-
           while (true) {
             await new Promise((r) => setTimeout(r, 3000));
             try {
               const pollRes = await fetch(`${savedNode}/api/v1/backtest/async/${savedJobId}`, {
-                headers: { 'Authorization': `Bearer ${token}` },
                 signal: AbortSignal.timeout(15000),
               });
               if (!pollRes.ok) {
@@ -360,26 +345,11 @@ const HF_NODES = [
     setBacktestLoading(true);
     setBacktestResult(null);
     try {
-      // 1. 获取 JWT token
-      const tokenRes = await fetch('/api/auth/token', { cache: 'no-store' });
-      if (!tokenRes.ok) {
-        alert('回测失败: 请先登录');
-        return;
-      }
-      const { token } = await tokenRes.json();
-      if (!token) {
-        alert('回测失败: 未获取到认证令牌');
-        return;
-      }
-
       // 2. 并行提交到所有 HF 节点，取最快成功的
       const submitPromises = HF_NODES.map((node) =>
         fetch(`${node}/api/v1/backtest/async`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
           signal: AbortSignal.timeout(15000),
         }).then(async (res) => {
@@ -416,7 +386,6 @@ const HF_NODES = [
           await new Promise((r) => setTimeout(r, 3000));
           try {
             const pollRes = await fetch(`${successfulNode}/api/v1/backtest/async/${jobId}`, {
-              headers: { 'Authorization': `Bearer ${token}` },
               signal: AbortSignal.timeout(15000),
             });
             if (!pollRes.ok) {
