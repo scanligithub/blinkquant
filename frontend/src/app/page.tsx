@@ -236,13 +236,22 @@ useEffect(() => {
   useEffect(() => {
     const savedJobId = localStorage.getItem('backtestJobId');
     const savedNode = localStorage.getItem('backtestNode');
+    // 清理超过 1 小时的旧记录，防止卡死
+    const savedTime = localStorage.getItem('backtestTime');
+    if (savedTime && Date.now() - parseInt(savedTime) > 3600000) {
+      localStorage.removeItem('backtestJobId');
+      localStorage.removeItem('backtestNode');
+      localStorage.removeItem('backtestTime');
+    }
     if (savedJobId && savedNode) {
-      // 开始轮询该任务（直接查 HF 节点）
       const pollSavedJob = async () => {
         setBacktestLoading(true);
+        let retries = 0;
+        const maxRetries = 20; // 最多重试 20 次（约 1 分钟）
         try {
-          while (true) {
+          while (retries < maxRetries) {
             await new Promise((r) => setTimeout(r, 3000));
+            retries++;
             try {
               const pollRes = await fetch(`${savedNode}/api/v1/backtest/async/${savedJobId}`, {
                 signal: AbortSignal.timeout(15000),
@@ -256,24 +265,28 @@ useEffect(() => {
                 setBacktestResult(result.data);
                 localStorage.removeItem('backtestJobId');
                 localStorage.removeItem('backtestNode');
+                localStorage.removeItem('backtestTime');
                 return;
               }
               if (result.status === 'failed' || result.status === 'cancelled' || result.status === 'expired') {
                 localStorage.removeItem('backtestJobId');
                 localStorage.removeItem('backtestNode');
+                localStorage.removeItem('backtestTime');
                 return;
               }
               // queued/running -> continue
             } catch (e) {
-              console.error('Poll error:', e);
+              console.error('Poll error (retry', retries, '):', e);
               // 继续重试
             }
           }
+          alert('恢复回测超时，请重新运行');
         } catch (e) {
           console.error('Failed to poll saved job:', e);
+        } finally {
           localStorage.removeItem('backtestJobId');
           localStorage.removeItem('backtestNode');
-        } finally {
+          localStorage.removeItem('backtestTime');
           setBacktestLoading(false);
         }
       };
@@ -379,9 +392,11 @@ const HF_NODES = [
       const successfulNode = HF_NODES[results.indexOf(success)];
       localStorage.setItem('backtestJobId', jobId);
       localStorage.setItem('backtestNode', successfulNode);
+      localStorage.setItem('backtestTime', Date.now().toString());
 
       // 3. 轮询该节点
       const pollResult = async () => {
+        let pollErrors = 0;
         while (true) {
           await new Promise((r) => setTimeout(r, 3000));
           try {
@@ -420,6 +435,14 @@ const HF_NODES = [
             // queued/running -> continue
           } catch (e: any) {
             console.error('Poll error:', e);
+            pollErrors++;
+            if (pollErrors >= 5) {
+              alert(`回测轮询连续失败 ${pollErrors} 次: ${e.message}`);
+              localStorage.removeItem('backtestJobId');
+              localStorage.removeItem('backtestNode');
+              localStorage.removeItem('backtestTime');
+              return;
+            }
             // 轮询出错继续重试
           }
         }
