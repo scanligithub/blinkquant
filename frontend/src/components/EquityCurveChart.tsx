@@ -56,5 +56,5 @@ export default function EquityCurveChart({ data }: EquityCurveChartProps) {
     return <div className="h-[200px] flex items-center justify-center text-gray-400 text-sm">暂无数据</div>;
   }
 
-  return <div ref={containerRef} className="w-full" />;
+  return <div ref={containerRef} className="w-full h-[200px]" />;
 }
