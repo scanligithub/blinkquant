@@ -161,9 +161,12 @@ _backtest_jobs: dict[str, dict] = {}
 async def _run_backtest_async(job_id: str, req: BacktestRequest):
     try:
         if data_manager.df_daily is None:
-            _backtest_jobs[job_id] = {"status": "error", "error": "Nodes are loading data..."}
+            _backtest_jobs[job_id] = {"status": "failed", "error": "Nodes are loading data..."}
             return
 
+        # 标记任务开始执行
+        _backtest_jobs[job_id] = {"status": "running"}
+        
         calendar = TradingCalendar()
         if data_manager.df_daily is not None:
             trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
@@ -211,7 +214,7 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             }
         }
     except Exception as e:
-        _backtest_jobs[job_id] = {"status": "error", "error": str(e)}
+        _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
 
 
 @router.post("/backtest/async")
@@ -220,9 +223,9 @@ async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundT
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
 
     job_id = str(uuid.uuid4())
-    _backtest_jobs[job_id] = {"status": "pending"}
+    _backtest_jobs[job_id] = {"status": "queued"}
     background_tasks.add_task(_run_backtest_async, job_id, req)
-    return {"job_id": job_id, "status": "pending"}
+    return {"job_id": job_id, "status": "queued"}
 
 
 @router.get("/backtest/async/{job_id}")

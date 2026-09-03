@@ -232,6 +232,46 @@ useEffect(() => {
     if (user) refreshWatchlist();
   }, [user, refreshWatchlist]);
 
+  // 刷新恢复：检查localStorage中的未完成回测任务
+  useEffect(() => {
+    const savedJobId = localStorage.getItem('backtestJobId');
+    if (savedJobId) {
+      // 开始轮询该任务
+      const pollSavedJob = async () => {
+        setBacktestLoading(true);
+        try {
+          while (true) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const pollRes = await fetch(`/api/backtest?jobId=${savedJobId}`);
+            if (!pollRes.ok) {
+              // 任务可能已过期或不存在
+              localStorage.removeItem('backtestJobId');
+              return;
+            }
+            const result = await pollRes.json();
+            if (result.status === 'done') {
+              setBacktestResult(result.data);
+              localStorage.removeItem('backtestJobId');
+              return;
+            }
+            if (result.status === 'failed' || result.status === 'cancelled' || result.status === 'expired') {
+              // 任务已结束，清除保存的jobId
+              localStorage.removeItem('backtestJobId');
+              return;
+            }
+            // status === 'queued' or 'running' -> continue polling
+          }
+        } catch (e) {
+          console.error('Failed to poll saved job:', e);
+          localStorage.removeItem('backtestJobId');
+        } finally {
+          setBacktestLoading(false);
+        }
+      };
+      pollSavedJob();
+    }
+  }, []);
+
   const toggleWatchlist = useCallback(async (code: string) => {
     const exists = watchlistCodes.includes(code);
     try {
@@ -308,6 +348,9 @@ useEffect(() => {
         return;
       }
 
+      // 存储jobId到localStorage，用于刷新恢复
+      localStorage.setItem('backtestJobId', jobId);
+
       // 2. 轮询结果
       const pollResult = async () => {
         while (true) {
@@ -323,13 +366,25 @@ useEffect(() => {
           const result = await pollRes.json();
           if (result.status === 'done') {
             setBacktestResult(result.data);
+            localStorage.removeItem('backtestJobId');
             return;
           }
-          if (result.status === 'error') {
+          if (result.status === 'failed') {
             alert(`回测失败: ${result.error}`);
+            localStorage.removeItem('backtestJobId');
             return;
           }
-          // status === 'pending' -> continue polling
+          if (result.status === 'cancelled') {
+            alert('回测任务已取消');
+            localStorage.removeItem('backtestJobId');
+            return;
+          }
+          if (result.status === 'expired') {
+            alert('回测任务已过期');
+            localStorage.removeItem('backtestJobId');
+            return;
+          }
+          // status === 'queued' or 'running' -> continue polling
         }
       };
       await pollResult();
