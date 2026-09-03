@@ -255,7 +255,7 @@ useEffect(() => {
             retries++;
             try {
               const pollRes = await fetch(`${savedNode}/api/v1/backtest/async/${savedJobId}`, {
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(60000),
               });
               if (!pollRes.ok) {
                 const text = await pollRes.text();
@@ -380,7 +380,7 @@ const HF_NODES = [
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(60000),
         }).then(async (res) => {
           const text = await res.text();
           if (!res.ok) throw new Error(`${node}: HTTP ${res.status} - ${text.slice(0, 200)}`);
@@ -417,7 +417,7 @@ const HF_NODES = [
           await new Promise((r) => setTimeout(r, 3000));
           try {
             const pollRes = await fetch(`${successfulNode}/api/v1/backtest/async/${jobId}`, {
-              signal: AbortSignal.timeout(15000),
+              signal: AbortSignal.timeout(60000),
             });
             if (!pollRes.ok) {
               const text = await pollRes.text();
