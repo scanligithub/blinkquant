@@ -49,6 +49,7 @@ export default function Home() {
   const [sidebarTab, setSidebarTab] = useState<'results' | 'watchlist' | 'backtest'>('results');
   const [backtestResult, setBacktestResult] = useState<any>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const backtestLoadingRef = useRef(false);
   const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [selectDate, setSelectDate] = useState('');
@@ -293,6 +294,21 @@ useEffect(() => {
       pollSavedJob();
     }
   }, []);
+
+  // Safety: force reset backtestLoading if stuck > 2 minutes
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (backtestLoading) {
+      timer = setTimeout(() => {
+        console.warn('backtestLoading stuck > 2min, force reset');
+        setBacktestLoading(false);
+        localStorage.removeItem('backtestJobId');
+        localStorage.removeItem('backtestNode');
+        localStorage.removeItem('backtestTime');
+      }, 120000);
+    }
+    return () => { if (timer) clearTimeout(timer); };
+  }, [backtestLoading]);
 
   const toggleWatchlist = useCallback(async (code: string) => {
     const exists = watchlistCodes.includes(code);
