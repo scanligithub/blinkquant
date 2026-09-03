@@ -9,3 +9,4 @@ zstandard
 psutil
 psycopg2-binary
 pypinyin
+PyJWT
