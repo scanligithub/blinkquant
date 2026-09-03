@@ -144,6 +144,10 @@ useEffect(() => {
           setUser(json.user);
           setAuthLoading(false);
         } else {
+          // Not logged in: clear any stale backtest state
+          localStorage.removeItem('backtestJobId');
+          localStorage.removeItem('backtestNode');
+          localStorage.removeItem('backtestTime');
           router.replace('/login');
         }
       } catch (e) {
@@ -295,6 +299,13 @@ useEffect(() => {
     }
   }, []);
 
+  // Clear any stale backtest state on mount (e.g., from previous sessions)
+  useEffect(() => {
+    localStorage.removeItem('backtestJobId');
+    localStorage.removeItem('backtestNode');
+    localStorage.removeItem('backtestTime');
+  }, []);
+
   // Safety: force reset backtestLoading if stuck > 2 minutes
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -335,6 +346,10 @@ useEffect(() => {
     } catch (e) {
       console.error('Logout failed', e);
     }
+    // Clear any stale backtest state on logout
+    localStorage.removeItem('backtestJobId');
+    localStorage.removeItem('backtestNode');
+    localStorage.removeItem('backtestTime');
     router.replace('/login');
   }, [router]);
 
