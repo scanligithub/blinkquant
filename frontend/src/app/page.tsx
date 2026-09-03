@@ -235,35 +235,59 @@ useEffect(() => {
   // 刷新恢复：检查localStorage中的未完成回测任务
   useEffect(() => {
     const savedJobId = localStorage.getItem('backtestJobId');
-    if (savedJobId) {
-      // 开始轮询该任务
+    const savedNode = localStorage.getItem('backtestNode');
+    if (savedJobId && savedNode) {
+      // 开始轮询该任务（直接查 HF 节点）
       const pollSavedJob = async () => {
         setBacktestLoading(true);
         try {
+          // 先获取 token
+          const tokenRes = await fetch('/api/auth/token', { cache: 'no-store' });
+          if (!tokenRes.ok) {
+            localStorage.removeItem('backtestJobId');
+            localStorage.removeItem('backtestNode');
+            return;
+          }
+          const { token } = await tokenRes.json();
+          if (!token) {
+            localStorage.removeItem('backtestJobId');
+            localStorage.removeItem('backtestNode');
+            return;
+          }
+
           while (true) {
             await new Promise((r) => setTimeout(r, 3000));
-            const pollRes = await fetch(`/api/backtest?jobId=${savedJobId}`);
-            if (!pollRes.ok) {
-              // 任务可能已过期或不存在
-              localStorage.removeItem('backtestJobId');
-              return;
+            try {
+              const pollRes = await fetch(`${savedNode}/api/v1/backtest/async/${savedJobId}`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (!pollRes.ok) {
+                const text = await pollRes.text();
+                throw new Error(`HTTP ${pollRes.status}: ${text.slice(0, 200)}`);
+              }
+              const result = await pollRes.json();
+              if (result.status === 'done') {
+                setBacktestResult(result.data);
+                localStorage.removeItem('backtestJobId');
+                localStorage.removeItem('backtestNode');
+                return;
+              }
+              if (result.status === 'failed' || result.status === 'cancelled' || result.status === 'expired') {
+                localStorage.removeItem('backtestJobId');
+                localStorage.removeItem('backtestNode');
+                return;
+              }
+              // queued/running -> continue
+            } catch (e) {
+              console.error('Poll error:', e);
+              // 继续重试
             }
-            const result = await pollRes.json();
-            if (result.status === 'done') {
-              setBacktestResult(result.data);
-              localStorage.removeItem('backtestJobId');
-              return;
-            }
-            if (result.status === 'failed' || result.status === 'cancelled' || result.status === 'expired') {
-              // 任务已结束，清除保存的jobId
-              localStorage.removeItem('backtestJobId');
-              return;
-            }
-            // status === 'queued' or 'running' -> continue polling
           }
         } catch (e) {
           console.error('Failed to poll saved job:', e);
           localStorage.removeItem('backtestJobId');
+          localStorage.removeItem('backtestNode');
         } finally {
           setBacktestLoading(false);
         }
@@ -320,6 +344,13 @@ useEffect(() => {
     }
   }, [strategyName, formula, timeframe]);
 
+  // HF 节点配置
+const HF_NODES = [
+  'https://scanli-blinkquant-node1.hf.space',
+  'https://scanli-blinkquant-node2.hf.space',
+  'https://scanli-blinkquant-node3.hf.space',
+];
+
   const handleBacktest = async (params: {
     formula: string;
     start_date: string;
@@ -329,62 +360,99 @@ useEffect(() => {
     setBacktestLoading(true);
     setBacktestResult(null);
     try {
-      // 1. 提交异步任务
-      const res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = res.statusText;
-        try { msg = JSON.parse(text).error || text; } catch { msg = text.slice(0, 200); }
-        alert(`回测失败: ${msg}`);
+      // 1. 获取 JWT token
+      const tokenRes = await fetch('/api/auth/token', { cache: 'no-store' });
+      if (!tokenRes.ok) {
+        alert('回测失败: 请先登录');
         return;
       }
-      const { job_id: jobId } = await res.json();
+      const { token } = await tokenRes.json();
+      if (!token) {
+        alert('回测失败: 未获取到认证令牌');
+        return;
+      }
+
+      // 2. 并行提交到所有 HF 节点，取最快成功的
+      const submitPromises = HF_NODES.map((node) =>
+        fetch(`${node}/api/v1/backtest/async`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(params),
+          signal: AbortSignal.timeout(15000),
+        }).then(async (res) => {
+          const text = await res.text();
+          if (!res.ok) throw new Error(`${node}: HTTP ${res.status} - ${text.slice(0, 200)}`);
+          return JSON.parse(text);
+        })
+      );
+
+      const results = await Promise.allSettled(submitPromises);
+      const success = results.find((r) => r.status === 'fulfilled');
+      if (!success || success.status !== 'fulfilled') {
+        const errors = results.map((r, i) =>
+          r.status === 'rejected' ? `${HF_NODES[i]}: ${r.reason?.message || r.reason}` : 'ok'
+        ).join('; ');
+        alert(`回测失败: 所有节点提交失败 - ${errors}`);
+        return;
+      }
+
+      const { job_id: jobId, status: initialStatus } = success.value;
       if (!jobId) {
-        alert('回测失败: 未获取到任务 ID');
+        alert('回测失败: 节点未返回任务 ID');
         return;
       }
 
-      // 存储jobId到localStorage，用于刷新恢复
+      // 记录成功的节点，后续轮询只查该节点
+      const successfulNode = HF_NODES[results.indexOf(success)];
       localStorage.setItem('backtestJobId', jobId);
+      localStorage.setItem('backtestNode', successfulNode);
 
-      // 2. 轮询结果
+      // 3. 轮询该节点
       const pollResult = async () => {
         while (true) {
           await new Promise((r) => setTimeout(r, 3000));
-          const pollRes = await fetch(`/api/backtest?jobId=${jobId}`);
-          if (!pollRes.ok) {
-            const text = await pollRes.text();
-            let msg = pollRes.statusText;
-            try { msg = JSON.parse(text).error || text; } catch { msg = text.slice(0, 200); }
-            alert(`回测失败: ${msg}`);
-            return;
+          try {
+            const pollRes = await fetch(`${successfulNode}/api/v1/backtest/async/${jobId}`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+              signal: AbortSignal.timeout(15000),
+            });
+            if (!pollRes.ok) {
+              const text = await pollRes.text();
+              throw new Error(`HTTP ${pollRes.status}: ${text.slice(0, 200)}`);
+            }
+            const result = await pollRes.json();
+            if (result.status === 'done') {
+              setBacktestResult(result.data);
+              localStorage.removeItem('backtestJobId');
+              localStorage.removeItem('backtestNode');
+              return;
+            }
+            if (result.status === 'failed') {
+              alert(`回测失败: ${result.error}`);
+              localStorage.removeItem('backtestJobId');
+              localStorage.removeItem('backtestNode');
+              return;
+            }
+            if (result.status === 'cancelled') {
+              alert('回测任务已取消');
+              localStorage.removeItem('backtestJobId');
+              localStorage.removeItem('backtestNode');
+              return;
+            }
+            if (result.status === 'expired') {
+              alert('回测任务已过期');
+              localStorage.removeItem('backtestJobId');
+              localStorage.removeItem('backtestNode');
+              return;
+            }
+            // queued/running -> continue
+          } catch (e: any) {
+            console.error('Poll error:', e);
+            // 轮询出错继续重试
           }
-          const result = await pollRes.json();
-          if (result.status === 'done') {
-            setBacktestResult(result.data);
-            localStorage.removeItem('backtestJobId');
-            return;
-          }
-          if (result.status === 'failed') {
-            alert(`回测失败: ${result.error}`);
-            localStorage.removeItem('backtestJobId');
-            return;
-          }
-          if (result.status === 'cancelled') {
-            alert('回测任务已取消');
-            localStorage.removeItem('backtestJobId');
-            return;
-          }
-          if (result.status === 'expired') {
-            alert('回测任务已过期');
-            localStorage.removeItem('backtestJobId');
-            return;
-          }
-          // status === 'queued' or 'running' -> continue polling
         }
       };
       await pollResult();

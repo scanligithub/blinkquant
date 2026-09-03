@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
@@ -18,8 +18,24 @@ from core.raw_price_store import RawPriceStore
 from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator
 import logging
 import io # New import
+import jwt
 
 logger = logging.getLogger(__name__)
+
+# JWT 验证
+AUTH_SECRET = os.getenv("AUTH_SECRET", "blinkquant-dev-insecure-secret")
+
+def verify_jwt_token(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization.split(" ")[1]
+    try:
+        payload = jwt.decode(token, AUTH_SECRET, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 router = APIRouter(prefix="/api/v1")
 
@@ -218,7 +234,7 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
 
 
 @router.post("/backtest/async")
-async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundTasks):
+async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundTasks, _: dict = Depends(verify_jwt_token)):
     if data_manager.df_daily is None:
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
 
@@ -229,7 +245,7 @@ async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundT
 
 
 @router.get("/backtest/async/{job_id}")
-async def get_backtest_async(job_id: str):
+async def get_backtest_async(job_id: str, _: dict = Depends(verify_jwt_token)):
     job = _backtest_jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
