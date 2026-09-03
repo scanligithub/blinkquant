@@ -342,7 +342,7 @@ useEffect(() => {
         alert(`回测失败: ${msg}`);
         return;
       }
-      const { jobId } = await res.json();
+      const { job_id: jobId } = await res.json();
       if (!jobId) {
         alert('回测失败: 未获取到任务 ID');
         return;
