@@ -365,6 +365,9 @@ const HF_NODES = [
   'https://scanli-blinkquant-node3.hf.space',
 ];
 
+const SUBMIT_TIMEOUT = 240000; // 240s for cold start
+const POLL_TIMEOUT = 60000;
+
   const handleBacktest = async (params: {
     formula: string;
     start_date: string;
@@ -380,7 +383,7 @@ const HF_NODES = [
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
-          signal: AbortSignal.timeout(60000),
+          signal: AbortSignal.timeout(SUBMIT_TIMEOUT),
         }).then(async (res) => {
           const text = await res.text();
           if (!res.ok) throw new Error(`${node}: HTTP ${res.status} - ${text.slice(0, 200)}`);
