@@ -7,6 +7,9 @@ import StockSearch from '../components/StockSearch';
 import AISelectModal from '../components/AISelectModal';
 import BacktestPanel from '../components/BacktestPanel';
 import BacktestResults from '../components/BacktestResults';
+import ClusterStatusBar from '../components/ClusterStatusBar';
+import TaskList from '../components/TaskList';
+import { useCluster } from '@/hooks/useCluster';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
   ssr: false,
@@ -57,6 +60,18 @@ export default function Home() {
   const [chartTimeframe, setChartTimeframe] = useState('D');
   const [subChartType, setSubChartType] = useState('MACD');
   const [mainChartType, setMainChartType] = useState('MA'); // 新增：主图指标切换状态
+
+  // 集群状态管理
+  const { 
+    nodes, 
+    queueStats, 
+    myTasks, 
+    canRunSelection, 
+    canRunBacktest, 
+    idleNodeCount,
+    submitTask,
+    cancelTask 
+  } = useCluster();
   
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [showRotateHint, setShowRotateHint] = useState(false);
@@ -373,7 +388,7 @@ useEffect(() => {
     }
   }, [strategyName, formula, timeframe]);
 
-  // HF 节点配置
+  // HF 节点配置 (兼容旧逻辑，逐步迁移到新 API)
 const HF_NODES = [
   'https://scanli-blinkquant-node1.hf.space',
   'https://scanli-blinkquant-node2.hf.space',
@@ -392,76 +407,49 @@ const POLL_TIMEOUT = 60000;
     setBacktestLoading(true);
     setBacktestResult(null);
     try {
-      // 2. 并行提交到所有 HF 节点，取最快成功的
-      const submitPromises = HF_NODES.map((node) =>
-        fetch(`${node}/api/v1/backtest/async`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
-          signal: AbortSignal.timeout(SUBMIT_TIMEOUT),
-        }).then(async (res) => {
-          const text = await res.text();
-          if (!res.ok) throw new Error(`${node}: HTTP ${res.status} - ${text.slice(0, 200)}`);
-          return JSON.parse(text);
-        })
-      );
-
-      const results = await Promise.allSettled(submitPromises);
-      const success = results.find((r) => r.status === 'fulfilled');
-      if (!success || success.status !== 'fulfilled') {
-        const errors = results.map((r, i) =>
-          r.status === 'rejected' ? `${HF_NODES[i]}: ${r.reason?.message || r.reason}` : 'ok'
-        ).join('; ');
-        alert(`回测失败: 所有节点提交失败 - ${errors}`);
-        return;
-      }
-
-      const { job_id: jobId, status: initialStatus } = success.value;
-      if (!jobId) {
-        alert('回测失败: 节点未返回任务 ID');
-        return;
-      }
-
-      // 记录成功的节点，后续轮询只查该节点
-      const successfulNode = HF_NODES[results.indexOf(success)];
-      localStorage.setItem('backtestJobId', jobId);
-      localStorage.setItem('backtestNode', successfulNode);
-      localStorage.setItem('backtestTime', Date.now().toString());
-
-      // 3. 轮询该节点
-      const pollResult = async () => {
-        let pollErrors = 0;
+      // 使用新的任务队列 API
+      const taskId = await submitTask('backtest', params);
+      
+      // 轮询任务状态
+      const pollTaskStatus = async (taskId: number) => {
         while (true) {
           await new Promise((r) => setTimeout(r, 3000));
           try {
-            const pollRes = await fetch(`${successfulNode}/api/v1/backtest/async/${jobId}`, {
-              signal: AbortSignal.timeout(60000),
-            });
-            if (!pollRes.ok) {
-              const text = await pollRes.text();
-              throw new Error(`HTTP ${pollRes.status}: ${text.slice(0, 200)}`);
-            }
-            const result = await pollRes.json();
-            if (result.status === 'done') {
-              setBacktestResult(result.data);
-              localStorage.removeItem('backtestJobId');
-              localStorage.removeItem('backtestNode');
+            const res = await fetch(`/api/v1/tasks/${taskId}`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const task = await res.json();
+            
+            if (task.status === 'done') {
+              setBacktestResult(task.result);
               return;
             }
-            if (result.status === 'failed') {
-              alert(`回测失败: ${result.error}`);
-              localStorage.removeItem('backtestJobId');
-              localStorage.removeItem('backtestNode');
+            if (task.status === 'failed') {
+              alert(`回测失败: ${task.error || '未知错误'}`);
               return;
             }
-            if (result.status === 'cancelled') {
+            if (task.status === 'cancelled') {
               alert('回测任务已取消');
-              localStorage.removeItem('backtestJobId');
-              localStorage.removeItem('backtestNode');
               return;
             }
-            if (result.status === 'expired') {
-              alert('回测任务已过期');
+            if (task.status === 'preempted') {
+              alert('回测被选股任务抢占，已自动重新排队');
+              return;
+            }
+            // queued/running -> continue
+          } catch (e: any) {
+            console.error('Poll error:', e);
+            // 继续重试
+          }
+        };
+      };
+      
+      await pollTaskStatus(taskId);
+    } catch (e: any) {
+      alert(`回测失败: ${e.message}`);
+    } finally {
+      setBacktestLoading(false);
+    }
+  };
               localStorage.removeItem('backtestJobId');
               localStorage.removeItem('backtestNode');
               return;
@@ -501,16 +489,48 @@ const POLL_TIMEOUT = 60000;
     const t = overrides?.timeframe ?? timeframe;
     const d = overrides?.date;
     try {
-      const res = await fetch('/api/select', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formula: f, timeframe: t, ...(d ? { date: d } : {}) })
-      });
-      const json = await res.json();
-      if (json.success) {
-        setResults(json.data);
-        setSelectMeta({ date: json.date ?? null, degraded: !!json.meta?.degraded });
-      } else alert(`Selection failed: ${json.error}`);
-    } catch (err) { alert('Gateway connection failed'); }
+      // 使用新的任务队列 API 进行选股
+      const taskId = await submitTask('selection', { formula: f, timeframe: t, ...(d ? { date: d } : {}) });
+      
+      // 轮询选股任务状态
+      const pollSelection = async (taskId: number) => {
+        while (true) {
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const res = await fetch(`/api/v1/tasks/${taskId}`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const task = await res.json();
+            
+            if (task.status === 'done') {
+              // 选股结果直接在 task.result 中
+              if (task.result?.success) {
+                setResults(task.result.data);
+                setSelectMeta({ date: task.result.date ?? null, degraded: !!task.result.meta?.degraded });
+              } else {
+                alert(`Selection failed: ${task.result?.error || '未知错误'}`);
+              }
+              return;
+            }
+            if (task.status === 'failed') {
+              alert(`Selection failed: ${task.error || '未知错误'}`);
+              return;
+            }
+            if (task.status === 'cancelled') {
+              alert('选股任务已取消');
+              return;
+            }
+            // queued/running -> continue
+          } catch (e: any) {
+            console.error('Selection poll error:', e);
+            // 继续重试
+          }
+        }
+      };
+      
+      await pollSelection(taskId);
+    } catch (err) { 
+      alert('Gateway connection failed'); 
+    }
     setLoading(false);
   };
 
@@ -792,8 +812,10 @@ setDailyDataCache(dailyData);
                 </div>
               ) : sidebarTab === 'backtest' ? (
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
+                  <ClusterStatusBar />
                   <BacktestPanel initialFormula={formula} onRun={handleBacktest} loading={backtestLoading} />
                   {backtestResult && <BacktestResults result={backtestResult} />}
+                  <TaskList />
                 </div>
               ) : (
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
@@ -824,6 +846,7 @@ setDailyDataCache(dailyData);
           <section className="lg:col-span-3 order-2 lg:order-2">
             {sidebarTab === 'backtest' ? (
               <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full p-4 overflow-y-auto">
+                <ClusterStatusBar />
                 {backtestResult ? (
                   <BacktestResults result={backtestResult} />
                 ) : (

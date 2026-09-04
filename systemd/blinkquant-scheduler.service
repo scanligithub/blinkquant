@@ -1,0 +1,25 @@
+# /etc/systemd/system/blinkquant-scheduler.service
+[Unit]
+Description=BlinkQuant Cluster Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blinkquant
+WorkingDirectory=/opt/blinkquant/backend
+Environment=POSTGRES_URL=postgresql://user:pass@host:5432/db
+Environment=SCHEDULER_HOST=0.0.0.0
+Environment=SCHEDULER_PORT=8080
+ExecStart=/opt/blinkquant/venv/bin/python -m scheduler.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blinkquant-scheduler
+
+MemoryLimit=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
