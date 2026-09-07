@@ -92,7 +92,7 @@ class ClusterScheduler:
                 # 注意：不 return，继续轮询已运行的回测，释放已完成节点
             
             # 5. 无选股排队，调度 backtest 到空闲节点
-            if not idle_nodes:
+            if not pending_selection:
                 for node in idle_nodes:
                     task = await self._pop_task(conn, "backtest")
                     if not task:
