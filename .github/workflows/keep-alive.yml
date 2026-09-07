@@ -1,0 +1,15 @@
+name: Keep Scheduler Alive
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # 每 12 小时
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Scheduler Health
+        run: |
+          curl -sf https://scheduler-blinkquant.hf.space/health
+        continue-on-error: true

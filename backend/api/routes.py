@@ -496,3 +496,68 @@ async def run_benchmark(req: BenchmarkRequest):
         "accounting_violations": diag.get('accounting_invariant_violations', 0),
         "rejections": sum(diag.get('rej_counters', {}).values()),
     }
+
+
+# 心跳接收端点（供算力节点上报状态）
+from fastapi import Header
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+
+class HeartbeatPayload(BaseModel):
+    node_id: str
+    status: str
+    task_id: Optional[int] = None
+    load: float = 0.0
+    metrics: dict = {}
+
+@router.post("/internal/heartbeat")
+async def receive_heartbeat(
+    payload: HeartbeatPayload,
+    authorization: Optional[str] = Header(None),
+):
+    # 简单的 token 验证
+    expected_token = "internal-secret-change-me"
+    if authorization != f"Bearer {expected_token}":
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    now = datetime.utcnow()
+    # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
+import psycopg2
+import psycopg2.extras
+    from core.data_manager import data_manager
+    
+    if data_manager.postgres_url:
+        try:
+            conn = psycopg2.connect(data_manager.postgres_url)
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE cluster_nodes
+                SET status = %s,
+                    current_task_id = %s,
+                    task_type = %s,
+                    heartbeat_at = now(),
+                    last_error = %s,
+                    updated_at = now()
+                WHERE node_id = %s
+            """, (
+                payload.status,
+                payload.task_id,
+                "backtest" if payload.task_id else None,
+                None,
+                payload.node_id,
+            ))
+            conn.commit()
+            
+            # 记录心跳历史
+            cur.execute("""
+                INSERT INTO node_heartbeats (node_id, status, task_id, load, metrics, reported_at)
+                VALUES (%s, %s, %s, %s, %s, now())
+            """, (payload.node_id, payload.status, payload.task_id, payload.load, psycopg2.extras.Json(payload.metrics)))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Heartbeat error: {e}")
+    
+    return {"ok": True}

@@ -1,0 +1,30 @@
+name: Daily Restart HF Spaces
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # UTC 4:00 = 北京时间 12:00
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  restart-spaces:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart Node 1
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node1/restart"
+      
+      - name: Restart Node 2
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node2/restart"
+      
+      - name: Restart Node 3
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node3/restart"
+      
+      - name: Restart Scheduler
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/scanligithub/blinkquant-scheduler/restart"

@@ -1,5 +1,5 @@
 -- backend/migrations/001_cluster_scheduler.sql
--- 运行方式：psql $DATABASE_URL -f 001_cluster_scheduler.sql
+-- 运行方式：在 Vercel Postgres → Data → Query 粘贴执行
 
 -- ============================================================
 -- 1. 节点注册表
