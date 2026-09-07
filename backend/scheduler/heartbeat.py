@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 from .db import execute
+from .config import INTERNAL_TOKEN
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -19,8 +20,7 @@ async def receive_heartbeat(
     payload: HeartbeatPayload,
     authorization: Optional[str] = Header(None),
 ):
-    expected_token = "internal-secret-change-me"
-    if authorization != f"Bearer {expected_token}":
+    if authorization != f"Bearer {INTERNAL_TOKEN}":
         raise HTTPException(401, "Invalid token")
 
     now = datetime.utcnow()

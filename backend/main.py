@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware  # 新增导入
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from api.routes import router as api_router
 from core.data_manager import data_manager
@@ -12,8 +12,12 @@ import asyncio
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 全局标记：调度器是否在运行
+scheduler_running = False
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global scheduler_running
     node_idx = os.getenv('NODE_INDEX', 'unknown')
     logger.info(f"Checking environment: NODE_INDEX={node_idx}")
 
@@ -21,9 +25,19 @@ async def lifespan(app: FastAPI):
     # 创建后台任务，不使用 await
     asyncio.create_task(data_manager.async_load_data())
 
+    # --- 核心修改：在同一事件循环中启动调度器（仅 node1） ---
+    if os.getenv('RUN_SCHEDULER') == 'true':
+        logger.info("Starting ClusterScheduler in-process...")
+        from scheduler.scheduler import ClusterScheduler
+        scheduler = ClusterScheduler()
+        asyncio.create_task(scheduler.run_forever())
+        scheduler_running = True
+        logger.info("ClusterScheduler started in-process")
+
     yield
     # --- 停止逻辑 (可选) ---
     logger.info("Shutting down node...")
+    scheduler_running = False
 
 app = FastAPI(title="BlinkQuant Node", lifespan=lifespan)
 

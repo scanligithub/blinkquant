@@ -7,11 +7,14 @@ POSTGRES_URL = os.getenv("POSTGRES_URL")
 SCHEDULER_HOST = os.getenv("SCHEDULER_HOST", "0.0.0.0")
 SCHEDULER_PORT = int(os.getenv("SCHEDULER_PORT", "8080"))
 
+# Node URLs from env (with fallback for local/dev)
 HF_NODES = {
-    "node1": "https://scanli-blinkquant-node1.hf.space",
-    "node2": "https://scanli-blinkquant-node2.hf.space",
-    "node3": "https://scanli-blinkquant-node3.hf.space",
+    "node1": os.getenv("NODE1_URL", "https://scanli-blinkquant-node1.hf.space"),
+    "node2": os.getenv("NODE2_URL", "https://scanli-blinkquant-node2.hf.space"),
+    "node3": os.getenv("NODE3_URL", "https://scanli-blinkquant-node3.hf.space"),
 }
+
+INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
 SCHEDULE_INTERVAL_SEC = 1
 HEARTBEAT_TIMEOUT_SEC = 30

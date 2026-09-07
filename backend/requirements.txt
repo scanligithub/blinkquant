@@ -10,3 +10,4 @@ psutil
 psycopg2-binary
 pypinyin
 PyJWT
+asyncpg>=0.29.0

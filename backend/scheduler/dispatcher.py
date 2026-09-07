@@ -73,7 +73,7 @@ async def dispatch_selection(payload: dict, timeout: int = 60) -> dict:
     # 聚合逻辑：取 3 节点结果的并集（选股分片并行，结果取并集）
     all_codes = set()
     for node_data in success.values():
-        codes = data.get("codes", [])
+        codes = node_data.get("codes", [])
         all_codes.update(codes)
     
     return {"nodes": success, "codes": list(all_codes)}
@@ -83,7 +83,7 @@ async def cancel_task(node_id: str, job_id: str, reason: str = "preempted_by_sel
     client = await get_client()
     try:
         resp = await asyncio.wait_for(
-            _client.post(
+            client.post(
                 f"{HF_NODES[node_id]}/api/v1/backtest/cancel",
                 json={"job_id": job_id, "reason": reason},
             ),

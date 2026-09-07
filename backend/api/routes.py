@@ -175,6 +175,11 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             _backtest_jobs[job_id] = {"status": "failed", "error": "Nodes are loading data..."}
             return
 
+        # 检查是否已被取消
+        job = _backtest_jobs.get(job_id)
+        if job and job.get("status") == "cancelled":
+            return
+
         # 标记任务开始执行
         _backtest_jobs[job_id] = {"status": "running"}
         
@@ -199,12 +204,22 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             allocator=equal_weight_allocator,
         )
 
+        # 再次检查取消状态（在耗时操作前）
+        job = _backtest_jobs.get(job_id)
+        if job and job.get("status") == "cancelled":
+            return
+
         result = backtest_engine.run(
             formula=req.formula,
             start_date=req.start_date,
             end_signal_date=req.end_signal_date,
             initial_cash=req.initial_cash,
         )
+
+        # 完成后检查是否被取消
+        job = _backtest_jobs.get(job_id)
+        if job and job.get("status") == "cancelled":
+            return
 
         valuation_end_date = None
         if not result.equity_curve.is_empty():
@@ -225,7 +240,10 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             }
         }
     except Exception as e:
-        _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
+        # 如果是取消导致的异常，不覆盖 cancelled 状态
+        job = _backtest_jobs.get(job_id)
+        if not (job and job.get("status") == "cancelled"):
+            _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
 
 
 @router.post("/backtest/async")
@@ -245,6 +263,20 @@ async def get_backtest_async(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.post("/backtest/cancel")
+async def cancel_backtest(req: CancelBacktestRequest):
+    job = _backtest_jobs.get(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job.get("status") in ("done", "failed", "cancelled"):
+        return {"ok": True, "status": job.get("status"), "message": "Job already finished"}
+    
+    # 标记为取消，_run_backtest_async 会在下次检查时退出
+    _backtest_jobs[req.job_id] = {"status": "cancelled", "error": req.reason}
+    return {"ok": True, "status": "cancelled"}
 
 
 @router.get("/kline")
@@ -404,10 +436,11 @@ def get_node_status():
 def health_check():
     # 只要 Uvicorn 跑起来就回 200，防止 HF 杀掉进程
     # 增加 build_id 返回以进行高可用的版本比对，防止滚动更新假阳性
+    from main import scheduler_running
     b_id = getattr(data_manager, "build_id", "unknown")
     if data_manager.df_daily is not None:
-        return {"status": "healthy", "build_id": b_id}
-    return {"status": "initializing", "build_id": b_id}
+        return {"status": "healthy", "build_id": b_id, "scheduler": scheduler_running}
+    return {"status": "initializing", "build_id": b_id, "scheduler": scheduler_running}
 
 @router.post("/benchmark")
 async def run_benchmark(req: BenchmarkRequest):
