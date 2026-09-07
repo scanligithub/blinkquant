@@ -42,6 +42,10 @@ class BacktestRequest(BaseModel):
 class BenchmarkRequest(BaseModel):
     benchmark: str = "B1"  # B1, B2, B3, B4
 
+class CancelBacktestRequest(BaseModel):
+    job_id: str
+    reason: str = "preempted_by_selection"
+
 def report_metrics_usage(formula: str):
     """
     后台任务：上报指标计数
@@ -188,6 +192,15 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             allocator=equal_weight_allocator,
         )
 
+        # 检查取消请求
+        job = _backtest_jobs.get(job_id)
+        if job and job.get("cancel_requested"):
+            _backtest_jobs[job_id] = {
+                "status": "cancelled",
+                "error": job.get("cancel_reason") or "cancelled",
+            }
+            return
+
         result = backtest_engine.run(
             formula=req.formula,
             start_date=req.start_date,
@@ -234,6 +247,22 @@ async def get_backtest_async(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.post("/backtest/cancel")
+async def cancel_backtest(req: CancelBacktestRequest):
+    job = _backtest_jobs.get(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    status = job.get("status")
+    if status in ("done", "failed", "cancelled"):
+        return {"ok": True, "job_id": req.job_id, "status": status, "noop": True}
+    job["cancel_requested"] = True
+    job["cancel_reason"] = req.reason
+    if status == "queued":
+        job["status"] = "cancelled"
+        job["error"] = req.reason
+    return {"ok": True, "job_id": req.job_id, "status": job.get("status")}
 
 
 @router.get("/kline")
