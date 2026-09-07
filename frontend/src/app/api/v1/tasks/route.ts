@@ -10,8 +10,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
   }
 
-  const session = await requireAuth(req);
-  const userId = session.user?.id;
+  const auth = await requireAuth(req);
+  const userId = auth.user?.userId;
   if (!userId) {
     return NextResponse.json({ error: 'User not found' }, { status: 401 });
   }
@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
   }
 
-  const session = await requireAuth(req);
-  const userId = session.user?.id;
+  const auth = await requireAuth(req);
+  const userId = auth.user?.userId;
   if (!userId) {
     return NextResponse.json({ error: 'User not found' }, { status: 401 });
   }

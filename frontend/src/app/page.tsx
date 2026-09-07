@@ -7,8 +7,8 @@ import StockSearch from '../components/StockSearch';
 import AISelectModal from '../components/AISelectModal';
 import BacktestPanel from '../components/BacktestPanel';
 import BacktestResults from '../components/BacktestResults';
-import ClusterStatusBar from '../components/ClusterStatusBar';
-import TaskList from '../components/TaskList';
+import { ClusterStatusBar } from '../components/ClusterStatusBar';
+import { TaskList } from '../components/TaskList';
 import { useCluster } from '@/hooks/useCluster';
 
 const KLineChart = dynamic(() => import('../components/KLineChart'), {
@@ -441,35 +441,8 @@ const POLL_TIMEOUT = 60000;
             // 继续重试
           }
         };
-      };
-      
+};
       await pollTaskStatus(taskId);
-    } catch (e: any) {
-      alert(`回测失败: ${e.message}`);
-    } finally {
-      setBacktestLoading(false);
-    }
-  };
-              localStorage.removeItem('backtestJobId');
-              localStorage.removeItem('backtestNode');
-              return;
-            }
-            // queued/running -> continue
-          } catch (e: any) {
-            console.error('Poll error:', e);
-            pollErrors++;
-            if (pollErrors >= 5) {
-              alert(`回测轮询连续失败 ${pollErrors} 次: ${e.message}`);
-              localStorage.removeItem('backtestJobId');
-              localStorage.removeItem('backtestNode');
-              localStorage.removeItem('backtestTime');
-              return;
-            }
-            // 轮询出错继续重试
-          }
-        }
-      };
-      await pollResult();
     } catch (e: any) {
       alert(`回测失败: ${e.message}`);
     } finally {

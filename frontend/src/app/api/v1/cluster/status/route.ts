@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
           COUNT(*) FILTER (WHERE status = 'pending' AND task_type = 'backtest') as pending_backtest,
           COUNT(*) FILTER (WHERE status = 'running') as running
         FROM task_queue
-      `
-    );
+      `,
+    ]);
     
     const nodes = nodesResult.rows.map(row => ({
       node_id: row.node_id,
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
       status: row.status,
       current_task_id: row.current_task_id,
       task_type: row.task_type,
-      load: 0.0, // TODO: 从心跳获取
+      load: 0.0,
       heartbeat_at: row.heartbeat_at,
     }));
     

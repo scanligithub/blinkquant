@@ -58,7 +58,7 @@ export async function DELETE(
   try {
     // 只能取消自己的任务
     const auth = await requireAuth(req);
-    const userId = auth.user?.id;
+    const userId = auth.user?.userId;
     
     const result = await sql`
       UPDATE task_queue
