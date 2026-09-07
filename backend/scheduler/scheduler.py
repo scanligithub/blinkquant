@@ -133,7 +133,7 @@ class ClusterScheduler:
         """, [v["assigned_node"] for v in victims] + [n.node_id for n in idle_nodes])
 
         if len(updated_idle) >= 3:
-            await self._dispatch_selection_now(conn, selection_task_id)
+            await self._dispatch_selection_now(conn, selection_task_id, selection_payload)
 
     async def _dispatch_selection_now(self, conn, selection_task_id: int, selection_payload: dict) -> None:
         """派发选股任务到 3 个节点"""
