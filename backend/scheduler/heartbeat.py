@@ -19,7 +19,6 @@ async def receive_heartbeat(
     payload: HeartbeatPayload,
     authorization: Optional[str] = Header(None),
 ):
-    # 内部调度器与节点共享密钥
     expected_token = "internal-secret-change-me"
     if authorization != f"Bearer {expected_token}":
         raise HTTPException(401, "Invalid token")
@@ -28,11 +27,11 @@ async def receive_heartbeat(
     # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
     await execute("""
         UPDATE cluster_nodes
-        SET status = $1,
-            current_task_id = $2,
-            task_type = $3,
-            heartbeat_at = $3,
-            last_error = $4,
+        SET status = $2,
+            current_task_id = $3,
+            task_type = $4,
+            heartbeat_at = now(),
+            last_error = $5,
             updated_at = now()
         WHERE node_id = $1
     """,

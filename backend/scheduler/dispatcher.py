@@ -28,7 +28,7 @@ async def dispatch_backtest(node_id: str, payload: dict, timeout: int = 240) -> 
     client = await get_client()
     try:
         resp = await asyncio.wait_for(
-            _client.post(
+            client.post(
                 f"{HF_NODES[node_id]}/api/v1/backtest/async",
                 json=payload,
                 headers={"Content-Type": "application/json"},
@@ -56,7 +56,6 @@ async def dispatch_selection(payload: dict, timeout: int = 60) -> dict:
         resp.raise_for_status()
         return node_id, resp.json()
     
-    from .config import HF_NODES
     tasks = [call_one(nid, ep) for nid, ep in HF_NODES.items()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -71,8 +70,13 @@ async def dispatch_selection(payload: dict, timeout: int = 60) -> dict:
     if not success:
         raise RuntimeError("All selection nodes failed")
     
-    # 聚合逻辑：取 3 节点结果的交集（实际按需求调整）
-    return {"nodes": success}
+    # 聚合逻辑：取 3 节点结果的并集（选股分片并行，结果取并集）
+    all_codes = set()
+    for node_data in success.values():
+        codes = data.get("codes", [])
+        all_codes.update(codes)
+    
+    return {"nodes": success, "codes": list(all_codes)}
 
 async def cancel_task(node_id: str, job_id: str, reason: str = "preempted_by_selection") -> bool:
     """协作式取消：POST /api/v1/backtest/cancel (需节点实现)"""

@@ -81,7 +81,7 @@ class ClusterScheduler:
             
             # 4. 检查是否有 pending selection（最高优先级）
             pending_selection = await conn.fetchrow("""
-                SELECT id FROM task_queue
+                SELECT id, payload FROM task_queue
                 WHERE status IN ('pending', 'queued') AND task_type = 'selection'
                 ORDER BY priority DESC, created_at
                 LIMIT 1
@@ -89,26 +89,27 @@ class ClusterScheduler:
             
             if pending_selection:
                 # 有选股任务等待，必须确保 3 节点全可用
-                await self._ensure_nodes_for_selection(conn, idle_nodes, running_nodes, pending_selection["id"])
+                await self._ensure_nodes_for_selection(conn, idle_nodes, running_nodes, pending_selection["id"], pending_selection["payload"])
                 # 本轮只处理选股调度
-                return
-
+                # 注意：不 return，继续轮询已运行的回测，释放已完成节点
+            
             # 5. 无选股排队，调度 backtest 到空闲节点
-            for node in idle_nodes:
-                task = await self._pop_task(conn, "backtest")
-                if not task:
-                    break
-                await self._dispatch_backtest(conn, task, node.node_id)
+            if not pending_selection:
+                for node in idle_nodes:
+                    task = await self._pop_task(conn, "backtest")
+                    if not task:
+                        break
+                    await self._dispatch_backtest(conn, task, node.node_id)
 
             # 6. 轮询正在运行的 backtest 任务（检查完成/失败）
             await self._poll_running_backtests(conn)
 
-    async def _ensure_nodes_for_selection(self, conn, idle_nodes: List[NodeRow], running_nodes: List[NodeRow], selection_task_id: int) -> None:
+    async def _ensure_nodes_for_selection(self, conn, idle_nodes: List[NodeRow], running_nodes: List[NodeRow], selection_task_id: int, selection_payload: dict) -> None:
         """确保 3 节点可用于 selection：抢占占用的节点"""
         needed = 3 - len(idle_nodes)
         if needed <= 0:
             # 已经有 3 个空闲节点，直接派发
-            await self._dispatch_selection_now(conn, pending_selection_id)
+            await self._dispatch_selection_now(conn, selection_task_id, selection_payload)
             return
 
         # 需要抢占 running backtest
@@ -122,7 +123,7 @@ class ClusterScheduler:
         """, needed)
 
         for victim in victims:
-            await self._preempt_backtest(conn, victim["id"], victim["cluster_job_id"], row["assigned_node"])
+            await self._preempt_backtest(conn, victim["id"], victim["cluster_job_id"], victim["assigned_node"], selection_task_id)
 
         # 等待节点变 idle（下一轮调度会处理）
         # 或者立即查询并派发
@@ -134,7 +135,7 @@ class ClusterScheduler:
         if len(updated_idle) >= 3:
             await self._dispatch_selection_now(conn, selection_task_id)
 
-    async def _dispatch_selection_now(self, conn, selection_task_id: int) -> None:
+    async def _dispatch_selection_now(self, conn, selection_task_id: int, selection_payload: dict) -> None:
         """派发选股任务到 3 个节点"""
         # 更新任务状态
         await conn.execute("""
@@ -153,7 +154,7 @@ class ClusterScheduler:
         """, selection_task_id)
 
         # 并行发起 selection 请求（异步）
-        asyncio.create_task(self._execute_selection(payload))
+        asyncio.create_task(self._execute_selection(selection_payload, selection_task_id))
 
     # ═══════════════════════════════════════════════════════════
     # 数据库查询封装
@@ -188,7 +189,7 @@ class ClusterScheduler:
         return dict(row) if row else None
 
     # ══════════════════════════════════════════════════════════
-    # 派发实现（事务外执行 HTTP）
+    # 派发实现（事务内只写状态，事务外发 HTTP）
     # ══════════════════════════════════════════════════════════
 
     async def _dispatch_selection(self, conn, task: dict) -> None:
@@ -279,9 +280,9 @@ class ClusterScheduler:
                 UPDATE cluster_nodes SET status = 'idle', current_task_id = NULL, task_type = NULL WHERE node_id = $1
             """, node_id)
 
-    # ══════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════
     # 抢占与恢复
-    # ══════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════
 
     async def _preempt_backtest(self, conn, task_id: int, job_id: str, node_id: str, preempted_by: int) -> None:
         """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队"""
@@ -298,7 +299,7 @@ class ClusterScheduler:
         # 2. 协作式取消 HF job（异步）
         if job_id:
             from .dispatcher import cancel_task
-            asyncio.create_task(cancel_task(job_id))
+            asyncio.create_task(cancel_task(node_id, job_id, "preempted_by_selection"))
 
         # 3. 释放节点（设为 draining，取消完成后回 idle）
         await conn.execute("""
@@ -347,7 +348,7 @@ class ClusterScheduler:
 
     # ══════════════════════════════════════════════════════════
     # 轮询正在运行的 backtest（检查完成/失败）
-    # ═══════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════
 
     async def _poll_running_backtests(self, conn) -> None:
         """轮询 running backtest 的 HF job 状态"""
@@ -365,7 +366,7 @@ class ClusterScheduler:
             
             try:
                 from .dispatcher import poll_backtest_job
-                result = await poll_backtest_job(node_id, row["id"])
+                result = await poll_backtest_job(node_id, job_id)
                 status = result.get("status")
                 
                 if status == "done":
@@ -401,8 +402,8 @@ class ClusterScheduler:
             WHERE current_task_id = $1
         """, task_id)
 
-    async def _mark_task_failed(self, conn, task_id: int, error: str) -> None:
-        await conn.execute("""
+    async def _mark_task_failed(self, task_id: int, error: str) -> None:
+        await execute("""
             UPDATE task_queue
             SET status = 'failed', finished_at = now(), error = $1
             WHERE id = $2
