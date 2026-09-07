@@ -1,9 +1,10 @@
 # backend/scheduler/scheduler.py
 from __future__ import annotations
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from .config import (
     SCHEDULE_INTERVAL_SEC,
@@ -17,11 +18,15 @@ from .config import (
 from .db import acquire, execute, fetch, fetchrow
 from .models import NodeRow, TaskRow
 from .dispatcher import (
-    dispatch_backtest, dispatch_selection, cancel_task,
+    dispatch_backtest, dispatch_selection, cancel_task, poll_backtest_job,
 )
 from .state import can_transition_node, can_transition_task
 
 log = logging.getLogger("scheduler")
+
+# ═══════════════════════════════════════════════════════════
+# 调度器主类
+# ═══════════════════════════════════════════════════════════
 
 class ClusterScheduler:
     def __init__(self):
@@ -45,37 +50,114 @@ class ClusterScheduler:
                 pass
         log.info("Scheduler stopped")
 
+    # ══════════════════════════════════════════════════════════
+    # 主循环
+    # ══════════════════════════════════════════════════════════
+
     async def _run_loop(self) -> None:
         from .config import SCHEDULE_INTERVAL_SEC
-        while True:
+        while self._running:
             try:
                 await self._schedule_cycle()
             except Exception as e:
                 logging.exception("Scheduler cycle error: %s", e)
-            await asyncio.sleep(1)
+            await asyncio.sleep(SCHEDULE_INTERVAL_SEC)
+
+    # ══════════════════════════════════════════════════════════
+    # 单次调度周期：核心策略 = 选股优先 + 抢占回测
+    # ═══════════════════════════════════════════════════════════
 
     async def _schedule_cycle(self) -> None:
         async with acquire() as conn:
+            # 1. 清理超时/心跳丢失
             await self._recover_stuck(conn)
 
+            # 2. 获取集群快照
             nodes = await self._get_nodes(conn)
+            
+            # 3. 统计资源
             idle_nodes = [n for n in nodes if n.is_idle]
             running_nodes = [n for n in nodes if n.status == "running"]
-
-            if not idle_nodes and not any(n.status == "draining" for n in nodes):
+            
+            # 4. 检查是否有 pending selection（最高优先级）
+            pending_selection = await conn.fetchrow("""
+                SELECT id FROM task_queue
+                WHERE status IN ('pending', 'queued') AND task_type = 'selection'
+                ORDER BY priority DESC, created_at
+                LIMIT 1
+            """)
+            
+            if pending_selection:
+                # 有选股任务等待，必须确保 3 节点全可用
+                await self._ensure_nodes_for_selection(conn, idle_nodes, running_nodes, pending_selection["id"])
+                # 本轮只处理选股调度
                 return
 
-            if len(idle_nodes) == 3:
-                task = await self._pop_task(conn, "selection")
-                if task:
-                    await self._dispatch_selection(conn, task)
-                    return
-
+            # 5. 无选股排队，调度 backtest 到空闲节点
             for node in idle_nodes:
                 task = await self._pop_task(conn, "backtest")
                 if not task:
                     break
                 await self._dispatch_backtest(conn, task, node.node_id)
+
+            # 6. 轮询正在运行的 backtest 任务（检查完成/失败）
+            await self._poll_running_backtests(conn)
+
+    async def _ensure_nodes_for_selection(self, conn, idle_nodes: List[NodeRow], running_nodes: List[NodeRow], selection_task_id: int) -> None:
+        """确保 3 节点可用于 selection：抢占占用的节点"""
+        needed = 3 - len(idle_nodes)
+        if needed <= 0:
+            # 已经有 3 个空闲节点，直接派发
+            await self._dispatch_selection_now(conn, pending_selection_id)
+            return
+
+        # 需要抢占 running backtest
+        # 优先抢占最早开始的 backtest（公平）
+        victims = await conn.fetch("""
+            SELECT id, assigned_node, cluster_job_id
+            FROM task_queue
+            WHERE status = 'running' AND task_type = 'backtest'
+            ORDER BY started_at ASC
+            LIMIT $1
+        """, needed)
+
+        for victim in victims:
+            await self._preempt_backtest(conn, victim["id"], victim["cluster_job_id"], row["assigned_node"])
+
+        # 等待节点变 idle（下一轮调度会处理）
+        # 或者立即查询并派发
+        updated_idle = await conn.fetch("""
+            SELECT node_id FROM cluster_nodes
+            WHERE status = 'idle' AND node_id = ANY($1)
+        """, [v["assigned_node"] for v in victims] + [n.node_id for n in idle_nodes])
+
+        if len(updated_idle) >= 3:
+            await self._dispatch_selection_now(conn, selection_task_id)
+
+    async def _dispatch_selection_now(self, conn, selection_task_id: int) -> None:
+        """派发选股任务到 3 个节点"""
+        # 更新任务状态
+        await conn.execute("""
+            UPDATE task_queue
+            SET status = 'running', started_at = now(),
+                assigned_node = 'node1,node2,node3'
+            WHERE id = $1
+        """, selection_task_id)
+
+        # 标记 3 节点为 running
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'running', current_task_id = $1, task_type = 'selection',
+                updated_at = now()
+            WHERE node_id IN ('node1', 'node2', 'node3')
+        """, selection_task_id)
+
+        # 并行发起 selection 请求（异步）
+        asyncio.create_task(self._execute_selection(payload))
+
+    # ═══════════════════════════════════════════════════════════
+    # 数据库查询封装
+    # ═══════════════════════════════════════════════════════════
 
     async def _get_nodes(self, conn) -> list[NodeRow]:
         rows = await conn.fetch("""
@@ -87,6 +169,7 @@ class ClusterScheduler:
         return [NodeRow(**dict(r)) for r in rows]
 
     async def _pop_task(self, conn, task_type: str) -> Optional[dict]:
+        """原子性抢占任务"""
         row = await conn.fetchrow("""
             UPDATE task_queue
             SET status = 'queued', queued_at = now()
@@ -104,7 +187,12 @@ class ClusterScheduler:
         """, task_type)
         return dict(row) if row else None
 
+    # ══════════════════════════════════════════════════════════
+    # 派发实现（事务外执行 HTTP）
+    # ══════════════════════════════════════════════════════════
+
     async def _dispatch_selection(self, conn, task: dict) -> None:
+        """在事务内标记状态，事务外发起 HTTP"""
         task_id = task["id"]
         payload = task["payload"]
         node_ids = ["node1", "node2", "node3"]
@@ -112,81 +200,124 @@ class ClusterScheduler:
         await conn.execute("""
             UPDATE task_queue
             SET status = 'running', started_at = now(),
-                assigned_node = $1
-            WHERE id = $2
-        """, "node1,node2,node3", task["id"])
+                assigned_node = 'node1,node2,node3'
+            WHERE id = $1
+        """, task_id)
 
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'running', current_task_id = $1, task_type = 'selection',
                 updated_at = now()
             WHERE node_id = ANY($2)
-        """, task["id"], node_ids)
+        """, task_id, node_ids)
 
-        # 实际应用中这里应并行 POST /api/v1/select 到 3 个节点
-        # 结果由节点回调或轮询更新
+        # 事务提交后异步执行
+        asyncio.create_task(self._execute_selection(payload, task_id))
+
+    async def _execute_selection(self, payload: dict, task_id: int) -> None:
+        """实际发送 selection 请求，聚合 3 节点结果"""
+        from .dispatcher import dispatch_selection
+        from .db import execute
+        try:
+            result = await dispatch_selection(payload)
+            # 更新任务完成状态
+            await execute("""
+                UPDATE task_queue
+                SET status = 'done', finished_at = now(), result = $1
+                WHERE id = $2
+            """, json.dumps(result), task_id)
+            
+            # 释放 3 节点
+            await execute("""
+                UPDATE cluster_nodes
+                SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
+                WHERE node_id IN ('node1', 'node2', 'node3')
+            """)
+        except Exception as e:
+            await self._mark_task_failed(task_id, str(e))
 
     async def _dispatch_backtest(self, conn, task: dict, node_id: str) -> None:
+        """单节点派发 backtest，事务内只写状态"""
+        task_id = task["id"]
+        payload = task["payload"]
+
+        # 先在事务内标记
+        await conn.execute("""
+            UPDATE task_queue
+            SET status = 'running', started_at = now()
+            WHERE id = $1
+        """, task_id)
+
+        # 事务外发起 HTTP
+        asyncio.create_task(self._execute_backtest(node_id, payload, task_id))
+
+    async def _execute_backtest(self, node_id: str, payload: dict, task_id: int) -> None:
+        """事务外执行 HTTP，完成后更新状态"""
         from .dispatcher import dispatch_backtest
-        from .config import HF_NODES
-
+        from .db import execute
         try:
-            result = await dispatch_backtest(node_id, task["payload"])
+            result = await dispatch_backtest(node_id, payload)
             job_id = result["job_id"]
-            await conn.execute("""
+            
+            await execute("""
                 UPDATE task_queue
-                SET status = 'running', started_at = now(),
-                    assigned_node = $1, cluster_job_id = $2
-                WHERE id = $3
-            """, node_id, result["job_id"], task["id"])
+                SET cluster_job_id = $1
+                WHERE id = $2
+            """, job_id, task_id)
 
-            await conn.execute("""
+            await execute("""
                 UPDATE cluster_nodes
                 SET status = 'running', current_task_id = $1, task_type = 'backtest',
                     updated_at = now()
                 WHERE node_id = $2
-            """, task["id"], node_id)
-
+            """, task_id, node_id)
         except Exception as e:
-            await self._mark_task_failed(conn, task["id"], str(e))
+            await execute("""
+                UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2
+            """, str(e), task_id)
+            await execute("""
+                UPDATE cluster_nodes SET status = 'idle', current_task_id = NULL, task_type = NULL WHERE node_id = $1
+            """, node_id)
 
-    async def _mark_task_failed(self, conn, task_id: int, error: str) -> None:
+    # ══════════════════════════════════════════════════════════
+    # 抢占与恢复
+    # ══════════════════════════════════════════════════════════
+
+    async def _preempt_backtest(self, conn, task_id: int, job_id: str, node_id: str, preempted_by: int) -> None:
+        """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队"""
+        # 1. 标记 preempted
         await conn.execute("""
             UPDATE task_queue
-            SET status = 'failed', finished_at = now(), error = $1
+            SET status = 'preempted', finished_at = now(),
+                error = 'preempted by selection #' || $1,
+                preempted_by = $1,
+                retry_count = retry_count + 1
             WHERE id = $2
-        """, error, task_id)
+        """, preempted_by, task_id)
 
-    async def preempt_backtests_for_selection(self, conn, selection_task_id: int) -> list[int]:
-        rows = await conn.fetch("""
-            SELECT id, assigned_node, cluster_job_id
-            FROM task_queue
-            WHERE status = 'running' AND task_type = 'backtest'
-        """)
-        preempted = []
-        for row in rows:
-            await conn.execute("""
-                UPDATE task_queue
-                SET status = 'preempted', finished_at = now(),
-                    error = 'preempted by selection #' || $1,
-                    preempted_by = $1
-                WHERE id = $2
-            """, row["id"], row["id"])
+        # 2. 协作式取消 HF job（异步）
+        if job_id:
+            from .dispatcher import cancel_task
+            asyncio.create_task(cancel_task(job_id))
 
-            if row["cluster_job_id"]:
-                from .dispatcher import cancel_task
-                await cancel_task(row["assigned_node"], row["cluster_job_id"])
+        # 3. 释放节点（设为 draining，取消完成后回 idle）
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'draining', current_task_id = NULL, task_type = NULL
+            WHERE node_id = $1
+        """, node_id)
 
-            await conn.execute("""
-                UPDATE cluster_nodes
-                SET status = 'draining', current_task_id = NULL, task_type = NULL
-                WHERE node_id = $1
-            """, row["assigned_node"])
-
-            preempted.append(row["id"])
-        return preempted
+        # 4. 重新入队（自动重试）
+        await conn.execute("""
+            UPDATE task_queue
+            SET status = 'pending', assigned_node = NULL, cluster_job_id = NULL,
+                queued_at = NULL, started_at = NULL, finished_at = NULL
+            WHERE id = $1
+        """, task_id)
 
     async def _recover_stuck(self, conn) -> None:
+        """回收超时任务 & 心跳丢失节点"""
+        # 1. running 超过 30min 无心跳 → 重置 pending
         await conn.execute("""
             UPDATE task_queue t
             SET status = 'pending', assigned_node = NULL,
@@ -198,12 +329,84 @@ class ClusterScheduler:
               AND t.retry_count < t.max_retries
         """)
 
+        # 2. 节点心跳超时 → unhealthy
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'unhealthy', last_error = 'heartbeat timeout'
             WHERE heartbeat_at < now() - interval '60 seconds'
               AND status IN ('idle', 'running')
         """)
+
+        # 3. draining 超时（取消超时）→ idle
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL
+            WHERE status = 'draining'
+              AND updated_at < now() - interval '30 seconds'
+        """)
+
+    # ══════════════════════════════════════════════════════════
+    # 轮询正在运行的 backtest（检查完成/失败）
+    # ═══════════════════════════════════════════════════════════
+
+    async def _poll_running_backtests(self, conn) -> None:
+        """轮询 running backtest 的 HF job 状态"""
+        rows = await conn.fetch("""
+            SELECT id, assigned_node, cluster_job_id
+            FROM task_queue
+            WHERE status = 'running' AND task_type = 'backtest'
+        """)
+
+        for row in rows:
+            job_id = row["cluster_job_id"]
+            node_id = row["assigned_node"]
+            if not job_id:
+                continue
+            
+            try:
+                from .dispatcher import poll_backtest_job
+                result = await poll_backtest_job(node_id, row["id"])
+                status = result.get("status")
+                
+                if status == "done":
+                    await self._complete_backtest(row["id"], result.get("data"))
+                elif status in ("failed", "cancelled", "expired"):
+                    await self._fail_backtest(row["id"], result.get("error", status))
+            except Exception as e:
+                log.warning("Poll job %s failed: %s", row["id"], e)
+
+    async def _complete_backtest(self, task_id: int, data: dict) -> None:
+        await execute("""
+            UPDATE task_queue
+            SET status = 'done', finished_at = now(), result = $1
+            WHERE id = $2
+        """, json.dumps(data), task_id)
+        
+        await execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
+            WHERE current_task_id = $1
+        """, task_id)
+
+    async def _fail_backtest(self, task_id: int, error: str) -> None:
+        await execute("""
+            UPDATE task_queue
+            SET status = 'failed', finished_at = now(), error = $1
+            WHERE id = $2
+        """, error, task_id)
+        
+        await execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
+            WHERE current_task_id = $1
+        """, task_id)
+
+    async def _mark_task_failed(self, conn, task_id: int, error: str) -> None:
+        await conn.execute("""
+            UPDATE task_queue
+            SET status = 'failed', finished_at = now(), error = $1
+            WHERE id = $2
+        """, error, task_id)
 
     async def run_forever(self) -> None:
         await self.start()

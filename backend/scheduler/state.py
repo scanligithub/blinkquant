@@ -20,6 +20,7 @@ class TaskAction(str, Enum):
     CANCEL      = "cancel"
     REQUEUE     = "requeue"
 
+# 状态转移表（简化版，调度器内部校验用）
 VALID_NODE_TRANSITIONS: dict[str, set[str]] = {
     "idle":        {"running", "unhealthy", "maintenance"},
     "running":     {"idle", "draining", "unhealthy"},

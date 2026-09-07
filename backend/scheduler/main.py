@@ -35,7 +35,7 @@ async def main() -> None:
         loop.add_signal_handler(sig, shutdown)
 
     try:
-        await ClusterScheduler().run_forever()
+        await scheduler.run_forever()
     finally:
         await close_pool()
         log.info("Scheduler exited")

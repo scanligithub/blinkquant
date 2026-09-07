@@ -14,41 +14,36 @@ class HeartbeatPayload(BaseModel):
     load: float = 0.0
     metrics: dict = {}
 
-router = APIRouter(prefix="/internal", tags=["internal"])
-
 @router.post("/heartbeat")
 async def receive_heartbeat(
     payload: HeartbeatPayload,
     authorization: Optional[str] = Header(None),
-    expected_token: str = "internal-secret-change-me",
 ):
-    if authorization != f"Bearer internal-secret-change-me":
+    # 内部调度器与节点共享密钥
+    expected_token = "internal-secret-change-me"
+    if authorization != f"Bearer {expected_token}":
         raise HTTPException(401, "Invalid token")
 
     now = datetime.utcnow()
+    # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
     await execute("""
-        INSERT INTO cluster_nodes (node_id, name, endpoint, weight, status,
-                                   current_task_id, task_type, heartbeat_at, last_error, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
-        ON CONFLICT (node_id) DO UPDATE SET
-            status = EXCLUDED.status,
-            current_task_id = EXCLUDED.current_task_id,
-            task_type = EXCLUDED.task_type,
-            heartbeat_at = EXCLUDED.heartbeat_at,
-            last_error = EXCLUDED.last_error,
+        UPDATE cluster_nodes
+        SET status = $1,
+            current_task_id = $2,
+            task_type = $3,
+            heartbeat_at = $3,
+            last_error = $4,
             updated_at = now()
+        WHERE node_id = $1
     """,
         payload.node_id,
-        payload.node_id,
-        "",
-        1,
         payload.status,
         payload.task_id,
         "backtest" if payload.task_id else None,
-        datetime.utcnow(),
         None,
     )
 
+    # 记录心跳历史
     await execute("""
         INSERT INTO node_heartbeats (node_id, status, task_id, load, metrics, reported_at)
         VALUES ($1, $2, $3, $4, $5, now())
