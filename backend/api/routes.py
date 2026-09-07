@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+# backend/api/routes.py
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Header
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
@@ -8,6 +9,7 @@ import os
 import re
 import psutil
 import psycopg2
+import psycopg2.extras
 import uuid
 from pypinyin import pinyin, Style
 from core.data_manager import data_manager
@@ -27,6 +29,7 @@ router = APIRouter(prefix="/api/v1")
 # 使用 metric_pattern_mtf 容忍可选的 W./M./D. 前缀
 METRIC_REGEX = selection_engine.metric_pattern_mtf
 
+
 class SelectionRequest(BaseModel):
     formula: str
     timeframe: str = "D"
@@ -39,12 +42,15 @@ class BacktestRequest(BaseModel):
     end_signal_date: datetime.date
     initial_cash: float = 1_000_000
 
+
 class BenchmarkRequest(BaseModel):
     benchmark: str = "B1"  # B1, B2, B3, B4
+
 
 class CancelBacktestRequest(BaseModel):
     job_id: str
     reason: str = "preempted_by_selection"
+
 
 def report_metrics_usage(formula: str):
     """
@@ -75,6 +81,7 @@ def report_metrics_usage(formula: str):
         conn.close()
     except Exception as e:
         print(f"DB Report Error: {e}")
+
 
 @router.post("/select")
 async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks):
@@ -154,7 +161,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
             "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
             "metrics": result.metrics,
-}
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -191,15 +198,6 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             execution_config=MVP_EXECUTION_CONFIG,
             allocator=equal_weight_allocator,
         )
-
-        # 检查取消请求
-        job = _backtest_jobs.get(job_id)
-        if job and job.get("cancel_requested"):
-            _backtest_jobs[job_id] = {
-                "status": "cancelled",
-                "error": job.get("cancel_reason") or "cancelled",
-            }
-            return
 
         result = backtest_engine.run(
             formula=req.formula,
@@ -249,22 +247,6 @@ async def get_backtest_async(job_id: str):
     return job
 
 
-@router.post("/backtest/cancel")
-async def cancel_backtest(req: CancelBacktestRequest):
-    job = _backtest_jobs.get(req.job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    status = job.get("status")
-    if status in ("done", "failed", "cancelled"):
-        return {"ok": True, "job_id": req.job_id, "status": status, "noop": True}
-    job["cancel_requested"] = True
-    job["cancel_reason"] = req.reason
-    if status == "queued":
-        job["status"] = "cancelled"
-        job["error"] = req.reason
-    return {"ok": True, "job_id": req.job_id, "status": job.get("status")}
-
-
 @router.get("/kline")
 def get_kline(code: str, timeframe: str = "D"):
     df = data_manager.df_daily
@@ -282,7 +264,6 @@ def get_kline(code: str, timeframe: str = "D"):
     stock_df = stock_df.select(available_cols)
 
 
-
     if len(stock_df) == 0:
         raise HTTPException(status_code=404, detail="Stock not found")
 
@@ -291,7 +272,6 @@ def get_kline(code: str, timeframe: str = "D"):
     stock_df.write_parquet(buffer, compression="zstd")
     buffer.seek(0) # 将文件指针移到开头
     
-
     # 以二进制响应的形式返回 Parquet 数据
     return Response(content=buffer.getvalue(), media_type="application/octet-stream")
 
@@ -523,12 +503,11 @@ async def receive_heartbeat(
 
     now = datetime.utcnow()
     # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
-import psycopg2
-import psycopg2.extras
-    from core.data_manager import data_manager
     
     if data_manager.postgres_url:
         try:
+            import psycopg2
+            import psycopg2.extras
             conn = psycopg2.connect(data_manager.postgres_url)
             cur = conn.cursor()
             cur.execute("""
@@ -559,5 +538,5 @@ import psycopg2.extras
             conn.close()
         except Exception as e:
             logger.error(f"Heartbeat error: {e}")
-    
+     
     return {"ok": True}
