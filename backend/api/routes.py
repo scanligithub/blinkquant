@@ -209,7 +209,10 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
         if job and job.get("status") == "cancelled":
             return
 
-        result = backtest_engine.run(
+        # 在线程池中运行同步回测，避免阻塞事件循环
+        import asyncio
+        result = await asyncio.to_thread(
+            backtest_engine.run,
             formula=req.formula,
             start_date=req.start_date,
             end_signal_date=req.end_signal_date,
