@@ -476,9 +476,27 @@ const POLL_TIMEOUT = 60000;
             
             if (task.status === 'done') {
               // 选股结果直接在 task.result 中
-              if (task.result?.success) {
-                setResults(task.result.data);
-                setSelectMeta({ date: task.result.date ?? null, degraded: !!task.result.meta?.degraded });
+              // 支持两种格式：
+              // 1. 调度器格式：{ nodes: {...}, codes: [...] }
+              // 2. 直连节点格式：{ success: true, data: [...], date, meta }
+              let codes: string[] | null = null;
+              let signalDate: string | null = null;
+              let degraded = false;
+
+              if (Array.isArray(task.result?.codes)) {
+                // 调度器格式
+                codes = task.result.codes;
+                signalDate = task.result.nodes?.node1?.signal_date ?? null;
+              } else if (task.result?.success && Array.isArray(task.result?.data)) {
+                // 直连节点格式
+                codes = task.result.data;
+                signalDate = task.result.date ?? null;
+                degraded = !!task.result.meta?.degraded;
+              }
+
+              if (codes) {
+                setResults(codes);
+                setSelectMeta({ date: signalDate, degraded });
               } else {
                 alert(`Selection failed: ${task.result?.error || '未知错误'}`);
               }
