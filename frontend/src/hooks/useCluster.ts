@@ -68,7 +68,7 @@ export function useCluster() {
     let mounted = true;
     const pollTasks = async () => {
       try {
-        const res = await fetch('/api/v1/tasks/my', { cache: 'no-store' });
+        const res = await fetch('/api/v1/tasks', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           if (mounted) setMyTasks(data);
