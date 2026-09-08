@@ -36,7 +36,7 @@ async def dispatch_backtest(node_id: str, payload: dict, timeout: int = 240) -> 
             timeout=timeout,
         )
         if resp.status_code == 422:
-            detail = await resp.text()
+            detail = resp.text
             raise RuntimeError(f"dispatch_backtest({node_id}) 422: {detail} | payload={payload}")
         resp.raise_for_status()
         data = resp.json()

@@ -238,22 +238,29 @@ class ClusterScheduler:
             await self._mark_task_failed(task_id, str(e))
 
     async def _dispatch_backtest(self, conn, task: dict, node_id: str) -> None:
-        """单节点派发 backtest，事务内只写状态"""
+        """单节点派发 backtest：事务内标记 task + 占用节点，事务外发 HTTP"""
         task_id = task["id"]
         payload = task["payload"]
 
-        # 先在事务内标记
+        # 同一事务：任务 running + 节点 running（避免竞态）
         await conn.execute("""
             UPDATE task_queue
             SET status = 'running', started_at = now()
             WHERE id = $1
         """, task_id)
 
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'running', current_task_id = $1, task_type = 'backtest',
+                updated_at = now()
+            WHERE node_id = $2
+        """, task_id, node_id)
+
         # 事务外发起 HTTP
         asyncio.create_task(self._execute_backtest(node_id, payload, task_id))
 
     async def _execute_backtest(self, node_id: str, payload: dict, task_id: int) -> None:
-        """事务外执行 HTTP，完成后更新状态"""
+        """事务外执行 HTTP，成功写 job_id，失败回滚节点状态"""
         from .dispatcher import dispatch_backtest
         from .db import execute
         try:
@@ -265,13 +272,6 @@ class ClusterScheduler:
                 SET cluster_job_id = $1
                 WHERE id = $2
             """, job_id, task_id)
-
-            await execute("""
-                UPDATE cluster_nodes
-                SET status = 'running', current_task_id = $1, task_type = 'backtest',
-                    updated_at = now()
-                WHERE node_id = $2
-            """, task_id, node_id)
         except Exception as e:
             await execute("""
                 UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2

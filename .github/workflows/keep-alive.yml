@@ -1,4 +1,4 @@
-name: Keep Scheduler Alive
+name: Keep Cluster Alive
 
 on:
   schedule:
@@ -9,7 +9,15 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Scheduler Health
+      - name: Ping Node1 Health (scheduler co-located)
         run: |
-          curl -sf https://scheduler-blinkquant.hf.space/health
+          curl -sf https://scanli-blinkquant-node1.hf.space/api/v1/health
+        continue-on-error: true
+      - name: Ping Node2 Health
+        run: |
+          curl -sf https://scanli-blinkquant-node2.hf.space/api/v1/health
+        continue-on-error: true
+      - name: Ping Node3 Health
+        run: |
+          curl -sf https://scanli-blinkquant-node3.hf.space/api/v1/health
         continue-on-error: true
