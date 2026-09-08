@@ -2,11 +2,17 @@
 import asyncio
 import httpx
 import json
-from typing import Optional
+from typing import Optional, Union
 
 from .config import HF_NODES, DISPATCH_TIMEOUT_SEC, POLL_JOB_TIMEOUT_SEC
 
 _client: httpx.AsyncClient | None = None
+
+def _ensure_dict(payload: Union[dict, str]) -> dict:
+    """确保 payload 是 dict；若是 JSON 字符串则解析"""
+    if isinstance(payload, str):
+        return json.loads(payload)
+    return payload
 
 async def get_client() -> httpx.AsyncClient:
     global _client
@@ -23,8 +29,9 @@ async def close_client() -> None:
         await _client.aclose()
         _client = None
 
-async def dispatch_backtest(node_id: str, payload: dict, timeout: int = 240) -> dict:
+async def dispatch_backtest(node_id: str, payload: Union[dict, str], timeout: int = 240) -> dict:
     """向单节点提交 backtest，返回 {job_id, status}"""
+    payload = _ensure_dict(payload)
     client = await get_client()
     try:
         resp = await asyncio.wait_for(
@@ -44,8 +51,9 @@ async def dispatch_backtest(node_id: str, payload: dict, timeout: int = 240) -> 
     except Exception as e:
         raise RuntimeError(f"dispatch_backtest({node_id}) failed: {e}")
 
-async def dispatch_selection(payload: dict, timeout: int = 60) -> dict:
+async def dispatch_selection(payload: Union[dict, str], timeout: int = 60) -> dict:
     """并行向 3 节点发起 selection，返回各节点结果"""
+    payload = _ensure_dict(payload)
     async def call_one(node_id: str, url: str) -> tuple[str, dict]:
         client = await get_client()
         resp = await asyncio.wait_for(
