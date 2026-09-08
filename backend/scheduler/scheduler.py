@@ -99,9 +99,11 @@ class ClusterScheduler:
                 # 本轮只处理选股调度
                 # 注意：不 return，继续轮询已运行的回测，释放已完成节点
             
-            # 5. 无选股排队，调度 backtest 到空闲节点
+            # 5. 无选股排队，调度 backtest 到空闲节点（优先 node2/3，避免堵 node1 调度进程）
             if not pending_selection:
-                for node in idle_nodes:
+                # 将 node1 排最后，优先把回测派给 node2/3
+                backtest_idle = sorted(idle_nodes, key=lambda n: (n.node_id == 'node1', n.node_id))
+                for node in backtest_idle:
                     task = await self._pop_task(conn, "backtest")
                     if not task:
                         break
