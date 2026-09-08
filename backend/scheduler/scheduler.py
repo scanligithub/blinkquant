@@ -272,7 +272,7 @@ class ClusterScheduler:
         asyncio.create_task(self._execute_backtest(node_id, payload, task_id))
 
     async def _execute_backtest(self, node_id: str, payload: dict, task_id: int) -> None:
-        """事务外执行 HTTP，成功写 job_id，失败回滚节点状态"""
+        """事务外执行 HTTP，成功写 job_id + assigned_node，失败回滚节点状态"""
         from .dispatcher import dispatch_backtest
         from .db import execute
         try:
@@ -281,9 +281,9 @@ class ClusterScheduler:
             
             await execute("""
                 UPDATE task_queue
-                SET cluster_job_id = $1
-                WHERE id = $2
-            """, job_id, task_id)
+                SET cluster_job_id = $1, assigned_node = $2
+                WHERE id = $3
+            """, job_id, node_id, task_id)
         except Exception as e:
             await execute("""
                 UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2
