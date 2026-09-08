@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     
     return NextResponse.json({
       nodes,
-      queue_stats: queueResult.rows[0],
+      queueStats: queueResult.rows[0],
     });
   } catch (e) {
     console.error('Cluster status error:', e);
