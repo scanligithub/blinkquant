@@ -37,6 +37,12 @@ class ClusterScheduler:
         if self._running:
             return
         self._running = True
+        # 启动时先清理一次残留状态
+        try:
+            async with acquire() as conn:
+                await self._recover_stuck(conn)
+        except Exception as e:
+            log.warning("Startup recover_stuck failed: %s", e)
         self._task = asyncio.create_task(self._run_loop())
         log.info("Scheduler started")
 
@@ -229,13 +235,19 @@ class ClusterScheduler:
             """, json.dumps(result), task_id)
             
             # 释放 3 节点
-            await execute("""
-                UPDATE cluster_nodes
-                SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
-                WHERE node_id IN ('node1', 'node2', 'node3')
-            """)
+            await self._release_selection_nodes()
         except Exception as e:
             await self._mark_task_failed(task_id, str(e))
+            # 失败也要释放节点，防止假忙死锁
+            await self._release_selection_nodes()
+
+    async def _release_selection_nodes(self) -> None:
+        from .db import execute
+        await execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
+            WHERE node_id IN ('node1', 'node2', 'node3')
+        """)
 
     async def _dispatch_backtest(self, conn, task: dict, node_id: str) -> None:
         """单节点派发 backtest：事务内标记 task + 占用节点，事务外发 HTTP"""
@@ -317,7 +329,7 @@ class ClusterScheduler:
         """, task_id)
 
     async def _recover_stuck(self, conn) -> None:
-        """回收超时任务 & 心跳丢失节点"""
+        """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
         # 1. running 超过 30min 无心跳 → 重置 pending
         await conn.execute("""
             UPDATE task_queue t
@@ -344,6 +356,17 @@ class ClusterScheduler:
             SET status = 'idle', current_task_id = NULL, task_type = NULL
             WHERE status = 'draining'
               AND updated_at < now() - interval '30 seconds'
+        """)
+
+        # 4. 任务已终态但节点仍指向它 → 强制释放节点
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL, updated_at = now()
+            WHERE current_task_id IS NOT NULL
+              AND current_task_id IN (
+                  SELECT id FROM task_queue
+                  WHERE status IN ('done', 'failed', 'cancelled', 'preempted')
+              )
         """)
 
     # ══════════════════════════════════════════════════════════
