@@ -14,6 +14,7 @@ class HeartbeatPayload(BaseModel):
     task_id: Optional[int] = None
     load: float = 0.0
     metrics: dict = {}
+    generation: Optional[int] = None
 
 @router.post("/heartbeat")
 async def receive_heartbeat(
@@ -24,7 +25,8 @@ async def receive_heartbeat(
         raise HTTPException(401, "Invalid token")
 
     now = datetime.utcnow()
-    # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
+    # 只更新运行时状态，不覆盖 endpoint/name/weight/generation 等静态字段
+    # 心跳不应覆盖 generation（由调度器管理），只更新状态相关字段
     await execute("""
         UPDATE cluster_nodes
         SET status = $2,

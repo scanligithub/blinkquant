@@ -18,6 +18,7 @@ class NodeRow:
     task_type: str | None
     heartbeat_at: datetime | None
     last_error: str | None
+    generation: int = 0
 
     @property
     def is_idle(self) -> bool:
@@ -36,6 +37,7 @@ class NodeRow:
             "task_type": self.task_type,
             "heartbeat_at": self.heartbeat_at.isoformat() if self.heartbeat_at else None,
             "load": 0.0,
+            "generation": self.generation,
         }
 
 
@@ -58,6 +60,7 @@ class TaskRow:
     retry_count: int
     max_retries: int
     preempted_by: int | None
+    generation: int = 0
 
     @property
     def is_terminal(self) -> bool:
@@ -79,4 +82,5 @@ class TaskRow:
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "generation": self.generation,
         }

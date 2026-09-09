@@ -526,6 +526,7 @@ class HeartbeatPayload(BaseModel):
     task_id: Optional[int] = None
     load: float = 0.0
     metrics: dict = {}
+    generation: Optional[int] = None
 
 @router.post("/internal/heartbeat")
 async def receive_heartbeat(
@@ -538,7 +539,7 @@ async def receive_heartbeat(
         raise HTTPException(status_code=401, detail="Invalid token")
 
     now = datetime.utcnow()
-    # 只更新运行时状态，不覆盖 endpoint/name/weight 等静态字段
+    # 只更新运行时状态，不覆盖 endpoint/name/weight/generation 等静态字段
     
     if data_manager.postgres_url:
         try:
