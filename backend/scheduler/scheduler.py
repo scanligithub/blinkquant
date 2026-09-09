@@ -316,8 +316,8 @@ class ClusterScheduler:
                                 preempted_by: int, old_generation: int) -> None:
         """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队
         关键：节点立刻 idle（不 draining），任务回 pending，DB 先提交"""
-        # 1. 标记 preempted + 重入队（原子操作）
-        await conn.execute("""
+        # 1. 标记 preempted + 重入队（原子操作，用 task 的 generation 校验）
+        result = await conn.execute("""
             UPDATE task_queue
             SET status = 'pending', 
                 finished_at = now(),
@@ -332,13 +332,14 @@ class ClusterScheduler:
                 generation = generation + 1
             WHERE id = $2 AND generation = $3 AND status = 'running'
         """, preempted_by, task_id, old_generation)
+        log.info("Preempted task %s (gen=%s) by selection #%s, rows=%s", task_id, old_generation, preempted_by, result)
 
         # 2. 协作式取消 HF job（异步，不阻塞调度）
         if job_id and node_id:
             from .dispatcher import cancel_task
             asyncio.create_task(cancel_task(node_id, job_id, "preempted_by_selection"))
 
-        # 3. 立刻释放节点（关键：idle，不是 draining），并增加 generation
+        # 3. 立刻释放节点（关键：idle，不是 draining），按 node_id 更新，不依赖 task 的 generation
         if node_id:
             await conn.execute("""
                 UPDATE cluster_nodes
@@ -347,8 +348,9 @@ class ClusterScheduler:
                     task_type = NULL,
                     generation = generation + 1,
                     updated_at = now()
-                WHERE node_id = $1 AND generation = $2
-            """, node_id, old_generation)
+                WHERE node_id = $1
+            """, node_id)
+            log.info("Released node %s for selection preemption", node_id)
 
     async def _recover_stuck(self, conn) -> None:
         """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
