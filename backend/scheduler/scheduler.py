@@ -445,6 +445,24 @@ class ClusterScheduler:
             )
         """)
 
+        # 6. 孤儿 running：任务 running 但无任何节点认领（节点已 idle/释放）
+        # 适用于 backtest 和 selection
+        await conn.execute("""
+            UPDATE task_queue t
+            SET status = 'pending',
+                assigned_node = NULL,
+                cluster_job_id = NULL,
+                error = COALESCE(t.error, 'orphan running: no node owns this task'),
+                started_at = NULL,
+                generation = t.generation + 1
+            WHERE t.status = 'running'
+              AND t.started_at < now() - interval '2 minutes'
+              AND NOT EXISTS (
+                SELECT 1 FROM cluster_nodes n
+                WHERE n.current_task_id = t.id
+              )
+        """)
+
     # ═══════════════════════════════════════════════════════════
     # 轮询正在运行的 backtest（并发 + 短 timeout）
     # ═══════════════════════════════════════════════════════════
