@@ -463,6 +463,32 @@ class ClusterScheduler:
               )
         """)
 
+        # 7. 断链 running：节点认领了但 task 无 job_id/assigned_node → 释放节点 + 重入队
+        # 典型场景：调度事务写 node 成功，HTTP 派发成功，但 job_id 回写失败
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL,
+                generation = generation + 1, updated_at = now()
+            WHERE current_task_id IN (
+                SELECT id FROM task_queue
+                WHERE status = 'running'
+                  AND (cluster_job_id IS NULL OR cluster_job_id = '')
+                  AND started_at < now() - interval '2 minutes'
+            )
+        """)
+        await conn.execute("""
+            UPDATE task_queue t
+            SET status = 'pending',
+                assigned_node = NULL,
+                cluster_job_id = NULL,
+                error = 'disconnected: node claimed but no job_id written',
+                started_at = NULL,
+                generation = t.generation + 1
+            WHERE status = 'running'
+              AND (cluster_job_id IS NULL OR cluster_job_id = '')
+              AND started_at < now() - interval '2 minutes'
+        """)
+
     # ═══════════════════════════════════════════════════════════
     # 轮询正在运行的 backtest（并发 + 短 timeout）
     # ═══════════════════════════════════════════════════════════
