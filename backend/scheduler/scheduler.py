@@ -269,10 +269,13 @@ class ClusterScheduler:
         generation = task.get("generation", 0) + 1
 
         # 同一事务：任务 running + 节点 running（避免竞态）
+        # 重派时清空残留的 error/preempted_by
         await conn.execute("""
             UPDATE task_queue
             SET status = 'running', started_at = now(),
-                generation = $1
+                generation = $1,
+                error = NULL,
+                preempted_by = NULL
             WHERE id = $2
         """, generation, task_id)
 
@@ -296,17 +299,21 @@ class ClusterScheduler:
             
             await execute("""
                 UPDATE task_queue
-                SET cluster_job_id = $1, assigned_node = $2, generation = $3
-                WHERE id = $4 AND generation = $3
-            """, job_id, node_id, generation, task_id)
+                SET cluster_job_id = $1, assigned_node = $2
+                WHERE id = $3 AND generation = $4
+            """, job_id, node_id, task_id, generation)
         except Exception as e:
+            # 失败时：任务标 failed，节点强制释放（不依赖 generation）
             await execute("""
                 UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2 AND generation = $3
             """, str(e), task_id, generation)
+            # 节点释放只按 node_id + current_task_id，不卡 generation
             await execute("""
-                UPDATE cluster_nodes SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                    generation = $1, updated_at = now() WHERE node_id = $2 AND generation = $1
-            """, generation, node_id)
+                UPDATE cluster_nodes 
+                SET status = 'idle', current_task_id = NULL, task_type = NULL, 
+                    generation = generation + 1, updated_at = now() 
+                WHERE node_id = $1 AND current_task_id = $2
+            """, node_id, task_id)
 
     # ═══════════════════════════════════════════════════════════
     # 抢占与恢复
@@ -404,6 +411,35 @@ class ClusterScheduler:
                   SELECT id FROM task_queue
                   WHERE status IN ('done', 'failed', 'cancelled', 'preempted')
               )
+        """)
+
+        # 5. 僵尸 running：无 cluster_job_id 超过 2 分钟 → 打回 pending
+        await conn.execute("""
+            UPDATE task_queue t
+            SET status = 'pending', assigned_node = NULL,
+                error = NULL, started_at = NULL,
+                generation = t.generation + 1
+            FROM cluster_nodes n
+            WHERE t.status = 'running'
+              AND t.task_type = 'backtest'
+              AND (t.cluster_job_id IS NULL OR t.cluster_job_id = '')
+              AND t.started_at < now() - interval '2 minutes'
+              AND t.assigned_node = n.node_id
+              AND n.status = 'running'
+              AND n.current_task_id = t.id
+        """)
+        # 对应节点也释放
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL,
+                generation = generation + 1, updated_at = now()
+            WHERE current_task_id IN (
+                SELECT id FROM task_queue
+                WHERE status = 'running'
+                  AND task_type = 'backtest'
+                  AND (cluster_job_id IS NULL OR cluster_job_id = '')
+                  AND started_at < now() - interval '2 minutes'
+            )
         """)
 
     # ═══════════════════════════════════════════════════════════
