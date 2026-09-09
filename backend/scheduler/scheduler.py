@@ -293,6 +293,7 @@ class ClusterScheduler:
         """事务外执行 HTTP，成功写 job_id + assigned_node，失败回滚节点状态"""
         from .dispatcher import dispatch_backtest
         from .db import execute
+        success = False
         try:
             result = await dispatch_backtest(node_id, payload)
             job_id = result["job_id"]
@@ -302,18 +303,20 @@ class ClusterScheduler:
                 SET cluster_job_id = $1, assigned_node = $2
                 WHERE id = $3 AND generation = $4
             """, job_id, node_id, task_id, generation)
+            success = True
         except Exception as e:
-            # 失败时：任务标 failed，节点强制释放（不依赖 generation）
             await execute("""
                 UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2 AND generation = $3
             """, str(e), task_id, generation)
-            # 节点释放只按 node_id + current_task_id，不卡 generation
-            await execute("""
-                UPDATE cluster_nodes 
-                SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                    generation = generation + 1, updated_at = now() 
-                WHERE node_id = $1 AND current_task_id = $2
-            """, node_id, task_id)
+        finally:
+            # 无论成功失败，只要没写上 job_id 就释放节点（避免僵尸 running）
+            if not success:
+                await execute("""
+                    UPDATE cluster_nodes 
+                    SET status = 'idle', current_task_id = NULL, task_type = NULL, 
+                        generation = generation + 1, updated_at = now() 
+                    WHERE node_id = $1 AND current_task_id = $2
+                """, node_id, task_id)
 
     # ═══════════════════════════════════════════════════════════
     # 抢占与恢复
