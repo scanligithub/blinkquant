@@ -88,7 +88,15 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
     if data_manager.df_daily is None:
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
 
-    result = selection_engine.execute_selector(req.formula, req.timeframe, background_tasks, target_date=req.date)
+    # 在线程池中运行同步选股计算，避免阻塞事件循环
+    import asyncio
+    result = await asyncio.to_thread(
+        selection_engine.execute_selector,
+        req.formula,
+        req.timeframe,
+        background_tasks,
+        req.date
+    )
 
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
