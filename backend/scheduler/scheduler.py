@@ -356,8 +356,8 @@ class ClusterScheduler:
         await conn.execute("""
             UPDATE task_queue t
             SET status = 'pending', assigned_node = NULL,
-                retry_count = retry_count + 1,
-                generation = generation + 1
+                retry_count = t.retry_count + 1,
+                generation = t.generation + 1
             FROM cluster_nodes n
             WHERE t.status = 'running'
               AND t.assigned_node = n.node_id
