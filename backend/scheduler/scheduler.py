@@ -317,11 +317,12 @@ class ClusterScheduler:
         """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队
         关键：节点立刻 idle（不 draining），任务回 pending，DB 先提交"""
         # 1. 标记 preempted + 重入队（原子操作，用 task 的 generation 校验）
+        # 使用 format() 避免参数类型推断冲突
         result = await conn.execute("""
             UPDATE task_queue
             SET status = 'pending', 
                 finished_at = now(),
-                error = 'preempted by selection #' || $1::text,
+                error = format('preempted by selection #%s', $1),
                 preempted_by = $1,
                 retry_count = retry_count + 1,
                 assigned_node = NULL,
