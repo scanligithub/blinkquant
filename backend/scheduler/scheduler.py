@@ -317,13 +317,14 @@ class ClusterScheduler:
         """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队
         关键：节点立刻 idle（不 draining），任务回 pending，DB 先提交"""
         # 1. 标记 preempted + 重入队（原子操作，用 task 的 generation 校验）
-        # 使用 format() 避免参数类型推断冲突
-        result = await conn.execute("""
+        # 在 Python 侧拼 error，避免 SQL 参数类型推断冲突
+        err = f"preempted by selection #{preempted_by}"
+        result = await conn.execute(
+            """
             UPDATE task_queue
-            SET status = 'pending', 
-                finished_at = now(),
-                error = format('preempted by selection #%s', $1),
-                preempted_by = $1,
+            SET status = 'pending',
+                error = $1,
+                preempted_by = $2,
                 retry_count = retry_count + 1,
                 assigned_node = NULL,
                 cluster_job_id = NULL,
@@ -331,8 +332,15 @@ class ClusterScheduler:
                 started_at = NULL,
                 finished_at = NULL,
                 generation = generation + 1
-            WHERE id = $2 AND generation = $3 AND status = 'running'
-        """, preempted_by, task_id, old_generation)
+            WHERE id = $3
+              AND generation = $4
+              AND status = 'running'
+            """,
+            err,                # $1 text
+            preempted_by,       # $2 bigint
+            task_id,            # $3 bigint
+            old_generation,     # $4 bigint
+        )
         log.info("Preempted task %s (gen=%s) by selection #%s, rows=%s", task_id, old_generation, preempted_by, result)
 
         # 2. 协作式取消 HF job（异步，不阻塞调度）
