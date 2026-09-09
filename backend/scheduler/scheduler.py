@@ -321,7 +321,7 @@ class ClusterScheduler:
             UPDATE task_queue
             SET status = 'pending', 
                 finished_at = now(),
-                error = 'preempted by selection #' || $1,
+                error = 'preempted by selection #' || $1::text,
                 preempted_by = $1,
                 retry_count = retry_count + 1,
                 assigned_node = NULL,
