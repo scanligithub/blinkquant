@@ -56,6 +56,15 @@ class ClusterScheduler:
                 pass
         log.info("Scheduler stopped")
 
+
+    async def recover_stale_on_boot(self) -> None:
+        """启动时恢复：复用 _recover_stuck 逻辑"""
+        try:
+            async with acquire() as conn:
+                await self._recover_stuck(conn)
+        except Exception as e:
+            log.warning("recover_stale_on_boot failed: %s", e)
+
     # ═══════════════════════════════════════════════════════════
     # 主循环
     # ═══════════════════════════════════════════════════════════
