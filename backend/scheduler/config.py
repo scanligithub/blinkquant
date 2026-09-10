@@ -16,7 +16,13 @@ HF_NODES = {
 
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
-SCHEDULE_INTERVAL_SEC = 1
+# SQLite 调度库
+SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
+SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
+SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
+CHECKPOINT_INTERVAL_SEC = int(os.getenv("CHECKPOINT_INTERVAL_SEC", "600"))
+
+SCHEDULE_INTERVAL_SEC = int(os.getenv("SCHEDULE_INTERVAL_SEC", "15"))
 HEARTBEAT_TIMEOUT_SEC = 30
 TASK_RUNNING_TIMEOUT_SEC = 30 * 60
 DISPATCH_TIMEOUT_SEC = 240
