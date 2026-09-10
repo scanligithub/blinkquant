@@ -23,6 +23,40 @@ def _row_to_dict(row: aiosqlite.Row) -> Dict[str, Any]:
     return {k: row[k] for k in row.keys()}
 
 
+class _ConnWrapper:
+    """Wrap aiosqlite connection to provide asyncpg-like API"""
+    def __init__(self, conn: aiosqlite.Connection):
+        self._conn = conn
+
+    async def execute(self, query: str, *args):
+        q = _convert_placeholders(query)
+        # args might be a single tuple or multiple args
+        params = args[0] if len(args) == 1 and isinstance(args[0], (tuple, list)) else args
+        cur = await self._conn.execute(q, params)
+        return cur
+
+    async def fetch(self, query: str, *args) -> List[Dict[str, Any]]:
+        q = _convert_placeholders(query)
+        params = args[0] if len(args) == 1 and isinstance(args[0], (tuple, list)) else args
+        cur = await self._conn.execute(q, params)
+        rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    async def fetchrow(self, query: str, *args) -> Optional[Dict[str, Any]]:
+        q = _convert_placeholders(query)
+        params = args[0] if len(args) == 1 and isinstance(args[0], (tuple, list)) else args
+        cur = await self._conn.execute(q, params)
+        row = await cur.fetchone()
+        return _row_to_dict(row) if row else None
+
+    async def fetchval(self, query: str, *args) -> Any:
+        q = _convert_placeholders(query)
+        params = args[0] if len(args) == 1 and isinstance(args[0], (tuple, list)) else args
+        cur = await self._conn.execute(q, params)
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+
 async def init_pool() -> None:
     global _pool
     async with _pool_lock:
@@ -61,12 +95,13 @@ async def close_pool() -> None:
 
 @asynccontextmanager
 async def acquire():
-    """事务上下文：BEGIN IMMEDIATE → yield conn → commit/rollback"""
+    """事务上下文：BEGIN IMMEDIATE → yield wrapped conn → commit/rollback"""
     if _pool is None:
         await init_pool()
     await _pool.execute("BEGIN IMMEDIATE")
+    wrapper = _ConnWrapper(_pool)
     try:
-        yield _pool
+        yield wrapper
         await _pool.commit()
     except Exception:
         await _pool.rollback()

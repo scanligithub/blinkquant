@@ -147,7 +147,7 @@ class ClusterScheduler:
                 current_task_id = NULL,
                 task_type = NULL,
                 generation = generation + 1,
-                updated_at = now()
+                updated_at = datetime('now')
             WHERE node_id IN ('node1', 'node2', 'node3')
               AND status <> 'idle'
         """)
@@ -163,17 +163,17 @@ class ClusterScheduler:
         # 更新任务状态
         await conn.execute("""
             UPDATE task_queue
-            SET status = 'running', started_at = now(),
+            SET status = 'running', started_at = datetime('now'),
                 assigned_node = 'node1,node2,node3',
-                generation = $1
-            WHERE id = $2
+                generation = ?
+            WHERE id = ?
         """, new_generation, selection_task_id)
 
         # 标记 3 节点为 running，更新 generation
         await conn.execute("""
             UPDATE cluster_nodes
-            SET status = 'running', current_task_id = $1, task_type = 'selection',
-                generation = $2, updated_at = now()
+            SET status = 'running', current_task_id = ?, task_type = 'selection',
+                generation = ?, updated_at = datetime('now')
             WHERE node_id IN ('node1', 'node2', 'node3')
         """, selection_task_id, new_generation)
 
@@ -194,17 +194,17 @@ class ClusterScheduler:
         return [NodeRow(**dict(r)) for r in rows]
 
     async def _pop_task(self, conn, task_type: str) -> Optional[dict]:
-        """原子性抢占任务"""
+        """原子性抢占任务（SQLite 兼容：CTE + 事务锁）"""
         row = await conn.fetchrow("""
-            UPDATE task_queue
-            SET status = 'queued', queued_at = now()
-            WHERE id = (
+            WITH picked AS (
                 SELECT id FROM task_queue
-                WHERE status = 'pending' AND task_type = $1
+                WHERE status = 'pending' AND task_type = ?
                 ORDER BY priority DESC, created_at
-                FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
+            UPDATE task_queue
+            SET status = 'queued', queued_at = datetime('now')
+            WHERE id IN (SELECT id FROM picked)
             RETURNING id, user_id, task_type, payload, priority,
                       status, assigned_node, cluster_job_id, result,
                       error, created_at, queued_at, started_at,
@@ -225,17 +225,17 @@ class ClusterScheduler:
 
         await conn.execute("""
             UPDATE task_queue
-            SET status = 'running', started_at = now(),
+            SET status = 'running', started_at = datetime('now'),
                 assigned_node = 'node1,node2,node3',
-                generation = $1
-            WHERE id = $2
+                generation = ?
+            WHERE id = ?
         """, generation, task_id)
 
         await conn.execute("""
             UPDATE cluster_nodes
-            SET status = 'running', current_task_id = $1, task_type = 'selection',
-                generation = $2, updated_at = now()
-            WHERE node_id = ANY($3)
+            SET status = 'running', current_task_id = ?, task_type = 'selection',
+                generation = ?, updated_at = datetime('now')
+            WHERE node_id IN (?,?,?)
         """, task_id, generation, node_ids)
 
         # 事务提交后异步执行
@@ -250,8 +250,8 @@ class ClusterScheduler:
             # 更新任务完成状态（带 generation 防止覆盖）
             await execute("""
                 UPDATE task_queue
-                SET status = 'done', finished_at = now(), result = $1
-                WHERE id = $2 AND generation = $3
+                SET status = 'done', finished_at = datetime('now'), result = ?
+                WHERE id = ? AND generation = ?
             """, json.dumps(result), task_id, generation)
             
             # 释放 3 节点
@@ -266,9 +266,9 @@ class ClusterScheduler:
         await execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                generation = $1, updated_at = now()
+                generation = ?, updated_at = datetime('now')
             WHERE node_id IN ('node1', 'node2', 'node3')
-              AND generation = $1
+              AND generation = ?
         """, generation)
 
     async def _dispatch_backtest(self, conn, task: dict, node_id: str) -> None:
@@ -281,18 +281,18 @@ class ClusterScheduler:
         # 重派时清空残留的 error/preempted_by
         await conn.execute("""
             UPDATE task_queue
-            SET status = 'running', started_at = now(),
-                generation = $1,
+            SET status = 'running', started_at = datetime('now'),
+                generation = ?,
                 error = NULL,
                 preempted_by = NULL
-            WHERE id = $2
+            WHERE id = ?
         """, generation, task_id)
 
         await conn.execute("""
             UPDATE cluster_nodes
-            SET status = 'running', current_task_id = $1, task_type = 'backtest',
-                generation = $2, updated_at = now()
-            WHERE node_id = $3
+            SET status = 'running', current_task_id = ?, task_type = 'backtest',
+                generation = ?, updated_at = datetime('now')
+            WHERE node_id = ?
         """, task_id, generation, node_id)
 
         # 事务外发起 HTTP
@@ -309,13 +309,13 @@ class ClusterScheduler:
             
             await execute("""
                 UPDATE task_queue
-                SET cluster_job_id = $1, assigned_node = $2
-                WHERE id = $3 AND generation = $4
+                SET cluster_job_id = ?, assigned_node = ?
+                WHERE id = ? AND generation = ?
             """, job_id, node_id, task_id, generation)
             success = True
         except Exception as e:
             await execute("""
-                UPDATE task_queue SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2 AND generation = $3
+                UPDATE task_queue SET status = 'failed', finished_at = datetime('now'), error = ? WHERE id = ? AND generation = ?
             """, str(e), task_id, generation)
         finally:
             # 无论成功失败，只要没写上 job_id 就释放节点（避免僵尸 running）
@@ -323,8 +323,8 @@ class ClusterScheduler:
                 await execute("""
                     UPDATE cluster_nodes 
                     SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                        generation = generation + 1, updated_at = now() 
-                    WHERE node_id = $1 AND current_task_id = $2
+                        generation = generation + 1, updated_at = datetime('now') 
+                    WHERE node_id = ? AND current_task_id = ?
                 """, node_id, task_id)
 
     # ═══════════════════════════════════════════════════════════
@@ -342,8 +342,8 @@ class ClusterScheduler:
             """
             UPDATE task_queue
             SET status = 'pending',
-                error = $1,
-                preempted_by = $2,
+                error = ?,
+                preempted_by = ?,
                 retry_count = retry_count + 1,
                 assigned_node = NULL,
                 cluster_job_id = NULL,
@@ -351,14 +351,14 @@ class ClusterScheduler:
                 started_at = NULL,
                 finished_at = NULL,
                 generation = generation + 1
-            WHERE id = $3
-              AND generation = $4
+            WHERE id = ?
+              AND generation = ?
               AND status = 'running'
             """,
-            err,                # $1 text
-            preempted_by,       # $2 bigint
-            task_id,            # $3 bigint
-            old_generation,     # $4 bigint
+            err,                # ? text
+            preempted_by,       # ? bigint
+            task_id,            # ? bigint
+            old_generation,     # ? bigint
         )
         log.info("Preempted task %s (gen=%s) by selection #%s, rows=%s", task_id, old_generation, preempted_by, result)
 
@@ -375,8 +375,8 @@ class ClusterScheduler:
                     current_task_id = NULL,
                     task_type = NULL,
                     generation = generation + 1,
-                    updated_at = now()
-                WHERE node_id = $1
+                    updated_at = datetime('now')
+                WHERE node_id = ?
             """, node_id)
             log.info("Released node %s for selection preemption", node_id)
 
@@ -384,15 +384,17 @@ class ClusterScheduler:
         """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
         # 1. running 超过 30min 无心跳 → 重置 pending
         await conn.execute("""
-            UPDATE task_queue t
+            UPDATE task_queue
             SET status = 'pending', assigned_node = NULL,
-                retry_count = t.retry_count + 1,
-                generation = t.generation + 1
-            FROM cluster_nodes n
-            WHERE t.status = 'running'
-              AND t.assigned_node = n.node_id
-              AND n.heartbeat_at < now() - interval '30 minutes'
-              AND t.retry_count < t.max_retries
+                retry_count = retry_count + 1,
+                generation = generation + 1
+            WHERE status = 'running'
+              AND assigned_node IN (
+                  SELECT node_id FROM cluster_nodes
+                  WHERE heartbeat_at IS NOT NULL
+                    AND heartbeat_at < datetime('now', '-30 minutes')
+              )
+              AND retry_count < max_retries
         """)
 
         # 2. 节点心跳超时 → unhealthy
@@ -400,7 +402,8 @@ class ClusterScheduler:
             UPDATE cluster_nodes
             SET status = 'unhealthy', last_error = 'heartbeat timeout',
                 generation = generation + 1
-            WHERE heartbeat_at < now() - interval '60 seconds'
+            WHERE heartbeat_at IS NOT NULL
+              AND heartbeat_at < datetime('now', '-60 seconds')
               AND status IN ('idle', 'running')
         """)
 
@@ -410,14 +413,14 @@ class ClusterScheduler:
             SET status = 'idle', current_task_id = NULL, task_type = NULL,
                 generation = generation + 1
             WHERE status = 'draining'
-              AND updated_at < now() - interval '30 seconds'
+              AND updated_at < datetime('now', '-30 seconds')
         """)
 
         # 4. 任务已终态但节点仍指向它 → 强制释放节点
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                generation = generation + 1, updated_at = now()
+                generation = generation + 1, updated_at = datetime('now')
             WHERE current_task_id IS NOT NULL
               AND current_task_id IN (
                   SELECT id FROM task_queue
@@ -427,48 +430,49 @@ class ClusterScheduler:
 
         # 5. 僵尸 running：无 cluster_job_id 超过 2 分钟 → 打回 pending
         await conn.execute("""
-            UPDATE task_queue t
+            UPDATE task_queue
             SET status = 'pending', assigned_node = NULL,
                 error = NULL, started_at = NULL,
-                generation = t.generation + 1
-            FROM cluster_nodes n
-            WHERE t.status = 'running'
-              AND t.task_type = 'backtest'
-              AND (t.cluster_job_id IS NULL OR t.cluster_job_id = '')
-              AND t.started_at < now() - interval '2 minutes'
-              AND t.assigned_node = n.node_id
-              AND n.status = 'running'
-              AND n.current_task_id = t.id
+                generation = generation + 1
+            WHERE status = 'running'
+              AND task_type = 'backtest'
+              AND (cluster_job_id IS NULL OR cluster_job_id = '')
+              AND started_at < datetime('now', '-2 minutes')
+              AND assigned_node IN (
+                  SELECT node_id FROM cluster_nodes
+                  WHERE status = 'running'
+                    AND current_task_id = task_queue.id
+              )
         """)
         # 对应节点也释放
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL,
-                generation = generation + 1, updated_at = now()
+                generation = generation + 1, updated_at = datetime('now')
             WHERE current_task_id IN (
                 SELECT id FROM task_queue
                 WHERE status = 'running'
                   AND task_type = 'backtest'
                   AND (cluster_job_id IS NULL OR cluster_job_id = '')
-                  AND started_at < now() - interval '2 minutes'
+                  AND started_at < datetime('now', '-2 minutes')
             )
         """)
 
         # 6. 孤儿 running：任务 running 但无任何节点认领（节点已 idle/释放）
         # 适用于 backtest 和 selection
         await conn.execute("""
-            UPDATE task_queue t
+            UPDATE task_queue
             SET status = 'pending',
                 assigned_node = NULL,
                 cluster_job_id = NULL,
-                error = COALESCE(t.error, 'orphan running: no node owns this task'),
+                error = COALESCE(error, 'orphan running: no node owns this task'),
                 started_at = NULL,
-                generation = t.generation + 1
-            WHERE t.status = 'running'
-              AND t.started_at < now() - interval '2 minutes'
+                generation = generation + 1
+            WHERE status = 'running'
+              AND started_at < datetime('now', '-2 minutes')
               AND NOT EXISTS (
-                SELECT 1 FROM cluster_nodes n
-                WHERE n.current_task_id = t.id
+                SELECT 1 FROM cluster_nodes
+                WHERE current_task_id = task_queue.id
               )
         """)
 
@@ -477,25 +481,25 @@ class ClusterScheduler:
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL,
-                generation = generation + 1, updated_at = now()
+                generation = generation + 1, updated_at = datetime('now')
             WHERE current_task_id IN (
                 SELECT id FROM task_queue
                 WHERE status = 'running'
                   AND (cluster_job_id IS NULL OR cluster_job_id = '')
-                  AND started_at < now() - interval '2 minutes'
+                  AND started_at < datetime('now', '-2 minutes')
             )
         """)
         await conn.execute("""
-            UPDATE task_queue t
+            UPDATE task_queue
             SET status = 'pending',
                 assigned_node = NULL,
                 cluster_job_id = NULL,
                 error = 'disconnected: node claimed but no job_id written',
                 started_at = NULL,
-                generation = t.generation + 1
+                generation = generation + 1
             WHERE status = 'running'
               AND (cluster_job_id IS NULL OR cluster_job_id = '')
-              AND started_at < now() - interval '2 minutes'
+              AND started_at < datetime('now', '-2 minutes')
         """)
 
     # ═══════════════════════════════════════════════════════════
@@ -543,38 +547,38 @@ class ClusterScheduler:
         from .db import execute
         await execute("""
             UPDATE task_queue
-            SET status = 'done', finished_at = now(), result = $1
-            WHERE id = $2 AND generation = $3
+            SET status = 'done', finished_at = datetime('now'), result = ?
+            WHERE id = ? AND generation = ?
         """, json.dumps(data), task_id, generation)
         
         await execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                generation = $1, updated_at = now()
-            WHERE current_task_id = $2 AND generation = $1
+                generation = ?, updated_at = datetime('now')
+            WHERE current_task_id = ? AND generation = ?
         """, generation, task_id)
 
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
         await execute("""
             UPDATE task_queue
-            SET status = 'failed', finished_at = now(), error = $1
-            WHERE id = $2 AND generation = $3
+            SET status = 'failed', finished_at = datetime('now'), error = ?
+            WHERE id = ? AND generation = ?
         """, error, task_id, generation)
         
         await execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
-                generation = $1, updated_at = now()
-            WHERE current_task_id = $2 AND generation = $1
+                generation = ?, updated_at = datetime('now')
+            WHERE current_task_id = ? AND generation = ?
         """, generation, task_id)
 
     async def _mark_task_failed(self, task_id: int, error: str) -> None:
         from .db import execute
         await execute("""
             UPDATE task_queue
-            SET status = 'failed', finished_at = now(), error = $1
-            WHERE id = $2
+            SET status = 'failed', finished_at = datetime('now'), error = ?
+            WHERE id = ?
         """, error, task_id)
 
     async def run_forever(self) -> None:
