@@ -131,11 +131,18 @@ async def get_task(task_id: int) -> TaskResponse:
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(verify_internal_token)])
-async def cancel_task(task_id: int) -> dict:
-    """取消任务：pending/queued → cancelled；running → 触发抢占/取消流程"""
-    row = await fetchrow("SELECT status, task_type, cluster_job_id, assigned_node FROM task_queue WHERE id = ?", task_id)
+async def cancel_task(task_id: int, user_id: Optional[str] = None) -> dict:
+    """取消任务：pending/queued → cancelled；running → 触发抢占/取消流程
+    
+    如果提供 user_id，会校验任务归属，防止越权取消。
+    """
+    row = await fetchrow("SELECT status, task_type, cluster_job_id, assigned_node, user_id FROM task_queue WHERE id = ?", task_id)
     if not row:
         raise HTTPException(404, "Task not found")
+    
+    # 校验用户归属
+    if user_id and row["user_id"] != user_id:
+        raise HTTPException(403, "Task belongs to another user")
     
     if row["status"] in ("pending", "queued"):
         async with acquire() as conn:

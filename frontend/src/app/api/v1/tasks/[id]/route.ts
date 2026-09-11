@@ -1,8 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { sql } from '@/lib/db';
 
 export const runtime = 'nodejs';
+
+const NODE1_URL = process.env.NODE1_URL || 'https://scanli-blinkquant-node1.hf.space';
+const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'internal-secret-change-me';
+
+async function forwardToNode1(path: string, options: RequestInit) {
+  const url = `${NODE1_URL}/internal${path}`;
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${INTERNAL_TOKEN}`,
+      ...options.headers,
+    },
+  });
+  
+  const data = await response.json().catch(() => ({}));
+  return NextResponse.json(data, { status: response.status });
+}
 
 export async function GET(
   req: NextRequest,
@@ -19,25 +36,9 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
   }
 
-  try {
-    const result = await sql`
-      SELECT id, user_id, task_type, payload, priority, status,
-             assigned_node, cluster_job_id, result, error,
-             created_at, queued_at, started_at, finished_at,
-             retry_count, max_retries, preempted_by
-      FROM task_queue
-      WHERE id = ${taskId}
-    `;
-    
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-    
-    return NextResponse.json(result.rows[0]);
-  } catch (e) {
-    console.error('Get task error:', e);
-    return NextResponse.json({ error: 'Failed to get task' }, { status: 500 });
-  }
+  return forwardToNode1(`/tasks/${taskId}`, {
+    method: 'GET',
+  });
 }
 
 export async function DELETE(
@@ -49,32 +50,20 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
   }
 
+  const auth = await requireAuth(req);
+  const userId = auth.user?.userId;
+  if (!userId) {
+    return NextResponse.json({ error: 'User not found' }, { status: 401 });
+  }
+
   const { id } = await params;
   const taskId = parseInt(id);
   if (isNaN(taskId)) {
     return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
   }
 
-  try {
-    // 只能取消自己的任务
-    const auth = await requireAuth(req);
-    const userId = auth.user?.userId;
-    
-    const result = await sql`
-      UPDATE task_queue
-      SET status = 'cancelled', finished_at = now()
-      WHERE id = ${taskId} AND user_id = ${userId}
-      AND status IN ('pending', 'queued', 'running')
-      RETURNING id
-    `;
-    
-    if (result.rowCount === 0) {
-      return NextResponse.json({ error: 'Task not found or cannot be cancelled' }, { status: 404 });
-    }
-    
-    return NextResponse.json({ cancelled: true });
-  } catch (e) {
-    console.error('Cancel task error:', e);
-    return NextResponse.json({ error: 'Failed to cancel task' }, { status: 500 });
-  }
+  // Forward cancel to Node1 with user_id for ownership check
+  return forwardToNode1(`/tasks/${taskId}/cancel?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+  });
 }
