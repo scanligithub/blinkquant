@@ -184,3 +184,42 @@ async def trigger_cycle() -> dict:
     # Don't start full scheduler loop, just run one cycle
     await s._schedule_cycle()
     return {"ok": True, "message": "Schedule cycle triggered"}
+
+
+@router.get("/cluster/status", dependencies=[Depends(verify_internal_token)])
+async def get_cluster_status() -> dict:
+    """获取集群状态：节点列表 + 队列统计"""
+    nodes = await fetch("""
+        SELECT node_id, name, endpoint, weight, status, current_task_id,
+               task_type, heartbeat_at, last_error
+        FROM cluster_nodes
+        ORDER BY node_id
+    """)
+
+    stats = await fetchrow("""
+        SELECT
+            SUM(CASE WHEN status = 'pending' AND task_type = 'selection' THEN 1 ELSE 0 END) AS pending_selection,
+            SUM(CASE WHEN status = 'pending' AND task_type = 'backtest' THEN 1 ELSE 0 END) AS pending_backtest,
+            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running
+        FROM task_queue
+    """)
+
+    return {
+        "nodes": [
+            {
+                "node_id": n["node_id"],
+                "name": n["name"],
+                "status": n["status"],
+                "current_task_id": n["current_task_id"],
+                "task_type": n["task_type"],
+                "heartbeat_at": n["heartbeat_at"],
+                "last_error": n["last_error"],
+            }
+            for n in nodes
+        ],
+        "queueStats": {
+            "pending_selection": int(stats["pending_selection"] or 0) if stats else 0,
+            "pending_backtest": int(stats["pending_backtest"] or 0) if stats else 0,
+            "running": int(stats["running"] or 0) if stats else 0,
+        },
+    }
