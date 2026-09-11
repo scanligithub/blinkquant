@@ -400,14 +400,14 @@ useEffect(() => {
   }, [strategyName, formula, timeframe]);
 
   // HF 节点配置 (兼容旧逻辑，逐步迁移到新 API)
-const HF_NODES = [
-  'https://scanli-blinkquant-node1.hf.space',
-  'https://scanli-blinkquant-node2.hf.space',
-  'https://scanli-blinkquant-node3.hf.space',
-];
+  const HF_NODES = [
+    'https://scanli-blinkquant-node1.hf.space',
+    'https://scanli-blinkquant-node2.hf.space',
+    'https://scanli-blinkquant-node3.hf.space',
+  ];
 
-const SUBMIT_TIMEOUT = 240000; // 240s for cold start
-const POLL_TIMEOUT = 60000;
+  const SUBMIT_TIMEOUT = 240000; // 240s for cold start
+  const POLL_TIMEOUT = 60000;
 
   const handleBacktest = async (params: {
     formula: string;
