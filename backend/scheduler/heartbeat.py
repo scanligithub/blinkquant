@@ -2,9 +2,9 @@
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
 from .db import execute
 from .config import INTERNAL_TOKEN
+import json
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -24,30 +24,29 @@ async def receive_heartbeat(
     if authorization != f"Bearer {INTERNAL_TOKEN}":
         raise HTTPException(401, "Invalid token")
 
-    now = datetime.utcnow()
     # 只更新运行时状态，不覆盖 endpoint/name/weight/generation 等静态字段
     # 心跳不应覆盖 generation（由调度器管理），只更新状态相关字段
     await execute("""
         UPDATE cluster_nodes
-        SET status = $2,
-            current_task_id = $3,
-            task_type = $4,
-            heartbeat_at = now(),
-            last_error = $5,
-            updated_at = now()
-        WHERE node_id = $1
+        SET status = ?,
+            current_task_id = ?,
+            task_type = ?,
+            heartbeat_at = datetime('now'),
+            last_error = ?,
+            updated_at = datetime('now')
+        WHERE node_id = ?
     """,
-        payload.node_id,
         payload.status,
         payload.task_id,
         "backtest" if payload.task_id else None,
         None,
+        payload.node_id,
     )
 
     # 记录心跳历史
     await execute("""
         INSERT INTO node_heartbeats (node_id, status, task_id, load, metrics, reported_at)
-        VALUES ($1, $2, $3, $4, $5, now())
-    """, payload.node_id, payload.status, payload.task_id, payload.load, payload.metrics)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+    """, payload.node_id, payload.status, payload.task_id, payload.load, json.dumps(payload.metrics))
 
     return {"ok": True}

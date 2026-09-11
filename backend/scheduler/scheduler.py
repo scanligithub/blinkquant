@@ -236,7 +236,7 @@ class ClusterScheduler:
             SET status = 'running', current_task_id = ?, task_type = 'selection',
                 generation = ?, updated_at = datetime('now')
             WHERE node_id IN (?,?,?)
-        """, task_id, generation, node_ids)
+        """, task_id, generation, *node_ids)
 
         # 事务提交后异步执行
         asyncio.create_task(self._execute_selection(payload, task_id, generation))
@@ -269,7 +269,7 @@ class ClusterScheduler:
                 generation = ?, updated_at = datetime('now')
             WHERE node_id IN ('node1', 'node2', 'node3')
               AND generation = ?
-        """, generation)
+        """, generation, generation)
 
     async def _dispatch_backtest(self, conn, task: dict, node_id: str) -> None:
         """单节点派发 backtest：事务内标记 task + 占用节点，事务外发 HTTP"""
@@ -556,7 +556,7 @@ class ClusterScheduler:
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
-        """, generation, task_id)
+        """, generation, task_id, generation)
 
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
@@ -571,7 +571,7 @@ class ClusterScheduler:
             SET status = 'idle', current_task_id = NULL, task_type = NULL, 
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
-        """, generation, task_id)
+        """, generation, task_id, generation)
 
     async def _mark_task_failed(self, task_id: int, error: str) -> None:
         from .db import execute
