@@ -71,7 +71,9 @@ export function useCluster() {
         const res = await fetch('/api/v1/tasks', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
-          if (mounted) setMyTasks(data);
+          // Node1 返回 { tasks: [...] }；兼容万一仍是数组
+          const list = Array.isArray(data) ? data : (Array.isArray(data?.tasks) ? data.tasks : []);
+          if (mounted) setMyTasks(list);
         }
       } catch (e) {
         console.error('Tasks poll error:', e);
@@ -83,9 +85,10 @@ export function useCluster() {
     return () => { mounted = false; clearInterval(interval); };
   }, []);
 
-  const canRunSelection = clusterState.nodes.every(n => n.status === "idle");
-  const canRunBacktest = clusterState.nodes.some(n => n.status === "idle");
-  const idleNodeCount = clusterState.nodes.filter(n => n.status === "idle").length;
+  const nodes = Array.isArray(clusterState.nodes) ? clusterState.nodes : [];
+  const canRunSelection = nodes.every(n => n.status === "idle");
+  const canRunBacktest = nodes.some(n => n.status === "idle");
+  const idleNodeCount = nodes.filter(n => n.status === "idle").length;
 
   const submitTask = useCallback(async (taskType: "selection" | "backtest", payload: any) => {
     setLoading(true);
