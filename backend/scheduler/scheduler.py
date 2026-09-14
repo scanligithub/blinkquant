@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List
 from httpx import HTTPStatusError
 
@@ -384,7 +384,7 @@ class ClusterScheduler:
     async def _recover_stuck(self, conn) -> None:
         """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
         # 1. running 超过 30min 无心跳 → 重置 pending
-        #    包括 heartbeat_at IS NULL 的节点（从未发过心跳）
+        #    注意：仅 heartbeat_at IS NOT NULL 且超时才回收；IS NULL 由 2.5 墙钟兜底
         await conn.execute("""
             UPDATE task_queue
             SET status = 'pending', assigned_node = NULL,
@@ -393,10 +393,8 @@ class ClusterScheduler:
             WHERE status = 'running'
               AND assigned_node IN (
                   SELECT node_id FROM cluster_nodes
-                  WHERE (
-                      heartbeat_at IS NULL
-                      OR heartbeat_at < datetime('now', '-30 minutes')
-                  )
+                  WHERE heartbeat_at IS NOT NULL
+                    AND heartbeat_at < datetime('now', '-30 minutes')
               )
               AND retry_count < max_retries
         """)
@@ -413,7 +411,8 @@ class ClusterScheduler:
 
         # 2.5 墙钟超时回收（不依赖心跳）：running backtest 超时 → 重入队，重试耗尽则失败
         # 关键：不要求 heartbeat_at 非空，_backtest_jobs 在节点内存、进程重启即丢，不能靠心跳兜底
-        cutoff = (datetime.utcnow() - timedelta(seconds=TASK_RUNNING_TIMEOUT_SEC)).isoformat()
+        # 统一用 SQLite datetime('now', ?) 避免 isoformat() 产生 T 分隔符导致比较恒真
+        timeout_param = f"-{TASK_RUNNING_TIMEOUT_SEC} seconds"
         await conn.execute("""
             UPDATE task_queue
             SET status = CASE
@@ -439,10 +438,11 @@ class ClusterScheduler:
                 generation = generation + 1
             WHERE status = 'running'
               AND task_type = 'backtest'
-              AND started_at < ?
-        """, cutoff)
+              AND started_at IS NOT NULL
+              AND started_at < datetime('now', ?)
+        """, timeout_param)
 
-        # 2.6 墙钟超时对应的节点全部释放（含 heartbeat_at 为 NULL 的僵尸占用）
+        # 2.6 墙钟超时对应的节点全部释放（与 2.5 使用同一套时间语义）
         await conn.execute("""
             UPDATE cluster_nodes
             SET status = 'idle', current_task_id = NULL, task_type = NULL,
@@ -451,9 +451,10 @@ class ClusterScheduler:
                 SELECT id FROM task_queue
                 WHERE status = 'running'
                   AND task_type = 'backtest'
-                  AND started_at < ?
+                  AND started_at IS NOT NULL
+                  AND started_at < datetime('now', ?)
             )
-        """, cutoff)
+        """, timeout_param)
 
         # 2.7 兜底：节点指向已非 running 的任务 → 释放
         # 覆盖 step 2.5 将任务改为 pending/failed 后节点未同步释放的窗口
@@ -567,7 +568,7 @@ class ClusterScheduler:
     # ═══════════════════════════════════════════════════════════
 
     async def _poll_running_backtests(self, conn) -> None:
-        """并发轮询 running backtest 的 HF job 状态，单节点 5s timeout"""
+        """并发轮询 running backtest 的 HF job 状态，单节点 30s timeout"""
         rows = await conn.fetch("""
             SELECT id, assigned_node, cluster_job_id, generation
             FROM task_queue
@@ -587,8 +588,8 @@ class ClusterScheduler:
             
             try:
                 from .dispatcher import poll_backtest_job
-                # 5s timeout，防止单慢节点拖住整轮调度
-                result = await asyncio.wait_for(poll_backtest_job(node_id, job_id), timeout=5.0)
+                # 30s timeout，防止单慢节点拖住整轮调度（长回测节点可能响应慢）
+                result = await asyncio.wait_for(poll_backtest_job(node_id, job_id), timeout=30.0)
                 status = result.get("status")
                 
                 if status == "done":
