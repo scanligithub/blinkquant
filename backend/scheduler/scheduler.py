@@ -451,6 +451,18 @@ class ClusterScheduler:
             )
         """)
 
+        # 2.7 兜底：节点指向已非 running 的任务 → 释放
+        # 覆盖 step 2.5 将任务改为 pending/failed 后节点未同步释放的窗口
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL,
+                generation = generation + 1, updated_at = datetime('now')
+            WHERE current_task_id IS NOT NULL
+              AND current_task_id NOT IN (
+                  SELECT id FROM task_queue WHERE status = 'running'
+              )
+        """)
+
         # 3. draining 超时（取消超时）→ idle
         await conn.execute("""
             UPDATE cluster_nodes
