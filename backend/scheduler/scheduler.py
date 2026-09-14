@@ -595,16 +595,17 @@ class ClusterScheduler:
                 if status == "done":
                     await self._complete_backtest(task_id, result.get("data"), generation)
                 elif status in ("failed", "cancelled", "expired"):
-                    await self._fail_backtest(task_id, result.get("error", status), generation)
+                    await self._fail_backtest(task_id, result.get("error") or status, generation)
+                elif status in ("queued", "running", None):
+                    # 正常中间态：节点仍在计算或排队中，本轮跳过
+                    return
                 else:
-                    # job 存在但 body 无 status / status 未知 → 视为损坏，收尾避免假 running
                     log.warning("Poll job %s returned unknown status %r, failing", task_id, status)
                     await self._fail_backtest(task_id, f"poll returned unknown status {status!r}", generation)
             except asyncio.TimeoutError:
-                # 节点无响应：不能只打日志。连续失败应由墙钟回收兜底，
-                # 但为快速止汗，这里直接标记失败并释放节点，避免假 running 长期占用。
-                log.warning("Poll job %s timeout (5s), marking failed and releasing node", task_id)
-                await self._fail_backtest(task_id, "timeout: node did not respond within 5s", generation)
+                # 节点单次 poll 超时：不直接 fail，仅跳过本轮
+                # 终态由 2.5 墙钟回收兜底，避免节点短暂繁忙导致误杀
+                log.warning("Poll job %s timeout (30s), skipping this round", task_id)
             except HTTPStatusError as e:
                 # HTTP 404 / 50x：job 在节点内存 dict 中丢失（进程重启/OOM）→ 收尾
                 detail = f"poll job failed: HTTP {e.response.status_code}"
@@ -612,8 +613,8 @@ class ClusterScheduler:
                 await self._fail_backtest(task_id, detail, generation)
             except Exception as e:
                 log.warning("Poll job %s failed: %s", task_id, e)
-                # 连接失败等：标记失败并释放节点，杜绝假 running
-                await self._fail_backtest(task_id, f"poll job failed: {e}", generation)
+                # 连接失败等：跳过本轮，由墙钟兜底
+                log.warning("Poll job %s connection error, skipping this round", task_id)
 
         # 并发轮询所有 running backtest
         await asyncio.gather(*[poll_one(row) for row in rows], return_exceptions=True)
