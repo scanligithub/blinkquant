@@ -321,7 +321,9 @@ class BacktestEngine:
         
         # P2-MEM: Precompute latest adjust factors for lazy qfq loading
         logger.info("Precomputing latest adjust factors for lazy qfq loading...")
-        self._latest_adj = self.raw_price_store.load_latest_adjust_factors()
+        self._latest_adj = self.raw_price_store.load_latest_adjust_factors(
+            start=start_date, end=end_signal_date,
+        )
         logger.info(f"Loaded latest adjust factors for {len(self._latest_adj)} codes")
         
         import time as _time

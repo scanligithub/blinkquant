@@ -165,14 +165,26 @@ class RawPriceStore:
         lf = self.scan_window(start, end).filter(pl.col("date").is_in(dates))
         return lf.select(["date", "code", "open", "close"]).collect()
 
-    def load_latest_adjust_factors(self) -> dict[str, float]:
-        """扫描全量数据一次，获取每个 code 的最新 adjustFactor（用于前复权计算）。
-        
+    def load_latest_adjust_factors(
+        self,
+        start: datetime.date | None = None,
+        end: datetime.date | None = None,
+    ) -> dict[str, float]:
+        """扫描指定年份范围的数据，获取每个 code 的最新 adjustFactor（用于前复权计算）。
+
+        Args:
+            start: 起始日期（可选），用于裁剪扫描年份范围
+            end: 结束日期（可选），用于裁剪扫描年份范围
+            未指定时扫描全量年份（2009-2025），向后兼容。
+
         返回: {code: latest_adjust_factor}
         """
         lfs = []
         if hasattr(self.backend, 'repo_id'):
-            years = range(2009, 2025)
+            if start is not None and end is not None:
+                years = range(start.year - 1, end.year + 2)
+            else:
+                years = range(2009, 2025)
         else:
             import glob
             files = glob.glob(str(self.backend.data_root / "stock_kline_*.parquet"))
@@ -183,6 +195,8 @@ class RawPriceStore:
                     years.append(year)
                 except ValueError:
                     pass
+            if start is not None and end is not None:
+                years = [y for y in years if start.year - 1 <= y <= end.year + 1]
         
         for year in years:
             file = self.backend.resolve_year_file(year)
