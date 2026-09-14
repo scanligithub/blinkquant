@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Optional, List
+from httpx import HTTPStatusError
 
 from .config import (
     SCHEDULE_INTERVAL_SEC,
@@ -407,6 +408,49 @@ class ClusterScheduler:
               AND status IN ('idle', 'running')
         """)
 
+        # 2.5 墙钟超时回收（不依赖心跳）：running backtest 超时 → 重入队，重试耗尽则失败
+        # 关键：不要求 heartbeat_at 非空，_backtest_jobs 在节点内存、进程重启即丢，不能靠心跳兜底
+        await conn.execute("""
+            UPDATE task_queue
+            SET status = CASE
+                    WHEN retry_count < max_retries THEN 'pending'
+                    ELSE 'failed'
+                END,
+                assigned_node = NULL,
+                cluster_job_id = NULL,
+                error = CASE
+                    WHEN retry_count < max_retries THEN error
+                    ELSE 'timeout: running exceeded wall-clock limit'
+                END,
+                finished_at = CASE
+                    WHEN retry_count < max_retries THEN finished_at
+                    ELSE datetime('now')
+                END,
+                retry_count = CASE
+                    WHEN retry_count < max_retries THEN retry_count + 1
+                    ELSE retry_count
+                END,
+                queued_at = NULL,
+                started_at = NULL,
+                generation = generation + 1
+            WHERE status = 'running'
+              AND task_type = 'backtest'
+              AND started_at < datetime('now', '-30 minutes')
+        """)
+
+        # 2.6 墙钟超时对应的节点全部释放（含 heartbeat_at 为 NULL 的僵尸占用）
+        await conn.execute("""
+            UPDATE cluster_nodes
+            SET status = 'idle', current_task_id = NULL, task_type = NULL,
+                generation = generation + 1, updated_at = datetime('now')
+            WHERE current_task_id IN (
+                SELECT id FROM task_queue
+                WHERE status = 'running'
+                  AND task_type = 'backtest'
+                  AND started_at < datetime('now', '-30 minutes')
+            )
+        """)
+
         # 3. draining 超时（取消超时）→ idle
         await conn.execute("""
             UPDATE cluster_nodes
@@ -535,10 +579,24 @@ class ClusterScheduler:
                     await self._complete_backtest(task_id, result.get("data"), generation)
                 elif status in ("failed", "cancelled", "expired"):
                     await self._fail_backtest(task_id, result.get("error", status), generation)
+                else:
+                    # job 存在但 body 无 status / status 未知 → 视为损坏，收尾避免假 running
+                    log.warning("Poll job %s returned unknown status %r, failing", task_id, status)
+                    await self._fail_backtest(task_id, f"poll returned unknown status {status!r}", generation)
             except asyncio.TimeoutError:
-                log.warning("Poll job %s timeout (5s)", task_id)
+                # 节点无响应：不能只打日志。连续失败应由墙钟回收兜底，
+                # 但为快速止汗，这里直接标记失败并释放节点，避免假 running 长期占用。
+                log.warning("Poll job %s timeout (5s), marking failed and releasing node", task_id)
+                await self._fail_backtest(task_id, "timeout: node did not respond within 5s", generation)
+            except HTTPStatusError as e:
+                # HTTP 404 / 50x：job 在节点内存 dict 中丢失（进程重启/OOM）→ 收尾
+                detail = f"poll job failed: HTTP {e.response.status_code}"
+                log.warning("%s (task %s)", detail, task_id)
+                await self._fail_backtest(task_id, detail, generation)
             except Exception as e:
                 log.warning("Poll job %s failed: %s", task_id, e)
+                # 连接失败等：标记失败并释放节点，杜绝假 running
+                await self._fail_backtest(task_id, f"poll job failed: {e}", generation)
 
         # 并发轮询所有 running backtest
         await asyncio.gather(*[poll_one(row) for row in rows], return_exceptions=True)
@@ -560,6 +618,7 @@ class ClusterScheduler:
 
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
+        log.warning("Failing task %s (gen=%s): %s", task_id, generation, error)
         await execute("""
             UPDATE task_queue
             SET status = 'failed', finished_at = datetime('now'), error = ?
