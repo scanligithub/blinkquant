@@ -182,7 +182,7 @@ class RawPriceStore:
         lfs = []
         if hasattr(self.backend, 'repo_id'):
             if start is not None and end is not None:
-                years = range(start.year - 1, end.year + 2)
+                years = range(start.year - 1, end.year + 1)
             else:
                 years = range(2009, 2025)
         else:
