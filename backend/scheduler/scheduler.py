@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from httpx import HTTPStatusError
 
@@ -413,6 +413,7 @@ class ClusterScheduler:
 
         # 2.5 墙钟超时回收（不依赖心跳）：running backtest 超时 → 重入队，重试耗尽则失败
         # 关键：不要求 heartbeat_at 非空，_backtest_jobs 在节点内存、进程重启即丢，不能靠心跳兜底
+        cutoff = (datetime.utcnow() - timedelta(seconds=TASK_RUNNING_TIMEOUT_SEC)).isoformat()
         await conn.execute("""
             UPDATE task_queue
             SET status = CASE
@@ -438,8 +439,8 @@ class ClusterScheduler:
                 generation = generation + 1
             WHERE status = 'running'
               AND task_type = 'backtest'
-              AND started_at < datetime('now', '-30 minutes')
-        """)
+              AND started_at < ?
+        """, cutoff)
 
         # 2.6 墙钟超时对应的节点全部释放（含 heartbeat_at 为 NULL 的僵尸占用）
         await conn.execute("""
@@ -450,9 +451,9 @@ class ClusterScheduler:
                 SELECT id FROM task_queue
                 WHERE status = 'running'
                   AND task_type = 'backtest'
-                  AND started_at < datetime('now', '-30 minutes')
+                  AND started_at < ?
             )
-        """)
+        """, cutoff)
 
         # 2.7 兜底：节点指向已非 running 的任务 → 释放
         # 覆盖 step 2.5 将任务改为 pending/failed 后节点未同步释放的窗口
