@@ -223,3 +223,46 @@ async def get_cluster_status() -> dict:
             "running": int(stats["running"] or 0) if stats else 0,
         },
     }
+
+
+@router.post("/admin/unstick", dependencies=[Depends(verify_internal_token)])
+async def admin_unstick() -> dict:
+    """人工解卡：将所有僵尸占用/卡住的 running 任务与节点就地收尾。
+
+    用于当前 task 挂在 node 这类场景：节点 job 已在节点内存 dict 丢失
+    （进程重启/OOM），调度侧仍显示 running。一次性把超时 running 的
+    backtest 标记失败，节点回 idle，不依赖心跳。
+    """
+    mark = await execute("""
+        UPDATE task_queue
+        SET status = 'failed', finished_at = datetime('now'),
+            error = COALESCE(error, 'unstick: manual recovery'),
+            assigned_node = NULL, cluster_job_id = NULL,
+            generation = generation + 1
+        WHERE status = 'running' AND task_type = 'backtest'
+          AND started_at < datetime('now', '-30 minutes')
+    """)
+
+    release = await execute("""
+        UPDATE cluster_nodes
+        SET status = 'idle', current_task_id = NULL, task_type = NULL,
+            generation = generation + 1, updated_at = datetime('now')
+        WHERE current_task_id IN (
+            SELECT id FROM task_queue
+            WHERE status = 'failed' AND error LIKE 'unstick%'
+        )
+    """)
+
+    idle = await execute("""
+        UPDATE cluster_nodes
+        SET status = 'idle', current_task_id = NULL, task_type = NULL,
+            generation = generation + 1, updated_at = datetime('now')
+        WHERE status <> 'idle'
+          AND (current_task_id IS NULL
+               OR current_task_id NOT IN (
+                   SELECT id FROM task_queue WHERE status = 'running'
+               ))
+    """)
+
+    return {"ok": True, "marked_failed": mark, "released_nodes": release,
+            "idled_nonidle": idle}
