@@ -254,6 +254,7 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
         # 如果是取消导致的异常，不覆盖 cancelled 状态
         job = _backtest_jobs.get(job_id)
         if not (job and job.get("status") == "cancelled"):
+            logger.exception("backtest job %s failed", job_id)
             _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
 
 
