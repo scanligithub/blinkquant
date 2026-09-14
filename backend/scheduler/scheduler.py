@@ -384,6 +384,7 @@ class ClusterScheduler:
     async def _recover_stuck(self, conn) -> None:
         """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
         # 1. running 超过 30min 无心跳 → 重置 pending
+        #    包括 heartbeat_at IS NULL 的节点（从未发过心跳）
         await conn.execute("""
             UPDATE task_queue
             SET status = 'pending', assigned_node = NULL,
@@ -392,8 +393,10 @@ class ClusterScheduler:
             WHERE status = 'running'
               AND assigned_node IN (
                   SELECT node_id FROM cluster_nodes
-                  WHERE heartbeat_at IS NOT NULL
-                    AND heartbeat_at < datetime('now', '-30 minutes')
+                  WHERE (
+                      heartbeat_at IS NULL
+                      OR heartbeat_at < datetime('now', '-30 minutes')
+                  )
               )
               AND retry_count < max_retries
         """)
