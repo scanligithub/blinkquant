@@ -29,6 +29,15 @@ export interface Task {
   status: "pending" | "queued" | "running" | "done" | "failed" | "cancelled" | "preempted";
   assigned_node: string | null;
   result: any;
+  result_summary?: {
+    final_equity?: number;
+    total_return?: number;
+    max_drawdown?: number;
+    n_trades?: number;
+    n_equity_points?: number;
+    initial_cash?: number;
+  } | null;
+  result_uri?: string | null;
   error: string | null;
   created_at: string;
   started_at: string | null;

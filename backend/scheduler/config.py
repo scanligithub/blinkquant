@@ -50,6 +50,9 @@ class TaskStatus(str, Enum):
     CANCELLED  = "cancelled"
     PREEMPTED  = "preempted"
 
+RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(os.path.dirname(SCHEDULER_DB_PATH), "results"))
+RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
+
 class TaskPriority(int, Enum):
     LOW    = -10
     NORMAL = 0

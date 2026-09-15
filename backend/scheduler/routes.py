@@ -12,6 +12,14 @@ from .models import TaskRow
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
+# 列表查询：禁止 SELECT *，不读 result 大字段
+LIST_COLS = (
+    "id, user_id, task_type, payload, priority, status, "
+    "assigned_node, cluster_job_id, error, result_summary, result_uri, "
+    "created_at, queued_at, started_at, finished_at, "
+    "retry_count, max_retries, preempted_by, generation"
+)
+
 
 # ──────────────────────────────────────────────
 # Auth
@@ -46,6 +54,8 @@ class TaskResponse(BaseModel):
     assigned_node: Optional[str]
     cluster_job_id: Optional[str]
     result: Optional[dict]
+    result_summary: Optional[dict] = None
+    result_uri: Optional[str] = None
     error: Optional[str]
     created_at: str
     queued_at: Optional[str]
@@ -65,7 +75,22 @@ class TaskListResponse(BaseModel):
 # Helpers
 # ──────────────────────────────────────────────
 
-def _row_to_task(row: dict) -> TaskResponse:
+def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
+    """将 DB 行转为 TaskResponse。slim=True 时不解析 result（列表用）。"""
+    result = None
+    if not slim and row.get("result"):
+        try:
+            result = json.loads(row["result"])
+        except (json.JSONDecodeError, TypeError):
+            result = None
+
+    result_summary = None
+    if row.get("result_summary"):
+        try:
+            result_summary = json.loads(row["result_summary"])
+        except (json.JSONDecodeError, TypeError):
+            result_summary = None
+
     return TaskResponse(
         id=row["id"],
         user_id=row["user_id"],
@@ -73,17 +98,19 @@ def _row_to_task(row: dict) -> TaskResponse:
         payload=json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"],
         priority=row["priority"],
         status=row["status"],
-        assigned_node=row["assigned_node"],
-        cluster_job_id=row["cluster_job_id"],
-        result=json.loads(row["result"]) if row["result"] else None,
-        error=row["error"],
+        assigned_node=row.get("assigned_node"),
+        cluster_job_id=row.get("cluster_job_id"),
+        result=result,
+        result_summary=result_summary,
+        result_uri=row.get("result_uri"),
+        error=row.get("error"),
         created_at=row["created_at"],
-        queued_at=row["queued_at"],
-        started_at=row["started_at"],
-        finished_at=row["finished_at"],
+        queued_at=row.get("queued_at"),
+        started_at=row.get("started_at"),
+        finished_at=row.get("finished_at"),
         retry_count=row["retry_count"],
         max_retries=row["max_retries"],
-        preempted_by=row["preempted_by"],
+        preempted_by=row.get("preempted_by"),
         generation=row["generation"],
     )
 
@@ -106,8 +133,8 @@ async def create_task(task: TaskCreate) -> dict:
 
 @router.get("/tasks", dependencies=[Depends(verify_internal_token)])
 async def list_tasks(user_id: Optional[str] = None, status: Optional[str] = None) -> TaskListResponse:
-    """列出任务（可选按 user_id/status 过滤），默认不返回 result 全文"""
-    query = "SELECT * FROM task_queue WHERE 1=1"
+    """列出任务（可选按 user_id/status 过滤），不返回 result 全文"""
+    query = f"SELECT {LIST_COLS} FROM task_queue WHERE 1=1"
     params = []
     if user_id:
         query += " AND user_id = ?"
@@ -116,9 +143,9 @@ async def list_tasks(user_id: Optional[str] = None, status: Optional[str] = None
         query += " AND status = ?"
         params.append(status)
     query += " ORDER BY created_at DESC LIMIT 100"
-    
+
     rows = await fetch(query, *params)
-    return TaskListResponse(tasks=[_row_to_task(r) for r in rows])
+    return TaskListResponse(tasks=[_row_to_task(r, slim=True) for r in rows])
 
 
 @router.get("/tasks/{task_id}", dependencies=[Depends(verify_internal_token)])
@@ -128,6 +155,45 @@ async def get_task(task_id: int) -> TaskResponse:
     if not row:
         raise HTTPException(404, "Task not found")
     return _row_to_task(row)
+
+
+@router.get("/tasks/{task_id}/artifact", dependencies=[Depends(verify_internal_token)])
+async def get_task_artifact(task_id: int, name: str = "equity_curve", fmt: str = "json"):
+    """按需加载回测产物：equity_curve / trades / positions_daily。"""
+    from .config import RESULT_DIR
+    from .result_store import load_part, load_as_legacy_json, ARTIFACT_NAMES
+
+    row = await fetchrow("SELECT result_uri, result FROM task_queue WHERE id = ?", task_id)
+    if not row:
+        raise HTTPException(404, "Task not found")
+
+    # 旧任务：没有 result_uri 但有 result JSON → 直接返回
+    if not row.get("result_uri") and row.get("result"):
+        data = json.loads(row["result"])
+        if name in data:
+            return data[name]
+        raise HTTPException(404, f"Artifact '{name}' not found in legacy result")
+
+    if not row.get("result_uri"):
+        raise HTTPException(404, "No result available for this task")
+
+    if fmt == "legacy":
+        full = load_as_legacy_json(row["result_uri"], RESULT_DIR)
+        return full.get(name, [])
+
+    if name not in ARTIFACT_NAMES:
+        raise HTTPException(400, f"Unknown artifact: {name}. Valid: {ARTIFACT_NAMES}")
+
+    df = load_part(row["result_uri"], name, RESULT_DIR)
+    if df is None:
+        raise HTTPException(404, f"Artifact '{name}' not found")
+
+    import io
+    buffer = io.BytesIO()
+    df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0)
+    from fastapi.responses import Response
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(verify_internal_token)])

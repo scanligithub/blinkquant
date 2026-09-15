@@ -73,6 +73,7 @@ async def init_pool() -> None:
         await _pool.execute("PRAGMA synchronous=NORMAL")
         await _pool.execute("PRAGMA foreign_keys=ON")
         await _load_schema()
+        await _migrate()
         print(f"[db] SQLite pool opened: {SCHEDULER_DB_PATH}")
 
 
@@ -82,6 +83,17 @@ async def _load_schema() -> None:
         sql = f.read()
     await _pool.executescript(sql)
     await _pool.commit()
+
+
+async def _migrate() -> None:
+    """增量迁移：ALTER TABLE ADD COLUMN IF NOT EXISTS（SQLite 不支持 IF NOT EXISTS，用 try/except）"""
+    cursor = await _pool.execute("PRAGMA table_info(task_queue)")
+    existing = {row[1] for row in await cursor.fetchall()}
+
+    if "result_summary" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_summary TEXT")
+    if "result_uri" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_uri TEXT")
 
 
 async def close_pool() -> None:

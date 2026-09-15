@@ -621,15 +621,20 @@ class ClusterScheduler:
 
     async def _complete_backtest(self, task_id: int, data: dict, generation: int) -> None:
         from .db import execute
+        from .config import RESULT_DIR
+        from .result_store import persist
+
+        summary, uri = persist(task_id, data or {}, RESULT_DIR)
         await execute("""
             UPDATE task_queue
-            SET status = 'done', finished_at = datetime('now'), result = ?
+            SET status = 'done', finished_at = datetime('now'),
+                result_summary = ?, result_uri = ?, result = NULL
             WHERE id = ? AND generation = ?
-        """, json.dumps(data), task_id, generation)
-        
+        """, json.dumps(summary), uri, task_id, generation)
+
         await execute("""
             UPDATE cluster_nodes
-            SET status = 'idle', current_task_id = NULL, task_type = NULL, 
+            SET status = 'idle', current_task_id = NULL, task_type = NULL,
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
         """, generation, task_id, generation)

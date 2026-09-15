@@ -70,6 +70,19 @@ export function TaskList() {
                   {task.status === "preempted" && (
                     <span className="ml-1 text-[10px] text-orange-600">(已自动重排队)</span>
                   )}
+                  {task.task_type === 'backtest' && task.status === 'done' && task.result_summary && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {task.result_summary.total_return != null && (
+                        <>收益 {(task.result_summary.total_return * 100).toFixed(2)}%</>
+                      )}
+                      {task.result_summary.max_drawdown != null && (
+                        <> | 回撤 {(task.result_summary.max_drawdown * 100).toFixed(2)}%</>
+                      )}
+                      {task.result_summary.n_trades != null && (
+                        <> | {task.result_summary.n_trades} 笔</>
+                      )}
+                    </span>
+                  )}
                 </td>
                 <td className="py-2 px-2 text-gray-500 font-mono">
                   {task.assigned_node || "-"}
