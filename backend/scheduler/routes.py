@@ -16,6 +16,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
     "assigned_node, cluster_job_id, error, result_summary, result_uri, "
+    "progress_pct, progress_json, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
 )
@@ -56,6 +57,8 @@ class TaskResponse(BaseModel):
     result: Optional[dict]
     result_summary: Optional[dict] = None
     result_uri: Optional[str] = None
+    progress_pct: Optional[float] = None
+    progress: Optional[dict] = None
     error: Optional[str]
     created_at: str
     queued_at: Optional[str]
@@ -92,6 +95,13 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         except (json.JSONDecodeError, TypeError):
             result_summary = None
 
+    progress = None
+    if row.get("progress_json"):
+        try:
+            progress = json.loads(row["progress_json"])
+        except (json.JSONDecodeError, TypeError):
+            progress = None
+
     return TaskResponse(
         id=row["id"],
         user_id=row["user_id"],
@@ -104,6 +114,8 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         result=result,
         result_summary=result_summary,
         result_uri=row.get("result_uri"),
+        progress_pct=row.get("progress_pct"),
+        progress=progress,
         error=row.get("error"),
         created_at=row["created_at"],
         queued_at=row.get("queued_at"),

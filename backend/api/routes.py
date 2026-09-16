@@ -177,6 +177,21 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
 # Async backtest endpoints
 _backtest_jobs: dict[str, dict] = {}
 
+from datetime import datetime, timezone
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _set_job_progress(job_id: str, progress: dict) -> None:
+    """Thread-safe: only updates progress field on running/queued job."""
+    job = _backtest_jobs.get(job_id)
+    if not job or job.get("status") not in ("running", "queued"):
+        return
+    job["progress"] = {
+        **progress,
+        "updated_at": _utc_now_iso(),
+    }
+
 async def _run_backtest_async(job_id: str, req: BacktestRequest):
     try:
         if data_manager.df_daily is None:
@@ -189,7 +204,17 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             return
 
         # 标记任务开始执行
-        _backtest_jobs[job_id] = {"status": "running"}
+        _backtest_jobs[job_id] = {
+            "status": "running",
+            "progress": {
+                "pct": 0.0,
+                "done_days": 0,
+                "total_days": 0,
+                "current_date": None,
+                "stage": "loading_data",
+                "updated_at": _utc_now_iso(),
+            },
+        }
         
         calendar = TradingCalendar()
         if data_manager.df_daily is not None:
@@ -219,12 +244,15 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
 
         # 在线程池中运行同步回测，避免阻塞事件循环
         import asyncio
+        def _on_progress(p: dict) -> None:
+            _set_job_progress(job_id, p)
         result = await asyncio.to_thread(
             backtest_engine.run,
             formula=req.formula,
             start_date=req.start_date,
             end_signal_date=req.end_signal_date,
             initial_cash=req.initial_cash,
+            on_progress=_on_progress,
         )
 
         # 完成后检查是否被取消

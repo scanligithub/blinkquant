@@ -96,6 +96,10 @@ async def _migrate() -> None:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_uri TEXT")
     if "timeout_sec" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN timeout_sec INTEGER")
+    if "progress_pct" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN progress_pct REAL")
+    if "progress_json" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN progress_json TEXT")
 
 
 async def close_pool() -> None:

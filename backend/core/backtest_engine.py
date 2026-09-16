@@ -3,7 +3,7 @@ import enum
 import logging
 import logging
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 from pathlib import Path
 import polars as pl
 
@@ -163,6 +163,7 @@ class BacktestEngine:
         corporate_action_store: 'CorporateActionStore' = None,
         universe_filter: 'UniverseFilter' = None,
         fee_schedule: 'FeeSchedule' = None,
+        on_progress: 'Callable[[dict], None] | None' = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -334,7 +335,18 @@ class BacktestEngine:
         }
         self._stage_timings = _profiler
 
-        for t in all_days:
+        # Initial progress callback
+        total_days = len(all_days)
+        if on_progress:
+            on_progress({
+                "pct": 0.0,
+                "done_days": 0,
+                "total_days": total_days,
+                "current_date": all_days[0].isoformat() if all_days else None,
+                "stage": "running",
+            })
+
+        for i, t in enumerate(all_days):
             # PRE_OPEN: thaw + corporate actions
             _t0 = _time.perf_counter()
             self._phase_pre_open(t, corporate_action_store, fee_schedule, diag)
@@ -386,6 +398,16 @@ class BacktestEngine:
                 equity_curve_rows, positions_daily_rows,
             )
             _profiler["Output"] += _time.perf_counter() - _t0
+
+            # Progress callback (throttle: every 5 days or last day)
+            if on_progress and (i % 5 == 0 or i + 1 == total_days):
+                on_progress({
+                    "pct": round((i + 1) / total_days * 100.0, 1) if total_days else 100.0,
+                    "done_days": i + 1,
+                    "total_days": total_days,
+                    "current_date": t.isoformat(),
+                    "stage": "running",
+                })
 
         # 构建结果
         equity_curve = pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={

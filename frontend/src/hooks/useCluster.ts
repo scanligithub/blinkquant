@@ -30,14 +30,21 @@ export interface Task {
   assigned_node: string | null;
   result: any;
   result_summary?: {
-    final_equity?: number;
     total_return?: number;
     max_drawdown?: number;
     n_trades?: number;
-    n_equity_points?: number;
-    initial_cash?: number;
+    final_equity?: number;
   } | null;
   result_uri?: string | null;
+  progress_pct?: number | null;
+  progress?: {
+    pct?: number;
+    done_days?: number;
+    total_days?: number;
+    current_date?: string;
+    stage?: string;
+    updated_at?: string;
+  } | null;
   error: string | null;
   created_at: string;
   started_at: string | null;

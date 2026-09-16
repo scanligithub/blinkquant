@@ -609,7 +609,8 @@ class ClusterScheduler:
                 elif status in ("failed", "cancelled", "expired"):
                     await self._fail_backtest(task_id, result.get("error") or status, generation)
                 elif status in ("queued", "running", None):
-                    # 正常中间态：节点仍在计算或排队中，本轮跳过
+                    # 透传进度
+                    await self._update_task_progress(task_id, result.get("progress"))
                     return
                 else:
                     log.warning("Poll job %s returned unknown status %r, failing", task_id, status)
@@ -640,7 +641,8 @@ class ClusterScheduler:
         await execute("""
             UPDATE task_queue
             SET status = 'done', finished_at = datetime('now'),
-                result_summary = ?, result_uri = ?, result = NULL
+                result_summary = ?, result_uri = ?, result = NULL,
+                progress_pct = 100.0
             WHERE id = ? AND generation = ?
         """, json.dumps(summary), uri, task_id, generation)
 
@@ -666,6 +668,24 @@ class ClusterScheduler:
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
         """, generation, task_id, generation)
+
+    async def _update_task_progress(self, task_id: int, progress: dict | None) -> None:
+        """Write progress dict to task_queue progress_pct / progress_json."""
+        if not progress:
+            return
+        from .db import execute
+        pct = progress.get("pct")
+        await execute(
+            """
+            UPDATE task_queue
+            SET progress_pct = ?,
+                progress_json = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            float(pct) if pct is not None else None,
+            json.dumps(progress),
+            task_id,
+        )
 
     async def _mark_task_failed(self, task_id: int, error: str) -> None:
         from .db import execute

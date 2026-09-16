@@ -70,6 +70,32 @@ export function TaskList() {
                   {task.status === "preempted" && (
                     <span className="ml-1 text-[10px] text-orange-600">(已自动重排队)</span>
                   )}
+                  {task.status === "running" && (
+                    <div className="mt-1 w-full max-w-xs">
+                      <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                        <span>
+                          {task.progress?.current_date
+                            ? `算至 ${task.progress.current_date}`
+                            : task.progress?.stage === "loading_data"
+                              ? "加载数据…"
+                              : "计算中…"}
+                        </span>
+                        <span>
+                          {typeof task.progress_pct === "number"
+                            ? `${task.progress_pct.toFixed(0)}%`
+                            : "—"}
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 transition-all duration-500"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, task.progress_pct ?? 0))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                   {task.task_type === 'backtest' && task.status === 'done' && task.result_summary && (
                     <span className="ml-2 text-xs text-muted-foreground">
                       {task.result_summary.total_return != null && (
