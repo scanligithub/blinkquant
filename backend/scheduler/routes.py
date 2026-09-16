@@ -17,7 +17,7 @@ LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
     "assigned_node, cluster_job_id, error, result_summary, result_uri, "
     "created_at, queued_at, started_at, finished_at, "
-    "retry_count, max_retries, preempted_by, generation"
+    "retry_count, max_retries, preempted_by, generation, timeout_sec"
 )
 
 
@@ -65,6 +65,7 @@ class TaskResponse(BaseModel):
     max_retries: int
     preempted_by: Optional[int]
     generation: int
+    timeout_sec: Optional[int] = None
 
 
 class TaskListResponse(BaseModel):
@@ -112,6 +113,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         max_retries=row["max_retries"],
         preempted_by=row.get("preempted_by"),
         generation=row["generation"],
+        timeout_sec=row.get("timeout_sec"),
     )
 
 
@@ -122,12 +124,14 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
 @router.post("/tasks", dependencies=[Depends(verify_internal_token)])
 async def create_task(task: TaskCreate) -> dict:
     """创建任务，返回 task_id"""
+    from .config import compute_task_timeout_sec
+    timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
     async with acquire() as conn:
         row = await conn.fetchrow("""
-            INSERT INTO task_queue (user_id, task_type, payload, priority, status)
-            VALUES (?, ?, ?, ?, 'pending')
+            INSERT INTO task_queue (user_id, task_type, payload, priority, status, timeout_sec)
+            VALUES (?, ?, ?, ?, 'pending', ?)
             RETURNING id, status, created_at
-        """, task.user_id, task.task_type, json.dumps(task.payload), task.priority)
+        """, task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec)
     return {"task_id": row["id"], "status": row["status"], "created_at": row["created_at"]}
 
 

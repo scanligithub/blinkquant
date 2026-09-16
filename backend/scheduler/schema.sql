@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS task_queue (
     retry_count     INTEGER DEFAULT 0,
     max_retries     INTEGER DEFAULT 2,
     preempted_by    INTEGER,
-    generation      INTEGER NOT NULL DEFAULT 0
+    generation      INTEGER NOT NULL DEFAULT 0,
+    timeout_sec     INTEGER           -- 动态墙钟上限（秒），NULL 用全局默认
 );
 
 CREATE INDEX IF NOT EXISTS idx_tq_status_priority

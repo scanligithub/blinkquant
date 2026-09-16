@@ -409,52 +409,64 @@ class ClusterScheduler:
               AND status IN ('idle', 'running')
         """)
 
-        # 2.5 墙钟超时回收（不依赖心跳）：running backtest 超时 → 重入队，重试耗尽则失败
-        # 关键：不要求 heartbeat_at 非空，_backtest_jobs 在节点内存、进程重启即丢，不能靠心跳兜底
-        # 统一用 SQLite datetime('now', ?) 避免 isoformat() 产生 T 分隔符导致比较恒真
-        timeout_param = f"-{TASK_RUNNING_TIMEOUT_SEC} seconds"
-        await conn.execute("""
-            UPDATE task_queue
-            SET status = CASE
-                    WHEN retry_count < max_retries THEN 'pending'
-                    ELSE 'failed'
-                END,
-                assigned_node = NULL,
-                cluster_job_id = NULL,
-                error = CASE
-                    WHEN retry_count < max_retries THEN error
-                    ELSE 'timeout: running exceeded wall-clock limit'
-                END,
-                finished_at = CASE
-                    WHEN retry_count < max_retries THEN finished_at
-                    ELSE datetime('now')
-                END,
-                retry_count = CASE
-                    WHEN retry_count < max_retries THEN retry_count + 1
-                    ELSE retry_count
-                END,
-                queued_at = NULL,
-                started_at = NULL,
-                generation = generation + 1
+        # 2.5 按行动态墙钟超时回收（不依赖心跳）
+        # 每个任务用自身的 timeout_sec（创建时计算），NULL 则回退全局默认
+        cursor = await conn.execute("""
+            SELECT id, timeout_sec, started_at, assigned_node, cluster_job_id,
+                   retry_count, max_retries, generation
+            FROM task_queue
             WHERE status = 'running'
               AND task_type = 'backtest'
               AND started_at IS NOT NULL
-              AND started_at < datetime('now', ?)
-        """, timeout_param)
+        """)
+        running_backtests = await cursor.fetchall()
 
-        # 2.6 墙钟超时对应的节点全部释放（与 2.5 使用同一套时间语义）
-        await conn.execute("""
-            UPDATE cluster_nodes
-            SET status = 'idle', current_task_id = NULL, task_type = NULL,
-                generation = generation + 1, updated_at = datetime('now')
-            WHERE current_task_id IN (
-                SELECT id FROM task_queue
-                WHERE status = 'running'
-                  AND task_type = 'backtest'
-                  AND started_at IS NOT NULL
-                  AND started_at < datetime('now', ?)
+        timed_out_ids = []
+        for row in running_backtests:
+            limit = row["timeout_sec"] or TASK_RUNNING_TIMEOUT_SEC
+            # 用 SQLite datetime 比较避免 Python isoformat T-vs-space 问题
+            check = await conn.execute(
+                "SELECT 1 FROM task_queue WHERE id = ? AND started_at < datetime('now', ?)",
+                row["id"], f"-{limit} seconds"
             )
-        """, timeout_param)
+            if await check.fetchone():
+                timed_out_ids.append(row)
+                log.warning(
+                    "Wall-clock timeout: task %s (timeout_sec=%s, started_at=%s)",
+                    row["id"], limit, row["started_at"],
+                )
+
+        for row in timed_out_ids:
+            # 回收任务：pending 重试 或 failed
+            if row["retry_count"] < row["max_retries"]:
+                await conn.execute("""
+                    UPDATE task_queue
+                    SET status = 'pending', finished_at = NULL, error = NULL,
+                        assigned_node = NULL, cluster_job_id = NULL,
+                        queued_at = NULL, started_at = NULL,
+                        retry_count = retry_count + 1,
+                        generation = generation + 1
+                    WHERE id = ?
+                """, row["id"])
+            else:
+                await conn.execute("""
+                    UPDATE task_queue
+                    SET status = 'failed', finished_at = datetime('now'),
+                        error = 'timeout: running exceeded wall-clock limit',
+                        assigned_node = NULL, cluster_job_id = NULL,
+                        queued_at = NULL, started_at = NULL,
+                        generation = generation + 1
+                    WHERE id = ?
+                """, row["id"])
+
+            # 释放节点
+            if row["assigned_node"]:
+                await conn.execute("""
+                    UPDATE cluster_nodes
+                    SET status = 'idle', current_task_id = NULL, task_type = NULL,
+                        generation = generation + 1, updated_at = datetime('now')
+                    WHERE node_id = ?
+                """, row["assigned_node"])
 
         # 2.7 兜底：节点指向已非 running 的任务 → 释放
         # 覆盖 step 2.5 将任务改为 pending/failed 后节点未同步释放的窗口
