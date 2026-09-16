@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Optional, List
 from httpx import HTTPStatusError
@@ -20,6 +21,7 @@ from .db import acquire, execute, fetch, fetchrow
 from .models import NodeRow, TaskRow
 from .dispatcher import (
     dispatch_backtest, dispatch_selection, cancel_task, poll_backtest_job,
+    fetch_backtest_artifact,
 )
 from .state import can_transition_node, can_transition_task
 
@@ -605,7 +607,13 @@ class ClusterScheduler:
                 status = result.get("status")
                 
                 if status == "done":
-                    await self._complete_backtest(task_id, result.get("data"), generation)
+                    payload = result.get("data") or result
+                    if result.get("summary") is not None:
+                        payload = result
+                    await self._complete_backtest(
+                        task_id, payload, generation,
+                        node_id=node_id, job_id=job_id,
+                    )
                 elif status in ("failed", "cancelled", "expired"):
                     await self._fail_backtest(task_id, result.get("error") or status, generation)
                 elif status in ("queued", "running", None):
@@ -632,12 +640,36 @@ class ClusterScheduler:
         # 并发轮询所有 running backtest
         await asyncio.gather(*[poll_one(row) for row in rows], return_exceptions=True)
 
-    async def _complete_backtest(self, task_id: int, data: dict, generation: int) -> None:
+    async def _complete_backtest(self, task_id: int, data: dict, generation: int, *,
+                                  node_id: str | None = None, job_id: str | None = None) -> None:
         from .db import execute
         from .config import RESULT_DIR
         from .result_store import persist
+        from .dispatcher import fetch_backtest_artifact
 
-        summary, uri = persist(task_id, data or {}, RESULT_DIR)
+        if data and "summary" in data and "meta" in data:
+            summary = data["summary"]
+            meta = data["meta"]
+            uri = f"task_{task_id}"
+            task_dir = os.path.join(RESULT_DIR, uri)
+            os.makedirs(task_dir, exist_ok=True)
+            try:
+                with open(os.path.join(task_dir, "meta.json"), "w") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
+            except Exception:
+                log.exception("Failed to write meta.json for task %s", task_id)
+
+            if node_id and job_id and data.get("artifacts"):
+                for name in data["artifacts"]:
+                    try:
+                        raw = await fetch_backtest_artifact(node_id, job_id, name)
+                        with open(os.path.join(task_dir, f"{name}.parquet"), "wb") as f:
+                            f.write(raw)
+                    except Exception:
+                        log.exception("artifact %s download failed task=%s", name, task_id)
+        else:
+            summary, uri = persist(task_id, data or {}, RESULT_DIR)
+
         await execute("""
             UPDATE task_queue
             SET status = 'done', finished_at = datetime('now'),

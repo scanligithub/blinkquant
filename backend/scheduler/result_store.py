@@ -16,18 +16,38 @@ ARTIFACT_NAMES = ("equity_curve", "trades", "positions_daily")
 
 
 def build_result_summary(data: dict) -> dict:
-    """从回测完整 data 中提取轻量摘要（存入 SQLite result_summary 列）。"""
-    ec = data.get("equity_curve") or []
-    trades = data.get("trades") or []
+    """从 data 提取摘要。优先 metrics；trades/ec 可为 list 或仅计数。"""
     m = data.get("metrics") or {}
+    ec = data.get("equity_curve")
+    trades = data.get("trades")
 
-    final = ec[-1]["equity"] if ec else None
+    final = None
+    n_equity = None
+    if isinstance(ec, list) and ec:
+        final = ec[-1].get("equity")
+        n_equity = len(ec)
+    elif isinstance(ec, dict):
+        final = ec.get("final_equity")
+        n_equity = ec.get("n")
+
+    n_trades = m.get("trade_count")
+    if n_trades is None:
+        if isinstance(trades, list):
+            n_trades = len(trades)
+        elif isinstance(trades, int):
+            n_trades = trades
+        elif isinstance(trades, dict):
+            n_trades = trades.get("n")
+
+    if final is None:
+        final = data.get("final_equity") or m.get("final_equity")
+
     return {
         "final_equity": final,
         "total_return": m.get("total_return"),
         "max_drawdown": m.get("max_drawdown"),
-        "n_trades": len(trades) if isinstance(trades, list) else m.get("trade_count"),
-        "n_equity_points": len(ec) if isinstance(ec, list) else None,
+        "n_trades": n_trades,
+        "n_equity_points": n_equity,
         "initial_cash": data.get("initial_cash"),
     }
 
@@ -76,6 +96,55 @@ def persist(task_id: int, data: dict, result_dir: str) -> tuple[dict, str]:
             log.exception("Failed to write %s for task %s", name, task_id)
 
     summary = build_result_summary(data)
+    return summary, uri
+
+
+def persist_frames(
+    task_id: int,
+    *,
+    result_dir: str,
+    meta: dict,
+    equity_curve: pl.DataFrame | None = None,
+    trades: pl.DataFrame | None = None,
+    positions_daily: pl.DataFrame | None = None,
+    summary: dict | None = None,
+) -> tuple[dict, str]:
+    """不经 list[dict]，直接从 DataFrame 写 Parquet。"""
+    uri = f"task_{task_id}"
+    task_dir = os.path.join(result_dir, uri)
+    os.makedirs(task_dir, exist_ok=True)
+
+    try:
+        with open(os.path.join(task_dir, "meta.json"), "w") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        log.exception("Failed to write meta.json for task %s", task_id)
+
+    frames = {
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "positions_daily": positions_daily,
+    }
+    for name, df in frames.items():
+        if df is None or df.is_empty():
+            continue
+        try:
+            df.write_parquet(
+                os.path.join(task_dir, f"{name}.parquet"),
+                compression="zstd",
+                compression_level=RESULT_ZSTD_LEVEL,
+            )
+        except Exception:
+            log.exception("Failed to write %s for task %s", name, task_id)
+
+    if summary is None:
+        summary = build_result_summary({
+            **meta,
+            "equity_curve": {"n": equity_curve.height if equity_curve is not None else 0,
+                             "final_equity": float(equity_curve["equity"][-1]) if equity_curve is not None and equity_curve.height else None},
+            "trades": trades.height if trades is not None else 0,
+            "metrics": meta.get("metrics") or {},
+        })
     return summary, uri
 
 

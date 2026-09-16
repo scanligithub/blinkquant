@@ -176,6 +176,25 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
 
 # Async backtest endpoints
 _backtest_jobs: dict[str, dict] = {}
+_backtest_artifacts: dict[str, dict[str, bytes]] = {}
+
+def _df_to_parquet_bytes(df: pl.DataFrame, level: int = 6) -> bytes:
+    buf = io.BytesIO()
+    df.write_parquet(buf, compression="zstd", compression_level=level)
+    return buf.getvalue()
+
+def _build_summary_from_result(req, result) -> dict:
+    ec = result.equity_curve
+    final = float(ec["equity"][-1]) if not ec.is_empty() else None
+    m = result.metrics if isinstance(result.metrics, dict) else {}
+    return {
+        "final_equity": final,
+        "total_return": m.get("total_return"),
+        "max_drawdown": m.get("max_drawdown"),
+        "n_trades": result.trades.height,
+        "n_equity_points": ec.height,
+        "initial_cash": req.initial_cash,
+    }
 
 from datetime import datetime, timezone
 
@@ -255,31 +274,45 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             on_progress=_on_progress,
         )
 
-        # 完成后检查是否被取消
         job = _backtest_jobs.get(job_id)
         if job and job.get("status") == "cancelled":
             return
 
+        _set_job_progress(job_id, {
+            "pct": 99.0,
+            "stage": "writing_result",
+        })
+
+        artifacts = {}
+        if not result.trades.is_empty():
+            artifacts["trades"] = _df_to_parquet_bytes(result.trades)
+        if not result.positions_daily.is_empty():
+            artifacts["positions_daily"] = _df_to_parquet_bytes(result.positions_daily)
+        if not result.equity_curve.is_empty():
+            artifacts["equity_curve"] = _df_to_parquet_bytes(result.equity_curve)
+        _backtest_artifacts[job_id] = artifacts
+
+        summary = _build_summary_from_result(req, result)
         valuation_end_date = None
         if not result.equity_curve.is_empty():
             valuation_end_date = result.equity_curve["date"].max().isoformat()
 
         _backtest_jobs[job_id] = {
             "status": "done",
-            "data": {
+            "progress": {"pct": 100.0, "stage": "done", "updated_at": _utc_now_iso()},
+            "summary": summary,
+            "meta": {
                 "formula": req.formula,
                 "start_date": req.start_date.isoformat(),
                 "signal_end_date": req.end_signal_date.isoformat(),
                 "valuation_end_date": valuation_end_date,
                 "initial_cash": req.initial_cash,
-                "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
-                "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
-                "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
                 "metrics": result.metrics,
-            }
+            },
+            "artifacts": {k: True for k in artifacts},
         }
     except Exception as e:
-        # 如果是取消导致的异常，不覆盖 cancelled 状态
+        _backtest_artifacts.pop(job_id, None)
         job = _backtest_jobs.get(job_id)
         if not (job and job.get("status") == "cancelled"):
             logger.exception("backtest job %s failed", job_id)
@@ -303,6 +336,25 @@ async def get_backtest_async(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.get("/backtest/async/{job_id}/artifact/{name}")
+async def get_backtest_artifact(job_id: str, name: str):
+    if name not in ("equity_curve", "trades", "positions_daily"):
+        raise HTTPException(400, "invalid artifact name")
+    job = _backtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "done":
+        raise HTTPException(409, "artifacts only available when done")
+    blob = (_backtest_artifacts.get(job_id) or {}).get(name)
+    if not blob:
+        raise HTTPException(404, "artifact not found")
+    return Response(
+        content=blob,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}.parquet"'},
+    )
 
 
 @router.post("/backtest/cancel")

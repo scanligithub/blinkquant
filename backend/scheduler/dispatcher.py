@@ -119,3 +119,16 @@ async def poll_backtest_job(node_id: str, job_id: str, timeout: int = 60) -> dic
         return resp.json()
     except Exception as e:
         raise RuntimeError(f"poll_backtest_job({node_id}, {job_id}) failed: {e}")
+
+
+async def fetch_backtest_artifact(node_id: str, job_id: str, name: str, timeout: int = 120) -> bytes:
+    """从节点下载 Parquet artifact。"""
+    client = await get_client()
+    resp = await asyncio.wait_for(
+        client.get(
+            f"{HF_NODES[node_id]}/api/v1/backtest/async/{job_id}/artifact/{name}",
+        ),
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.content
