@@ -5,6 +5,7 @@ import EquityCurveChart from './EquityCurveChart';
 import TradesTable from './TradesTable';
 import PositionsTable from './PositionsTable';
 import { useBacktestResult } from '@/hooks/useBacktestResult';
+import { downloadArtifact, type ArtifactName } from '@/lib/backtestArtifacts';
 
 interface LegacyBacktestResult {
   formula: string;
@@ -51,6 +52,64 @@ interface BacktestResultsProps {
   summary?: Summary | null;
 }
 
+function PaginationBar({
+  total,
+  offset,
+  pageSize,
+  loading,
+  onPrev,
+  onNext,
+  taskId,
+  artifactName,
+  fileName,
+}: {
+  total: number;
+  offset: number;
+  pageSize: number;
+  loading: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  taskId: number;
+  artifactName: ArtifactName;
+  fileName: string;
+}) {
+  const from = total === 0 ? 0 : offset + 1;
+  const to = Math.min(offset + pageSize, total);
+  const hasPrev = offset > 0;
+  const hasNext = offset + pageSize < total;
+
+  return (
+    <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+      <span>
+        显示 {from}–{to} / 共 {total.toLocaleString()} 条
+        {total > pageSize ? '（预览，完整数据请下载）' : ''}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={!hasPrev || loading}
+          onClick={onPrev}
+          className="px-2 py-1 rounded border text-xs disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+        >
+          上一页
+        </button>
+        <button
+          disabled={!hasNext || loading}
+          onClick={onNext}
+          className="px-2 py-1 rounded border text-xs disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+        >
+          下一页
+        </button>
+        <button
+          onClick={() => downloadArtifact(taskId, artifactName)}
+          className="px-2 py-1 rounded border text-xs text-blue-600 hover:bg-blue-50"
+        >
+          下载{fileName}.parquet
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function BacktestResults({ result, taskId, summary }: BacktestResultsProps) {
   const [tab, setTab] = useState<'equity' | 'trades' | 'positions'>('equity');
   const hook = useBacktestResult(taskId ?? null);
@@ -70,10 +129,10 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
       hook.loadEquity().catch(() => {});
     }
     if (taskId && tab === 'trades') {
-      hook.loadTradesTab().catch(() => {});
+      hook.loadTradesPage(0);
     }
     if (taskId && tab === 'positions') {
-      hook.loadPositionsTab().catch(() => {});
+      hook.loadPositionsPage(0);
     }
   }, [taskId, tab]);
 
@@ -81,10 +140,11 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
     ? result!.equity_curve.map((d) => ({ date: d.date, equity: d.equity }))
     : hook.equity?.map((d) => ({ date: d.date, equity: d.equity })) ?? [];
 
-  const tradesData = isLegacy ? result!.trades : hook.trades ?? [];
-  const positionsData = isLegacy ? result!.positions_daily : hook.positions ?? [];
+  const tradesData = isLegacy ? result!.trades : hook.trades;
+  const positionsData = isLegacy ? result!.positions_daily : hook.positions;
 
-  const tradesCount = isLegacy ? result!.trades.length : (summary?.n_trades ?? tradesData.length);
+  const tradesCount = isLegacy ? result!.trades.length : hook.tradesTotal || summary?.n_trades || 0;
+  const positionsCount = isLegacy ? result!.positions_daily.length : hook.positionsTotal || 0;
 
   return (
     <div className="space-y-3">
@@ -116,7 +176,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
               tab === t ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'
             }`}
           >
-            {t === 'equity' ? '权益曲线' : t === 'trades' ? `交易 (${tradesCount})` : '持仓'}
+            {t === 'equity' ? '权益曲线' : t === 'trades' ? `交易 (${tradesCount.toLocaleString()})` : `持仓 (${positionsCount.toLocaleString()})`}
           </button>
         ))}
       </div>
@@ -134,6 +194,19 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
       )}
       {tab === 'trades' && (
         <>
+          {taskId && (
+            <PaginationBar
+              total={tradesCount}
+              offset={hook.tradesOffset}
+              pageSize={hook.tradesPageSize}
+              loading={hook.loading === 'trades'}
+              onPrev={hook.tradesPrev}
+              onNext={hook.tradesNext}
+              taskId={taskId}
+              artifactName="trades"
+              fileName="成交"
+            />
+          )}
           {hook.loading === 'trades' && (
             <div className="text-center text-gray-400 text-sm py-4">加载交易记录…</div>
           )}
@@ -145,6 +218,19 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
       )}
       {tab === 'positions' && (
         <>
+          {taskId && (
+            <PaginationBar
+              total={positionsCount}
+              offset={hook.positionsOffset}
+              pageSize={hook.positionsPageSize}
+              loading={hook.loading === 'positions_daily'}
+              onPrev={hook.positionsPrev}
+              onNext={hook.positionsNext}
+              taskId={taskId}
+              artifactName="positions_daily"
+              fileName="持仓"
+            />
+          )}
           {hook.loading === 'positions_daily' && (
             <div className="text-center text-gray-400 text-sm py-4">加载持仓数据…</div>
           )}

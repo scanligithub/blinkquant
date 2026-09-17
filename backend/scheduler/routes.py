@@ -174,8 +174,18 @@ async def get_task(task_id: int) -> TaskResponse:
 
 
 @router.get("/tasks/{task_id}/artifact", dependencies=[Depends(verify_internal_token)])
-async def get_task_artifact(task_id: int, name: str = "equity_curve", fmt: str = "json"):
-    """按需加载回测产物：equity_curve / trades / positions_daily。"""
+async def get_task_artifact(
+    task_id: int,
+    name: str = "equity_curve",
+    fmt: str = "parquet",
+    limit: int | None = None,
+    offset: int = 0,
+    code: str | None = None,
+    side: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """按需加载回测产物。fmt=json 返回分页预览；fmt=parquet 返回二进制。"""
     from .config import RESULT_DIR
     from .result_store import load_part, load_as_legacy_json, ARTIFACT_NAMES
 
@@ -187,6 +197,16 @@ async def get_task_artifact(task_id: int, name: str = "equity_curve", fmt: str =
     if not row.get("result_uri") and row.get("result"):
         data = json.loads(row["result"])
         if name in data:
+            if fmt == "json" and isinstance(data[name], list):
+                items = data[name]
+                total = len(items)
+                off = max(0, offset)
+                if limit is not None:
+                    lim = max(1, min(int(limit), 5000))
+                    items = items[off:off + lim]
+                else:
+                    lim = total
+                return {"name": name, "total": total, "offset": off, "limit": lim, "rows": items}
             return data[name]
         raise HTTPException(404, f"Artifact '{name}' not found in legacy result")
 
@@ -204,12 +224,55 @@ async def get_task_artifact(task_id: int, name: str = "equity_curve", fmt: str =
     if df is None:
         raise HTTPException(404, f"Artifact '{name}' not found")
 
+    # 可选过滤
+    import polars as pl
+
+    if code and "code" in df.columns:
+        df = df.filter(pl.col("code").cast(pl.Utf8) == code)
+    if side and "side" in df.columns:
+        df = df.filter(pl.col("side").cast(pl.Utf8).str.to_uppercase() == side.upper())
+    date_col = "execution_date" if "execution_date" in df.columns else (
+        "date" if "date" in df.columns else None
+    )
+    if date_col and date_from:
+        df = df.filter(pl.col(date_col).cast(pl.Utf8) >= date_from)
+    if date_col and date_to:
+        df = df.filter(pl.col(date_col).cast(pl.Utf8) <= date_to)
+
+    total = df.height
+    off = max(0, int(offset or 0))
+    if limit is not None:
+        lim = max(1, min(int(limit), 5000))
+        df = df.slice(off, lim)
+    else:
+        lim = total
+
+    if fmt == "json":
+        return {
+            "name": name,
+            "total": total,
+            "offset": off,
+            "limit": lim if lim is not None else total,
+            "rows": df.to_dicts(),
+        }
+
     import io
+    from fastapi.responses import Response
+
     buffer = io.BytesIO()
     df.write_parquet(buffer, compression="zstd")
     buffer.seek(0)
-    from fastapi.responses import Response
-    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
+    filename = f"task_{task_id}_{name}.parquet"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Result-Total-Rows": str(total),
+            "X-Result-Offset": str(off),
+            "X-Result-Limit": str(lim if lim is not None else total),
+        },
+    )
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(verify_internal_token)])

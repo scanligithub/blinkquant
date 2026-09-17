@@ -3,6 +3,8 @@ import { compressors } from 'hyparquet-compressors';
 
 export type ArtifactName = 'equity_curve' | 'trades' | 'positions_daily';
 
+export const PREVIEW_PAGE_SIZE = 500;
+
 export interface EquityPoint {
   date: string;
   equity: number;
@@ -26,6 +28,13 @@ export interface PositionRow {
   qty: number;
   cost: number;
   market_value: number;
+}
+
+export interface PageResult<T> {
+  rows: T[];
+  total: number;
+  offset: number;
+  limit: number;
 }
 
 function toIsoDate(v: unknown): string {
@@ -77,9 +86,40 @@ export async function loadEquityCurve(taskId: number): Promise<EquityPoint[]> {
   }));
 }
 
-export async function loadTrades(taskId: number): Promise<TradeRow[]> {
-  const rows = await loadArtifactRows<Record<string, unknown>>(taskId, 'trades');
-  return rows.map((r) => ({
+export async function loadTradesPage(
+  taskId: number,
+  opts: {
+    limit?: number;
+    offset?: number;
+    code?: string;
+    side?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  } = {}
+): Promise<PageResult<TradeRow>> {
+  const limit = opts.limit ?? PREVIEW_PAGE_SIZE;
+  const offset = opts.offset ?? 0;
+  const qs = new URLSearchParams({
+    name: 'trades',
+    fmt: 'json',
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (opts.code) qs.set('code', opts.code);
+  if (opts.side) qs.set('side', opts.side);
+  if (opts.dateFrom) qs.set('date_from', opts.dateFrom);
+  if (opts.dateTo) qs.set('date_to', opts.dateTo);
+
+  const res = await fetch(`/api/v1/tasks/${taskId}/artifact?${qs}`, {
+    cache: 'no-store',
+  });
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`trades page HTTP ${res.status}`);
+  const data = await res.json();
+  const rows: TradeRow[] = (data.rows || []).map((r: any) => ({
     signal_date: toIsoDate(r.signal_date),
     execution_date: toIsoDate(r.execution_date),
     code: String(r.code ?? ''),
@@ -88,17 +128,58 @@ export async function loadTrades(taskId: number): Promise<TradeRow[]> {
     price: Number(r.price),
     fee: Number(r.fee ?? 0),
   }));
+  return {
+    rows,
+    total: Number(data.total ?? rows.length),
+    offset: Number(data.offset ?? offset),
+    limit: Number(data.limit ?? limit),
+  };
 }
 
-export async function loadPositions(taskId: number): Promise<PositionRow[]> {
-  const rows = await loadArtifactRows<Record<string, unknown>>(taskId, 'positions_daily');
-  return rows.map((r) => ({
+export async function loadPositionsPage(
+  taskId: number,
+  opts: {
+    limit?: number;
+    offset?: number;
+    code?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  } = {}
+): Promise<PageResult<PositionRow>> {
+  const limit = opts.limit ?? PREVIEW_PAGE_SIZE;
+  const offset = opts.offset ?? 0;
+  const qs = new URLSearchParams({
+    name: 'positions_daily',
+    fmt: 'json',
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (opts.code) qs.set('code', opts.code);
+  if (opts.dateFrom) qs.set('date_from', opts.dateFrom);
+  if (opts.dateTo) qs.set('date_to', opts.dateTo);
+
+  const res = await fetch(`/api/v1/tasks/${taskId}/artifact?${qs}`, {
+    cache: 'no-store',
+  });
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`positions page HTTP ${res.status}`);
+  const data = await res.json();
+  const rows: PositionRow[] = (data.rows || []).map((r: any) => ({
     date: toIsoDate(r.date),
     code: String(r.code ?? ''),
     qty: Number(r.qty),
     cost: Number(r.cost ?? 0),
     market_value: Number(r.market_value ?? 0),
   }));
+  return {
+    rows,
+    total: Number(data.total ?? rows.length),
+    offset: Number(data.offset ?? offset),
+    limit: Number(data.limit ?? limit),
+  };
 }
 
 export async function downloadArtifact(taskId: number, name: ArtifactName) {

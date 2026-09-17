@@ -23,13 +23,16 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
   }
 
-  const name = req.nextUrl.searchParams.get('name') || 'equity_curve';
+  const sp = req.nextUrl.searchParams;
+  const name = sp.get('name') || 'equity_curve';
   if (!ALLOWED.has(name)) {
     return NextResponse.json({ error: 'Invalid artifact name' }, { status: 400 });
   }
 
-  const url =
-    `${NODE1_URL}/internal/tasks/${taskId}/artifact?name=${encodeURIComponent(name)}`;
+  const qs = new URLSearchParams(sp);
+  qs.set('name', name);
+
+  const url = `${NODE1_URL}/internal/tasks/${taskId}/artifact?${qs}`;
 
   const upstream = await fetch(url, {
     headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
@@ -44,12 +47,20 @@ export async function GET(
     );
   }
 
+  const ct = upstream.headers.get('Content-Type') || '';
+  if (ct.includes('application/json') || qs.get('fmt') === 'json') {
+    const data = await upstream.json();
+    return NextResponse.json(data);
+  }
+
   const buf = await upstream.arrayBuffer();
   return new NextResponse(buf, {
     status: 200,
     headers: {
       'Content-Type': 'application/octet-stream',
-      'Content-Disposition': `attachment; filename="task_${taskId}_${name}.parquet"`,
+      'Content-Disposition':
+        upstream.headers.get('Content-Disposition') ||
+        `attachment; filename="task_${taskId}_${name}.parquet"`,
       'Cache-Control': 'no-store',
     },
   });
