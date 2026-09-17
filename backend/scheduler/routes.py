@@ -15,7 +15,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 # 列表查询：禁止 SELECT *，不读 result 大字段
 LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
-    "assigned_node, cluster_job_id, error, result_summary, result_uri, "
+    "assigned_node, cluster_job_id, error, result_summary, result_uri, result_bytes, "
     "progress_pct, progress_json, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
@@ -23,7 +23,7 @@ LIST_COLS = (
 
 
 # ──────────────────────────────────────────────
-# Auth
+# Auth & Access Control
 # ──────────────────────────────────────────────
 
 async def verify_internal_token(authorization: Optional[str] = Header(None)) -> None:
@@ -32,6 +32,20 @@ async def verify_internal_token(authorization: Optional[str] = Header(None)) -> 
     token = authorization[7:]
     if token != INTERNAL_TOKEN:
         raise HTTPException(401, "Invalid internal token")
+
+
+def _is_admin(role: str | None) -> bool:
+    return (role or "").lower() == "admin"
+
+
+def _assert_task_access(row: dict, user_id: str | None, role: str | None) -> None:
+    """非 admin 必须提供 user_id 且与任务一致。"""
+    if _is_admin(role):
+        return
+    if not user_id:
+        raise HTTPException(401, "user_id required")
+    if str(row.get("user_id")) != str(user_id):
+        raise HTTPException(403, "Task belongs to another user")
 
 
 # ──────────────────────────────────────────────
@@ -57,6 +71,7 @@ class TaskResponse(BaseModel):
     result: Optional[dict]
     result_summary: Optional[dict] = None
     result_uri: Optional[str] = None
+    result_bytes: Optional[int] = None
     progress_pct: Optional[float] = None
     progress: Optional[dict] = None
     error: Optional[str]
@@ -80,7 +95,6 @@ class TaskListResponse(BaseModel):
 # ──────────────────────────────────────────────
 
 def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
-    """将 DB 行转为 TaskResponse。slim=True 时不解析 result（列表用）。"""
     result = None
     if not slim and row.get("result"):
         try:
@@ -114,6 +128,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         result=result,
         result_summary=result_summary,
         result_uri=row.get("result_uri"),
+        result_bytes=row.get("result_bytes"),
         progress_pct=row.get("progress_pct"),
         progress=progress,
         error=row.get("error"),
@@ -148,28 +163,39 @@ async def create_task(task: TaskCreate) -> dict:
 
 
 @router.get("/tasks", dependencies=[Depends(verify_internal_token)])
-async def list_tasks(user_id: Optional[str] = None, status: Optional[str] = None) -> TaskListResponse:
-    """列出任务（可选按 user_id/status 过滤），不返回 result 全文"""
+async def list_tasks(
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    role: Optional[str] = None,
+) -> TaskListResponse:
     query = f"SELECT {LIST_COLS} FROM task_queue WHERE 1=1"
-    params = []
-    if user_id:
+    params: list = []
+    if not _is_admin(role):
+        if not user_id:
+            raise HTTPException(401, "user_id required")
+        query += " AND user_id = ?"
+        params.append(user_id)
+    elif user_id:
         query += " AND user_id = ?"
         params.append(user_id)
     if status:
         query += " AND status = ?"
         params.append(status)
     query += " ORDER BY created_at DESC LIMIT 100"
-
     rows = await fetch(query, *params)
     return TaskListResponse(tasks=[_row_to_task(r, slim=True) for r in rows])
 
 
 @router.get("/tasks/{task_id}", dependencies=[Depends(verify_internal_token)])
-async def get_task(task_id: int) -> TaskResponse:
-    """获取单个任务详情（含 result）"""
+async def get_task(
+    task_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> TaskResponse:
     row = await fetchrow("SELECT * FROM task_queue WHERE id = ?", task_id)
     if not row:
         raise HTTPException(404, "Task not found")
+    _assert_task_access(row, user_id, role)
     return _row_to_task(row)
 
 
@@ -184,16 +210,17 @@ async def get_task_artifact(
     side: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    user_id: str | None = None,
+    role: str | None = None,
 ):
-    """按需加载回测产物。fmt=json 返回分页预览；fmt=parquet 返回二进制。"""
     from .config import RESULT_DIR
     from .result_store import load_part, load_as_legacy_json, ARTIFACT_NAMES
 
-    row = await fetchrow("SELECT result_uri, result FROM task_queue WHERE id = ?", task_id)
+    row = await fetchrow("SELECT result_uri, result, user_id FROM task_queue WHERE id = ?", task_id)
     if not row:
         raise HTTPException(404, "Task not found")
+    _assert_task_access(row, user_id, role)
 
-    # 旧任务：没有 result_uri 但有 result JSON → 直接返回
     if not row.get("result_uri") and row.get("result"):
         data = json.loads(row["result"])
         if name in data:
@@ -211,7 +238,10 @@ async def get_task_artifact(
         raise HTTPException(404, f"Artifact '{name}' not found in legacy result")
 
     if not row.get("result_uri"):
-        raise HTTPException(404, "No result available for this task")
+        raise HTTPException(
+            404,
+            "结果文件已清理，仅保留摘要。Result files were purged; only summary remains.",
+        )
 
     if fmt == "legacy":
         full = load_as_legacy_json(row["result_uri"], RESULT_DIR)
@@ -224,7 +254,6 @@ async def get_task_artifact(
     if df is None:
         raise HTTPException(404, f"Artifact '{name}' not found")
 
-    # 可选过滤
     import polars as pl
 
     if code and "code" in df.columns:
@@ -276,26 +305,22 @@ async def get_task_artifact(
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(verify_internal_token)])
-async def cancel_task(task_id: int, user_id: Optional[str] = None) -> dict:
-    """取消任务：pending/queued → cancelled；running → 触发抢占/取消流程
-    
-    如果提供 user_id，会校验任务归属，防止越权取消。
-    """
+async def cancel_task(
+    task_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> dict:
     row = await fetchrow("SELECT status, task_type, cluster_job_id, assigned_node, user_id FROM task_queue WHERE id = ?", task_id)
     if not row:
         raise HTTPException(404, "Task not found")
-    
-    # 校验用户归属
-    if user_id and row["user_id"] != user_id:
-        raise HTTPException(403, "Task belongs to another user")
-    
+    _assert_task_access(row, user_id, role)
+
     if row["status"] in ("pending", "queued"):
         async with acquire() as conn:
             await conn.execute("UPDATE task_queue SET status = 'cancelled', finished_at = datetime('now') WHERE id = ?", task_id)
         return {"ok": True, "message": "Task cancelled"}
-    
+
     elif row["status"] == "running":
-        # 运行中任务：标记为 preempted，由调度器下一轮回收节点
         async with acquire() as conn:
             await conn.execute("""
                 UPDATE task_queue
@@ -303,7 +328,6 @@ async def cancel_task(task_id: int, user_id: Optional[str] = None) -> dict:
                     preempted_by = NULL, retry_count = 0
                 WHERE id = ? AND status = 'running'
             """, task_id)
-            # 释放节点
             if row["assigned_node"]:
                 await conn.execute("""
                     UPDATE cluster_nodes
@@ -312,9 +336,51 @@ async def cancel_task(task_id: int, user_id: Optional[str] = None) -> dict:
                     WHERE node_id = ?
                 """, row["assigned_node"])
         return {"ok": True, "message": "Running task marked for cancellation"}
-    
+
     else:
         return {"ok": False, "message": f"Task already in terminal state: {row['status']}"}
+
+
+@router.delete("/tasks/{task_id}", dependencies=[Depends(verify_internal_token)])
+async def delete_task(
+    task_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> dict:
+    """真删除：先 cancel（若非终态）→ 删磁盘 → 删 DB 行。"""
+    from .config import RESULT_DIR
+    from .result_store import delete_result_dir
+
+    row = await fetchrow(
+        "SELECT id, status, user_id, result_uri, assigned_node, cluster_job_id, task_type "
+        "FROM task_queue WHERE id = ?",
+        task_id,
+    )
+    if not row:
+        raise HTTPException(404, "Task not found")
+    _assert_task_access(row, user_id, role)
+
+    # 非终态：先 cancel
+    if row["status"] in ("pending", "queued", "running"):
+        await cancel_task(task_id, user_id=user_id, role=role)
+
+    row2 = await fetchrow(
+        "SELECT result_uri, user_id FROM task_queue WHERE id = ?", task_id
+    )
+    if not row2:
+        return {"ok": True, "message": "Task already removed"}
+
+    delete_result_dir(row2.get("result_uri"), RESULT_DIR)
+
+    async with acquire() as conn:
+        if _is_admin(role):
+            await conn.execute("DELETE FROM task_queue WHERE id = ?", task_id)
+        else:
+            await conn.execute(
+                "DELETE FROM task_queue WHERE id = ? AND user_id = ?",
+                task_id, user_id,
+            )
+    return {"ok": True, "message": "Task and result files deleted"}
 
 
 # ──────────────────────────────────────────────

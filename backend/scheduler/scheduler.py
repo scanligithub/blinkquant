@@ -642,23 +642,31 @@ class ClusterScheduler:
 
     async def _complete_backtest(self, task_id: int, data: dict, generation: int, *,
                                   node_id: str | None = None, job_id: str | None = None) -> None:
-        from .db import execute
+        from .db import execute, fetchrow
         from .config import RESULT_DIR
-        from .result_store import persist
+        from .result_store import persist, make_result_uri, dir_size
         from .dispatcher import fetch_backtest_artifact
 
+        trow = await fetchrow("SELECT user_id FROM task_queue WHERE id = ?", task_id)
+        user_id = trow["user_id"] if trow else None
+        if not user_id:
+            log.error("task %s missing user_id, cannot persist", task_id)
+            await self._fail_backtest(task_id, "missing user_id", generation)
+            return
+
+        nbytes = 0
         if data and "summary" in data and "meta" in data:
             summary = data["summary"]
             meta = data["meta"]
-            uri = f"task_{task_id}"
+            uri = make_result_uri(user_id, task_id)
             task_dir = os.path.join(RESULT_DIR, uri)
             os.makedirs(task_dir, exist_ok=True)
             try:
                 with open(os.path.join(task_dir, "meta.json"), "w") as f:
-                    json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
+                    json.dump({**meta, "task_id": task_id, "user_id": user_id}, f,
+                              ensure_ascii=False, indent=2, default=str)
             except Exception:
-                log.exception("Failed to write meta.json for task %s", task_id)
-
+                log.exception("meta.json write failed task=%s", task_id)
             if node_id and job_id and data.get("artifacts"):
                 for name in data["artifacts"]:
                     try:
@@ -667,16 +675,17 @@ class ClusterScheduler:
                             f.write(raw)
                     except Exception:
                         log.exception("artifact %s download failed task=%s", name, task_id)
+            nbytes = dir_size(task_dir)
         else:
-            summary, uri = persist(task_id, data or {}, RESULT_DIR)
+            summary, uri, nbytes = persist(task_id, data or {}, RESULT_DIR, user_id=user_id)
 
         await execute("""
             UPDATE task_queue
             SET status = 'done', finished_at = datetime('now'),
-                result_summary = ?, result_uri = ?, result = NULL,
+                result_summary = ?, result_uri = ?, result_bytes = ?, result = NULL,
                 progress_pct = 100.0
             WHERE id = ? AND generation = ?
-        """, json.dumps(summary), uri, task_id, generation)
+        """, json.dumps(summary), uri, nbytes, task_id, generation)
 
         await execute("""
             UPDATE cluster_nodes
@@ -684,6 +693,11 @@ class ClusterScheduler:
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
         """, generation, task_id, generation)
+
+        try:
+            await self._enforce_user_quota(user_id, keep_task_id=task_id)
+        except Exception:
+            log.exception("quota enforce failed user=%s", user_id)
 
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
@@ -700,6 +714,41 @@ class ClusterScheduler:
                 generation = ?, updated_at = datetime('now')
             WHERE current_task_id = ? AND generation = ?
         """, generation, task_id, generation)
+
+    async def _enforce_user_quota(self, user_id: str, *, keep_task_id: int) -> list[int]:
+        """超 2GB 则删最旧任务（文件+行），不删 keep_task_id。返回被删 id 列表。"""
+        from .db import fetch, execute
+        from .config import RESULT_DIR, RESULT_QUOTA_BYTES_PER_USER
+        from .result_store import delete_result_dir
+
+        rows = await fetch(
+            "SELECT COALESCE(SUM(result_bytes), 0) AS used FROM task_queue "
+            "WHERE user_id = ? AND result_uri IS NOT NULL",
+            user_id,
+        )
+        used = int(rows[0]["used"] if rows else 0)
+        if used <= RESULT_QUOTA_BYTES_PER_USER:
+            return []
+
+        victims = await fetch(
+            """
+            SELECT id, result_uri, result_bytes FROM task_queue
+            WHERE user_id = ? AND result_uri IS NOT NULL AND id != ?
+            ORDER BY finished_at ASC NULLS LAST, id ASC
+            """,
+            user_id,
+            keep_task_id,
+        )
+        evicted: list[int] = []
+        for v in victims:
+            if used <= RESULT_QUOTA_BYTES_PER_USER:
+                break
+            delete_result_dir(v.get("result_uri"), RESULT_DIR)
+            await execute("DELETE FROM task_queue WHERE id = ?", v["id"])
+            used -= int(v.get("result_bytes") or 0)
+            evicted.append(v["id"])
+            log.info("quota GC: deleted task %s for user %s", v["id"], user_id)
+        return evicted
 
     async def _update_task_progress(self, task_id: int, progress: dict | None) -> None:
         """Write progress dict to task_queue progress_pct / progress_json."""

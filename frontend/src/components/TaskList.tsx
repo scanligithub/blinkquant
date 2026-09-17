@@ -87,7 +87,7 @@ function DownloadMenu({ taskId }: { taskId: number }) {
 }
 
 export function TaskList() {
-  const { myTasks, cancelTask } = useCluster();
+  const { myTasks, cancelTask, deleteTask } = useCluster();
 
   if (myTasks.length === 0) {
     return (
@@ -176,14 +176,25 @@ export function TaskList() {
                   {task.created_at ? new Date(task.created_at).toLocaleString() : "-"}
                 </td>
                 <td className="py-2 px-2 text-right">
-                  {task.status === "running" || task.status === "queued" || task.status === "pending" ? (
+                  {(task.status === "running" || task.status === "queued" || task.status === "pending") && (
                     <button
                       onClick={() => cancelTask(task.id)}
                       className="text-xs text-red-600 hover:text-red-800 underline"
                     >
                       取消
                     </button>
-                  ) : task.status === "done" && task.task_type === "backtest" && task.result_uri ? (
+                  )}
+                  {(task.status === "done" || task.status === "failed" || task.status === "cancelled" || task.status === "preempted") && (
+                    <button
+                      onClick={() => {
+                        if (confirm('确认删除此任务？')) deleteTask(task.id);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 underline ml-1"
+                    >
+                      删除
+                    </button>
+                  )}
+                  {task.status === "done" && task.task_type === "backtest" && task.result_uri ? (
                     <div className="flex items-center gap-1 justify-end">
                       <button
                         onClick={() => {

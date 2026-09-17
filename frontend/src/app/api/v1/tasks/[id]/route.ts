@@ -36,7 +36,13 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
   }
 
-  return forwardToNode1(`/tasks/${taskId}`, {
+  const user_id = authErr.user?.userId;
+  const role = authErr.user?.role;
+  const qs = new URLSearchParams();
+  if (user_id) qs.set('user_id', user_id);
+  if (role) qs.set('role', role);
+
+  return forwardToNode1(`/tasks/${taskId}?${qs}`, {
     method: 'GET',
   });
 }
@@ -50,11 +56,8 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
   }
 
-  const auth = await requireAuth(req);
-  const userId = auth.user?.userId;
-  if (!userId) {
-    return NextResponse.json({ error: 'User not found' }, { status: 401 });
-  }
+  const user_id = authErr.user?.userId;
+  const role = authErr.user?.role;
 
   const { id } = await params;
   const taskId = parseInt(id);
@@ -62,8 +65,38 @@ export async function DELETE(
     return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
   }
 
-  // Forward cancel to Node1 with user_id for ownership check
-  return forwardToNode1(`/tasks/${taskId}/cancel?user_id=${encodeURIComponent(userId)}`, {
+  const qs = new URLSearchParams();
+  if (user_id) qs.set('user_id', user_id);
+  if (role) qs.set('role', role);
+
+  return forwardToNode1(`/tasks/${taskId}?${qs}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const authErr = await requireAuth(req);
+  if (authErr.status !== 200) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
+  }
+
+  const user_id = authErr.user?.userId;
+  const role = authErr.user?.role;
+
+  const { id } = await params;
+  const taskId = parseInt(id);
+  if (isNaN(taskId)) {
+    return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
+  }
+
+  const qs = new URLSearchParams();
+  if (user_id) qs.set('user_id', user_id);
+  if (role) qs.set('role', role);
+
+  return forwardToNode1(`/tasks/${taskId}/cancel?${qs}`, {
     method: 'POST',
   });
 }

@@ -126,10 +126,19 @@ export function useCluster() {
 
   const cancelTask = useCallback(async (taskId: number) => {
     try {
-      const res = await fetch(`/api/v1/tasks/${taskId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/v1/tasks/${taskId}`, { method: 'POST' });
       if (!res.ok) throw new Error('Cancel failed');
     } catch (e) {
       alert('取消失败: ' + e);
+    }
+  }, []);
+
+  const deleteTask = useCallback(async (taskId: number) => {
+    try {
+      const res = await fetch(`/api/v1/tasks/${taskId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+    } catch (e) {
+      alert('删除失败: ' + e);
     }
   }, []);
 
@@ -143,5 +152,6 @@ export function useCluster() {
     idleNodeCount,
     submitTask,
     cancelTask,
+    deleteTask,
   };
 }

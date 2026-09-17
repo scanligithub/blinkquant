@@ -97,6 +97,7 @@ class TaskStatus(str, Enum):
 
 RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(os.path.dirname(SCHEDULER_DB_PATH), "results"))
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
+RESULT_QUOTA_BYTES_PER_USER = int(os.getenv("RESULT_QUOTA_BYTES_PER_USER", str(2 * 1024**3)))
 
 class TaskPriority(int, Enum):
     LOW    = -10

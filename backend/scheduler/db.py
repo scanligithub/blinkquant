@@ -100,6 +100,8 @@ async def _migrate() -> None:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN progress_pct REAL")
     if "progress_json" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN progress_json TEXT")
+    if "result_bytes" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_bytes INTEGER")
 
 
 async def close_pool() -> None:

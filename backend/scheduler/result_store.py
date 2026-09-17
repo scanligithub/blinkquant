@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 from typing import Optional
 
 import polars as pl
@@ -11,12 +13,63 @@ from .config import RESULT_ZSTD_LEVEL
 
 log = logging.getLogger("result_store")
 
-# Artifact names that can be persisted
 ARTIFACT_NAMES = ("equity_curve", "trades", "positions_daily")
+_USER_ID_RE = re.compile(r"^[\w-]+$")
+
+
+def assert_safe_user_id(user_id: str) -> str:
+    uid = (user_id or "").strip()
+    if not uid or not _USER_ID_RE.match(uid):
+        raise ValueError(f"invalid user_id for path: {user_id!r}")
+    if ".." in uid or "/" in uid or "\\" in uid:
+        raise ValueError(f"unsafe user_id: {user_id!r}")
+    return uid
+
+
+def make_result_uri(user_id: str, task_id: int) -> str:
+    uid = assert_safe_user_id(str(user_id))
+    return f"by_user/{uid}/task_{int(task_id)}"
+
+
+def dir_size(path: str) -> int:
+    total = 0
+    if not os.path.isdir(path):
+        return 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                total += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total
+
+
+def delete_result_dir(result_uri: str | None, result_dir: str) -> bool:
+    """删除结果目录。uri 为空或不存在视为成功。返回是否实际删过目录。"""
+    if not result_uri:
+        return False
+    if not str(result_uri).startswith("by_user/"):
+        log.warning("refuse delete non-by_user uri: %s", result_uri)
+        return False
+    path = os.path.join(result_dir, result_uri)
+    if not os.path.isdir(path):
+        return False
+    try:
+        shutil.rmtree(path)
+        parent = os.path.dirname(path)
+        try:
+            if os.path.isdir(parent) and not os.listdir(parent):
+                os.rmdir(parent)
+        except OSError:
+            pass
+        return True
+    except Exception:
+        log.exception("rmtree failed: %s", path)
+        return False
 
 
 def build_result_summary(data: dict) -> dict:
-    """从 data 提取摘要。优先 metrics；trades/ec 可为 list 或仅计数。"""
     m = data.get("metrics") or {}
     ec = data.get("equity_curve")
     trades = data.get("trades")
@@ -52,24 +105,15 @@ def build_result_summary(data: dict) -> dict:
     }
 
 
-def persist(task_id: int, data: dict, result_dir: str) -> tuple[dict, str]:
-    """将回测结果写入 Parquet 文件，返回 (summary, uri)。
-
-    Args:
-        task_id: 任务 ID
-        data: 回测完整结果字典
-        result_dir: 结果根目录
-
-    Returns:
-        (summary_dict, relative_uri)
-    """
-    uri = f"task_{task_id}"
+def persist(task_id: int, data: dict, result_dir: str, *, user_id: str) -> tuple[dict, str, int]:
+    """写 Parquet，返回 (summary, uri, bytes)。"""
+    uri = make_result_uri(user_id, task_id)
     task_dir = os.path.join(result_dir, uri)
     os.makedirs(task_dir, exist_ok=True)
 
-    # 写 meta.json（formula、日期、metrics 等元数据）
     meta = {
         "task_id": task_id,
+        "user_id": str(user_id),
         "formula": data.get("formula"),
         "start_date": data.get("start_date"),
         "signal_end_date": data.get("signal_end_date"),
@@ -83,7 +127,6 @@ def persist(task_id: int, data: dict, result_dir: str) -> tuple[dict, str]:
     except Exception:
         log.exception("Failed to write meta.json for task %s", task_id)
 
-    # 写 Parquet 文件
     for name in ARTIFACT_NAMES:
         rows = data.get(name)
         if not rows:
@@ -96,24 +139,27 @@ def persist(task_id: int, data: dict, result_dir: str) -> tuple[dict, str]:
             log.exception("Failed to write %s for task %s", name, task_id)
 
     summary = build_result_summary(data)
-    return summary, uri
+    nbytes = dir_size(task_dir)
+    return summary, uri, nbytes
 
 
 def persist_frames(
     task_id: int,
     *,
+    user_id: str,
     result_dir: str,
     meta: dict,
     equity_curve: pl.DataFrame | None = None,
     trades: pl.DataFrame | None = None,
     positions_daily: pl.DataFrame | None = None,
     summary: dict | None = None,
-) -> tuple[dict, str]:
-    """不经 list[dict]，直接从 DataFrame 写 Parquet。"""
-    uri = f"task_{task_id}"
+) -> tuple[dict, str, int]:
+    """不经 list[dict]，直接从 DataFrame 写 Parquet。返回 (summary, uri, bytes)。"""
+    uri = make_result_uri(user_id, task_id)
     task_dir = os.path.join(result_dir, uri)
     os.makedirs(task_dir, exist_ok=True)
 
+    meta = {**meta, "task_id": task_id, "user_id": str(user_id)}
     try:
         with open(os.path.join(task_dir, "meta.json"), "w") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
@@ -145,11 +191,11 @@ def persist_frames(
             "trades": trades.height if trades is not None else 0,
             "metrics": meta.get("metrics") or {},
         })
-    return summary, uri
+    nbytes = dir_size(task_dir)
+    return summary, uri, nbytes
 
 
 def load_part(result_uri: str, name: str, result_dir: str) -> Optional[pl.DataFrame]:
-    """按名加载单个 Parquet 文件。"""
     if name not in ARTIFACT_NAMES:
         raise ValueError(f"Unknown artifact: {name}")
     path = os.path.join(result_dir, result_uri, f"{name}.parquet")
@@ -163,18 +209,13 @@ def load_part(result_uri: str, name: str, result_dir: str) -> Optional[pl.DataFr
 
 
 def load_as_legacy_json(result_uri: str, result_dir: str) -> dict:
-    """过渡兼容：读 Parquet 拼回旧 JSON 形状。"""
     meta_path = os.path.join(result_dir, result_uri, "meta.json")
     meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
-
     result = dict(meta)
     for name in ARTIFACT_NAMES:
         df = load_part(result_uri, name, result_dir)
-        if df is not None:
-            result[name] = df.to_dicts()
-        else:
-            result[name] = []
+        result[name] = df.to_dicts() if df is not None else []
     return result

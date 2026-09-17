@@ -31,6 +31,8 @@ export async function GET(
 
   const qs = new URLSearchParams(sp);
   qs.set('name', name);
+  qs.set('user_id', auth.user.userId);
+  if (auth.user.role) qs.set('role', auth.user.role);
 
   const url = `${NODE1_URL}/internal/tasks/${taskId}/artifact?${qs}`;
 

@@ -45,14 +45,14 @@ def test_persist_frames_creates_parquet():
     ec, trades = _make_sample_frames()
     meta = {"formula": "CLOSE > MA(CLOSE, 20)", "metrics": {"total_return": 0.06}}
     with tempfile.TemporaryDirectory() as tmpdir:
-        summary, uri = persist_frames(
-            42, result_dir=tmpdir, meta=meta,
+        summary, uri, _nbytes = persist_frames(
+            42, user_id="test-user", result_dir=tmpdir, meta=meta,
             equity_curve=ec, trades=trades, positions_daily=None,
         )
-        assert uri == "task_42"
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "meta.json"))
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "equity_curve.parquet"))
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "trades.parquet"))
+        assert uri == "by_user/test-user/task_42"
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "meta.json"))
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "equity_curve.parquet"))
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "trades.parquet"))
         assert summary["n_trades"] == 1
         assert summary["final_equity"] == 10_636_942.0
 
@@ -61,7 +61,7 @@ def test_persist_frames_roundtrip():
     ec, trades = _make_sample_frames()
     meta = {"formula": "test"}
     with tempfile.TemporaryDirectory() as tmpdir:
-        _, uri = persist_frames(1, result_dir=tmpdir, meta=meta, equity_curve=ec, trades=trades)
+        _, uri, _ = persist_frames(1, user_id="test-user", result_dir=tmpdir, meta=meta, equity_curve=ec, trades=trades)
         df = load_part(uri, "trades", tmpdir)
         assert df is not None
         assert df.height == 1

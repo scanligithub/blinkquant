@@ -70,7 +70,8 @@ export default function Home() {
     canRunBacktest, 
     idleNodeCount,
     submitTask,
-    cancelTask 
+    cancelTask,
+    deleteTask,
   } = useCluster();
   
   const [isFullScreen, setIsFullScreen] = useState(false);

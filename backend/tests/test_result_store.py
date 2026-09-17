@@ -44,24 +44,24 @@ def test_build_result_summary():
 def test_build_result_summary_empty():
     summary = build_result_summary({})
     assert summary["final_equity"] is None
-    assert summary["n_trades"] == 0
+    assert summary["n_trades"] is None
 
 
 def test_persist_creates_files():
     data = _make_sample_data()
     with tempfile.TemporaryDirectory() as tmpdir:
-        summary, uri = persist(42, data, tmpdir)
-        assert uri == "task_42"
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "meta.json"))
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "equity_curve.parquet"))
-        assert os.path.exists(os.path.join(tmpdir, "task_42", "trades.parquet"))
+        summary, uri, _nbytes = persist(42, data, tmpdir, user_id="test-user")
+        assert uri == "by_user/test-user/task_42"
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "meta.json"))
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "equity_curve.parquet"))
+        assert os.path.exists(os.path.join(tmpdir, "by_user/test-user/task_42", "trades.parquet"))
         assert summary["final_equity"] == 10_636_942
 
 
 def test_load_part_roundtrip():
     data = _make_sample_data()
     with tempfile.TemporaryDirectory() as tmpdir:
-        _, uri = persist(1, data, tmpdir)
+        _, uri, _ = persist(1, data, tmpdir, user_id="test-user")
         df = load_part(uri, "trades", tmpdir)
         assert df is not None
         assert df.height == 2
@@ -71,7 +71,7 @@ def test_load_part_roundtrip():
 def test_load_as_legacy_json():
     data = _make_sample_data()
     with tempfile.TemporaryDirectory() as tmpdir:
-        _, uri = persist(2, data, tmpdir)
+        _, uri, _ = persist(2, data, tmpdir, user_id="test-user")
         legacy = load_as_legacy_json(uri, tmpdir)
         assert "equity_curve" in legacy
         assert "trades" in legacy
