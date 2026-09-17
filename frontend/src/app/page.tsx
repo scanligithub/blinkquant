@@ -832,7 +832,7 @@ setDailyDataCache(dailyData);
                       summary={backtestResult.summary}
                     />
                   )}
-                  <TaskList />
+                  <TaskList isAdmin={user?.role === 'admin'} />
                 </div>
               ) : (
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">

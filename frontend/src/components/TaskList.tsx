@@ -86,7 +86,7 @@ function DownloadMenu({ taskId }: { taskId: number }) {
   );
 }
 
-export function TaskList() {
+export function TaskList({ isAdmin = false }: { isAdmin?: boolean }) {
   const { myTasks, cancelTask, deleteTask } = useCluster();
 
   if (myTasks.length === 0) {
@@ -100,7 +100,7 @@ export function TaskList() {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs font-medium text-gray-500 mb-2">
-        <span>我的任务</span>
+        <span>{isAdmin ? "全部任务" : "我的任务"}</span>
         <span className="text-gray-400">共 {myTasks.length} 个</span>
       </div>
       <div className="overflow-x-auto">
@@ -176,40 +176,38 @@ export function TaskList() {
                   {task.created_at ? new Date(task.created_at).toLocaleString() : "-"}
                 </td>
                 <td className="py-2 px-2 text-right">
-                  {(task.status === "running" || task.status === "queued" || task.status === "pending") && (
-                    <button
-                      onClick={() => cancelTask(task.id)}
-                      className="text-xs text-red-600 hover:text-red-800 underline"
-                    >
-                      取消
-                    </button>
-                  )}
-                  {(task.status === "done" || task.status === "failed" || task.status === "cancelled" || task.status === "preempted") && (
+                  <div className="flex items-center justify-end gap-2">
+                    {(task.status === "running" || task.status === "queued" || task.status === "pending") && (
+                      <button
+                        onClick={() => cancelTask(task.id)}
+                        className="text-xs text-red-600 hover:text-red-800 underline"
+                      >
+                        取消
+                      </button>
+                    )}
                     <button
                       onClick={() => {
-                        if (confirm('确认删除此任务？')) deleteTask(task.id);
+                        if (confirm('将永久删除该任务及结果文件，不可恢复。是否继续？')) deleteTask(task.id);
                       }}
-                      className="text-xs text-red-600 hover:text-red-800 underline ml-1"
+                      className="text-xs text-red-600 hover:text-red-800 underline"
                     >
                       删除
                     </button>
-                  )}
-                  {task.status === "done" && task.task_type === "backtest" && task.result_uri ? (
-                    <div className="flex items-center gap-1 justify-end">
-                      <button
-                        onClick={() => {
-                          window.dispatchEvent(new CustomEvent('openBacktestResult', { detail: { taskId: task.id, summary: task.result_summary } }));
-                        }}
-                        className="text-xs text-blue-600 hover:text-blue-800 underline"
-                      >
-                        查看结果
-                      </button>
-                      <span className="text-gray-300">|</span>
-                      <DownloadMenu taskId={task.id} />
-                    </div>
-                  ) : (
-                    <span className="text-gray-400">-</span>
-                  )}
+                    {task.status === "done" && task.task_type === "backtest" && task.result_uri && (
+                      <>
+                        <button
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('openBacktestResult', { detail: { taskId: task.id, summary: task.result_summary } }));
+                          }}
+                          className="text-xs text-blue-600 hover:text-blue-800 underline"
+                        >
+                          查看结果
+                        </button>
+                        <span className="text-gray-300">|</span>
+                        <DownloadMenu taskId={task.id} />
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

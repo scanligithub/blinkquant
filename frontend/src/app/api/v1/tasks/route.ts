@@ -22,12 +22,11 @@ async function forwardToNode1(path: string, options: RequestInit) {
 }
 
 export async function POST(req: NextRequest) {
-  const authErr = await requireAuth(req);
-  if (authErr.status !== 200) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
+  const auth = await requireAuth(req);
+  if (auth.status !== 200) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: auth.status });
   }
 
-  const auth = await requireAuth(req);
   const userId = auth.user?.userId;
   if (!userId) {
     return NextResponse.json({ error: 'User not found' }, { status: 401 });
@@ -59,21 +58,26 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const authErr = await requireAuth(req);
-  if (authErr.status !== 200) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: authErr.status });
+  const auth = await requireAuth(req);
+  if (auth.status !== 200) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: auth.status });
   }
 
-  const auth = await requireAuth(req);
   const userId = auth.user?.userId;
   if (!userId) {
     return NextResponse.json({ error: 'User not found' }, { status: 401 });
   }
 
   // Forward to Node1 with query params
+  // admin 不传 user_id → 后端返回全站任务（routes.py list_tasks admin 旁路）
   const searchParams = new URLSearchParams();
-  searchParams.set('user_id', userId);
-  
+  if (auth.user?.role !== 'admin') {
+    searchParams.set('user_id', userId);
+  }
+  if (auth.user?.role) {
+    searchParams.set('role', auth.user.role);
+  }
+
   return forwardToNode1(`/tasks?${searchParams.toString()}`, {
     method: 'GET',
   });

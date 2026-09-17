@@ -718,8 +718,11 @@ class ClusterScheduler:
     async def _enforce_user_quota(self, user_id: str, *, keep_task_id: int) -> list[int]:
         """超 2GB 则删最旧任务（文件+行），不删 keep_task_id。返回被删 id 列表。"""
         from .db import fetch, execute
-        from .config import RESULT_DIR, RESULT_QUOTA_BYTES_PER_USER
+        from .config import RESULT_DIR, RESULT_QUOTA_BYTES_PER_USER, ADMIN_USER_IDS
         from .result_store import delete_result_dir
+
+        if user_id in ADMIN_USER_IDS:
+            return []
 
         rows = await fetch(
             "SELECT COALESCE(SUM(result_bytes), 0) AS used FROM task_queue "

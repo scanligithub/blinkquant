@@ -99,6 +99,11 @@ RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(os.path.dirname(SCHEDULER_DB_P
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
 RESULT_QUOTA_BYTES_PER_USER = int(os.getenv("RESULT_QUOTA_BYTES_PER_USER", str(2 * 1024**3)))
 
+# admin 免配额：逗号分隔的 user_id (UUID) 集合；为空则全员走 GC
+ADMIN_USER_IDS = frozenset(
+    x.strip() for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()
+)
+
 class TaskPriority(int, Enum):
     LOW    = -10
     NORMAL = 0

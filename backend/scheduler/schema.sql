@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS task_queue (
     cluster_job_id  TEXT,
     result          TEXT,
     result_summary  TEXT,          -- JSON: {total_return, max_drawdown, n_trades, ...}
-    result_uri      TEXT,          -- 相对路径: task_{id}/
+    result_uri      TEXT,          -- by_user/{user_id}/task_{id}
+    result_bytes    INTEGER,       -- 结果目录总字节
     error           TEXT,
     created_at      TEXT DEFAULT (datetime('now')),
     queued_at       TEXT,
