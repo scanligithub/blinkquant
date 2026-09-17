@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useCluster, Task } from "@/hooks/useCluster";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -26,6 +27,64 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   selection: "选股",
   backtest: "回测",
 };
+
+function DownloadMenu({ taskId }: { taskId: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="text-xs text-gray-500 hover:text-gray-700"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        下载
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg z-20 py-1 min-w-[140px]">
+          {(['equity_curve', 'trades', 'positions_daily'] as const).map((name) => (
+            <button
+              key={name}
+              type="button"
+              className="block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+              onClick={async () => {
+                const { downloadArtifact } = await import('@/lib/backtestArtifacts');
+                await downloadArtifact(taskId, name);
+                setOpen(false);
+              }}
+            >
+              {name === 'equity_curve'
+                ? '权益曲线.parquet'
+                : name === 'trades'
+                  ? '成交.parquet'
+                  : '持仓.parquet'}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function TaskList() {
   const { myTasks, cancelTask } = useCluster();
@@ -135,25 +194,7 @@ export function TaskList() {
                         查看结果
                       </button>
                       <span className="text-gray-300">|</span>
-                      <div className="relative group">
-                        <button className="text-xs text-gray-500 hover:text-gray-700">
-                          下载
-                        </button>
-                        <div className="absolute right-0 top-full mt-1 hidden group-hover:block bg-white border rounded-lg shadow-lg z-10 py-1 min-w-[140px]">
-                          {(['equity_curve', 'trades', 'positions_daily'] as const).map((name) => (
-                            <button
-                              key={name}
-                              onClick={async () => {
-                                const { downloadArtifact } = await import('@/lib/backtestArtifacts');
-                                downloadArtifact(task.id, name);
-                              }}
-                              className="block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
-                            >
-                              {name === 'equity_curve' ? '权益曲线.parquet' : name === 'trades' ? '成交.parquet' : '持仓.parquet'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      <DownloadMenu taskId={task.id} />
                     </div>
                   ) : (
                     <span className="text-gray-400">-</span>

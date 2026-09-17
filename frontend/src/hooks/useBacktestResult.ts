@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   downloadArtifact,
   loadEquityCurve,
@@ -19,9 +19,16 @@ export function useBacktestResult(taskId: number | null) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setEquity(null);
+    setTrades(null);
+    setPositions(null);
+    setError(null);
+    setLoading(null);
+  }, [taskId]);
+
   const loadEquity = useCallback(async () => {
     if (taskId == null) return;
-    if (equity) return equity;
     setLoading('equity_curve');
     setError(null);
     try {
@@ -34,11 +41,10 @@ export function useBacktestResult(taskId: number | null) {
     } finally {
       setLoading(null);
     }
-  }, [taskId, equity]);
+  }, [taskId]);
 
   const loadTradesTab = useCallback(async () => {
     if (taskId == null) return;
-    if (trades) return trades;
     setLoading('trades');
     setError(null);
     try {
@@ -51,11 +57,10 @@ export function useBacktestResult(taskId: number | null) {
     } finally {
       setLoading(null);
     }
-  }, [taskId, trades]);
+  }, [taskId]);
 
   const loadPositionsTab = useCallback(async () => {
     if (taskId == null) return;
-    if (positions) return positions;
     setLoading('positions_daily');
     setError(null);
     try {
@@ -68,7 +73,7 @@ export function useBacktestResult(taskId: number | null) {
     } finally {
       setLoading(null);
     }
-  }, [taskId, positions]);
+  }, [taskId]);
 
   const download = useCallback(
     (name: ArtifactName) => {
@@ -77,13 +82,6 @@ export function useBacktestResult(taskId: number | null) {
     },
     [taskId]
   );
-
-  const reset = useCallback(() => {
-    setEquity(null);
-    setTrades(null);
-    setPositions(null);
-    setError(null);
-  }, []);
 
   return {
     equity,
@@ -95,6 +93,5 @@ export function useBacktestResult(taskId: number | null) {
     loadTradesTab,
     loadPositionsTab,
     download,
-    reset,
   };
 }

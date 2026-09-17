@@ -62,6 +62,10 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
     : (summary?.final_equity ?? 0);
 
   useEffect(() => {
+    setTab('equity');
+  }, [taskId]);
+
+  useEffect(() => {
     if (taskId && tab === 'equity') {
       hook.loadEquity().catch(() => {});
     }
