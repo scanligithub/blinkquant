@@ -321,6 +321,19 @@ useEffect(() => {
     localStorage.removeItem('backtestTime');
   }, []);
 
+  // Listen for openBacktestResult from TaskList
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.taskId) {
+        setSidebarTab('backtest');
+        setBacktestResult({ taskId: detail.taskId, summary: detail.summary });
+      }
+    };
+    window.addEventListener('openBacktestResult', handler);
+    return () => window.removeEventListener('openBacktestResult', handler);
+  }, []);
+
   // Safety: force reset backtestLoading if stuck > 2 minutes
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -420,7 +433,13 @@ const POLL_TIMEOUT = 60000;
             const task = await res.json();
             
             if (task.status === 'done') {
-              setBacktestResult(task.result);
+              if (task.result) {
+                setBacktestResult({ legacy: task.result });
+              } else if (task.result_uri) {
+                setBacktestResult({ taskId: task.id, summary: task.result_summary });
+              } else {
+                setBacktestResult({ taskId: task.id, summary: task.result_summary });
+              }
               return;
             }
             if (task.status === 'failed') {
@@ -805,7 +824,13 @@ setDailyDataCache(dailyData);
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
                   <ClusterStatusBar />
                   <BacktestPanel initialFormula={formula} onRun={handleBacktest} loading={backtestLoading} />
-                  {backtestResult && <BacktestResults result={backtestResult} />}
+                  {backtestResult && (
+                    <BacktestResults
+                      result={backtestResult.legacy}
+                      taskId={backtestResult.taskId}
+                      summary={backtestResult.summary}
+                    />
+                  )}
                   <TaskList />
                 </div>
               ) : (
@@ -839,7 +864,11 @@ setDailyDataCache(dailyData);
               <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full p-4 overflow-y-auto">
                 <ClusterStatusBar />
                 {backtestResult ? (
-                  <BacktestResults result={backtestResult} />
+                  <BacktestResults
+                    result={backtestResult.legacy}
+                    taskId={backtestResult.taskId}
+                    summary={backtestResult.summary}
+                  />
                 ) : (
                   <div className="h-full flex items-center justify-center text-slate-400">
                     {backtestLoading ? '回测计算中...' : '设置参数后点击"运行回测"'}

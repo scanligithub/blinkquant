@@ -124,6 +124,37 @@ export function TaskList() {
                     >
                       取消
                     </button>
+                  ) : task.status === "done" && task.task_type === "backtest" && task.result_uri ? (
+                    <div className="flex items-center gap-1 justify-end">
+                      <button
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('openBacktestResult', { detail: { taskId: task.id, summary: task.result_summary } }));
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        查看结果
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <div className="relative group">
+                        <button className="text-xs text-gray-500 hover:text-gray-700">
+                          下载
+                        </button>
+                        <div className="absolute right-0 top-full mt-1 hidden group-hover:block bg-white border rounded-lg shadow-lg z-10 py-1 min-w-[140px]">
+                          {(['equity_curve', 'trades', 'positions_daily'] as const).map((name) => (
+                            <button
+                              key={name}
+                              onClick={async () => {
+                                const { downloadArtifact } = await import('@/lib/backtestArtifacts');
+                                downloadArtifact(task.id, name);
+                              }}
+                              className="block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+                            >
+                              {name === 'equity_curve' ? '权益曲线.parquet' : name === 'trades' ? '成交.parquet' : '持仓.parquet'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   ) : (
                     <span className="text-gray-400">-</span>
                   )}
