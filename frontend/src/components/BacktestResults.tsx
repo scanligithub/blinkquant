@@ -43,6 +43,7 @@ interface Summary {
   total_return?: number;
   max_drawdown?: number;
   n_trades?: number;
+  n_positions?: number;
   final_equity?: number;
 }
 
@@ -144,7 +145,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
   const positionsData = isLegacy ? result!.positions_daily : hook.positions;
 
   const tradesCount = isLegacy ? result!.trades.length : hook.tradesTotal || summary?.n_trades || 0;
-  const positionsCount = isLegacy ? result!.positions_daily.length : hook.positionsTotal || 0;
+  const positionsCount = isLegacy ? result!.positions_daily.length : hook.positionsTotal || summary?.n_positions || 0;
 
   return (
     <div className="space-y-3">

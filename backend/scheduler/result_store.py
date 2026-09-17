@@ -92,6 +92,15 @@ def build_result_summary(data: dict) -> dict:
         elif isinstance(trades, dict):
             n_trades = trades.get("n")
 
+    positions = data.get("positions_daily")
+    n_positions = None
+    if isinstance(positions, list):
+        n_positions = len(positions)
+    elif isinstance(positions, int):
+        n_positions = positions
+    elif isinstance(positions, dict):
+        n_positions = positions.get("n")
+
     if final is None:
         final = data.get("final_equity") or m.get("final_equity")
 
@@ -100,6 +109,7 @@ def build_result_summary(data: dict) -> dict:
         "total_return": m.get("total_return"),
         "max_drawdown": m.get("max_drawdown"),
         "n_trades": n_trades,
+        "n_positions": n_positions,
         "n_equity_points": n_equity,
         "initial_cash": data.get("initial_cash"),
     }
