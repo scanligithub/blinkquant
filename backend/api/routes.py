@@ -187,15 +187,15 @@ def _build_summary_from_result(req, result) -> dict:
     ec = result.equity_curve
     final = float(ec["equity"][-1]) if not ec.is_empty() else None
     m = result.metrics if isinstance(result.metrics, dict) else {}
-        return {
-            "final_equity": final,
-            "total_return": m.get("total_return"),
-            "max_drawdown": m.get("max_drawdown"),
-            "n_trades": n_trades,
-            "n_positions": result.positions_daily.height if result.positions_daily is not None else 0,
-            "n_equity_points": n_equity,
-            "initial_cash": req.initial_cash,
-        }
+    return {
+        "final_equity": final,
+        "total_return": m.get("total_return"),
+        "max_drawdown": m.get("max_drawdown"),
+        "n_trades": result.trades.height,
+        "n_positions": result.positions_daily.height if result.positions_daily is not None else 0,
+        "n_equity_points": ec.height,
+        "initial_cash": req.initial_cash,
+    }
 
 from datetime import datetime, timezone
 
