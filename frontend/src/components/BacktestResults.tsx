@@ -45,6 +45,60 @@ interface Summary {
   n_trades?: number;
   n_positions?: number;
   final_equity?: number;
+  initial_cash?: number;
+}
+
+interface TaskMeta {
+  id: number;
+  user_id: string;
+  status: string;
+  payload: {
+    formula?: string;
+    start_date?: string;
+    end_signal_date?: string;
+    signal_end_date?: string;
+    end_date?: string;
+    initial_cash?: number;
+  };
+  assigned_node?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  result_uri?: string | null;
+  result_bytes?: number | null;
+}
+
+function formatDuration(started?: string | null, finished?: string | null): string {
+  if (!started || !finished) return '—';
+  const a = Date.parse(started.includes('T') ? started : started.replace(' ', 'T') + 'Z');
+  const b = Date.parse(finished.includes('T') ? finished : finished.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return '—';
+  const sec = Math.round((b - a) / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h} 小时 ${rm} 分` : `${h} 小时`;
+}
+
+function ParamRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  mono?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[7rem_1fr] gap-2 py-1.5 border-b border-gray-50 last:border-0 text-xs">
+      <div className="text-gray-500 shrink-0">{label}</div>
+      <div className={`text-gray-800 break-all ${mono ? 'font-mono text-[11px]' : ''}`}>
+        {value ?? '—'}
+      </div>
+    </div>
+  );
 }
 
 interface BacktestResultsProps {
@@ -112,8 +166,11 @@ function PaginationBar({
 }
 
 export default function BacktestResults({ result, taskId, summary }: BacktestResultsProps) {
-  const [tab, setTab] = useState<'equity' | 'trades' | 'positions'>('equity');
+  const [tab, setTab] = useState<'equity' | 'trades' | 'positions' | 'params'>('equity');
   const hook = useBacktestResult(taskId ?? null);
+  const [taskMeta, setTaskMeta] = useState<TaskMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   const isLegacy = !!result && !taskId;
   const m = isLegacy ? result!.metrics : summary;
@@ -123,6 +180,32 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
 
   useEffect(() => {
     setTab('equity');
+    setTaskMeta(null);
+    setMetaError(null);
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    let cancelled = false;
+    setMetaLoading(true);
+    setMetaError(null);
+    fetch(`/api/v1/tasks/${taskId}`, { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setTaskMeta(data as TaskMeta);
+      })
+      .catch((e) => {
+        if (!cancelled) setMetaError(e?.message || '加载任务参数失败');
+      })
+      .finally(() => {
+        if (!cancelled) setMetaLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [taskId]);
 
   useEffect(() => {
@@ -169,15 +252,22 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
       </div>
 
       <div className="flex gap-1 text-xs">
-        {(['equity', 'trades', 'positions'] as const).map((t) => (
+        {(
+          [
+            { id: 'equity' as const, label: '权益曲线' },
+            { id: 'trades' as const, label: `交易 (${tradesCount.toLocaleString()})` },
+            { id: 'positions' as const, label: `持仓 (${positionsCount.toLocaleString()})` },
+            { id: 'params' as const, label: '回测参数' },
+          ] as const
+        ).map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={t.id}
+            onClick={() => setTab(t.id)}
             className={`px-3 py-1.5 rounded-lg ${
-              tab === t ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'
+              tab === t.id ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'
             }`}
           >
-            {t === 'equity' ? '权益曲线' : t === 'trades' ? `交易 (${tradesCount.toLocaleString()})` : `持仓 (${positionsCount.toLocaleString()})`}
+            {t.label}
           </button>
         ))}
       </div>
@@ -240,6 +330,70 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
           )}
           {positionsData.length > 0 && <PositionsTable positions={positionsData} />}
         </>
+      )}
+      {tab === 'params' && (
+        <div className="bg-gray-50 rounded-lg px-3 py-2">
+          {metaLoading && (
+            <div className="text-center text-gray-400 text-sm py-4">加载回测参数…</div>
+          )}
+          {metaError && <div className="text-xs text-red-500 py-2">{metaError}</div>}
+          {!metaLoading && !metaError && (
+            <div>
+              {(() => {
+                const p = taskMeta?.payload;
+                const formula = p?.formula ?? (isLegacy ? result!.formula : undefined);
+                const start = p?.start_date ?? (isLegacy ? result!.start_date : undefined);
+                const end =
+                  p?.end_signal_date ??
+                  p?.signal_end_date ??
+                  p?.end_date ??
+                  (isLegacy ? result!.signal_end_date : undefined);
+                const cash =
+                  p?.initial_cash ??
+                  summary?.initial_cash ??
+                  (isLegacy ? result!.initial_cash : undefined);
+                const period = start && end ? `${start} → ${end}` : start || end || '—';
+                const duration = taskMeta
+                  ? formatDuration(taskMeta.started_at, taskMeta.finished_at)
+                  : '—';
+                return (
+                  <>
+                    <ParamRow label="策略公式" value={formula || '—'} mono />
+                    <ParamRow label="回测区间" value={period} />
+                    <ParamRow
+                      label="初始资金"
+                      value={
+                        cash != null
+                          ? Number(cash).toLocaleString(undefined, { maximumFractionDigits: 0 })
+                          : '—'
+                      }
+                    />
+                    <ParamRow label="任务 ID" value={taskId ?? taskMeta?.id ?? '—'} mono />
+                    <ParamRow label="发起用户" value={taskMeta?.user_id ?? '—'} mono />
+                    <ParamRow label="执行节点" value={taskMeta?.assigned_node ?? '—'} />
+                    <ParamRow label="任务状态" value={taskMeta?.status ?? (isLegacy ? 'legacy' : '—')} />
+                    <ParamRow label="开始时间" value={taskMeta?.started_at ?? '—'} />
+                    <ParamRow label="结束时间" value={taskMeta?.finished_at ?? '—'} />
+                    <ParamRow label="运行耗时" value={duration} />
+                    <ParamRow
+                      label="成交 / 持仓"
+                      value={`${(summary?.n_trades ?? tradesCount).toLocaleString()} 笔 / ${(summary?.n_positions ?? positionsCount).toLocaleString()} 行`}
+                    />
+                    {taskMeta?.result_uri && (
+                      <ParamRow label="结果路径" value={taskMeta.result_uri} mono />
+                    )}
+                    {taskMeta?.result_bytes != null && (
+                      <ParamRow
+                        label="结果大小"
+                        value={`${(taskMeta.result_bytes / 1024).toFixed(1)} KB`}
+                      />
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
       )}
 
       {hook.error && (
