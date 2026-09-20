@@ -14,8 +14,16 @@ from .indicator_registry import INDICATOR_FUNCS
 logger = logging.getLogger(__name__)
 
 # Columns to keep when loading kline parquets (P2-MEM: column pruning)
-KEEP_COLS = ["date", "code", "open", "high", "low", "close",
-             "volume", "amount", "adjustFactor", "pctChg", "isST"]
+# Aligned with security.py BlinkParser.fields
+KEEP_COLS = [
+    # 行情
+    "date", "code", "open", "high", "low", "close",
+    "volume", "amount", "adjustFactor", "pctChg", "isST",
+    # 基本面
+    "peTTM", "pbMRQ", "turn",
+    "total_mv", "float_mv", "total_shares", "float_shares",
+    "forecast_yoy", "is_forecast_good", "is_forecast_bad",
+]
 
 # 主板 ST 涨跌幅与普通股并轨日：此前主板 ST 为 5%，此后统一 10%（见 security.py 板别注释）
 MAIN_BOARD_ST_UNIFY_DATE = datetime.date(2026, 7, 6)

@@ -112,8 +112,13 @@ class DifferentialValidator:
         """Run BlinkQuant backtest."""
         from huggingface_hub import hf_hub_download
 
-        KEEP_COLS = ["date", "code", "open", "high", "low", "close",
-                     "volume", "amount", "adjustFactor", "pctChg", "isST"]
+        KEEP_COLS = [
+            "date", "code", "open", "high", "low", "close",
+            "volume", "amount", "adjustFactor", "pctChg", "isST",
+            "peTTM", "pbMRQ", "turn",
+            "total_mv", "float_mv", "total_shares", "float_shares",
+            "forecast_yoy", "is_forecast_good", "is_forecast_bad",
+        ]
 
         dm = DataManager()
         token = self.hf_token
