@@ -1,6 +1,6 @@
 "use client";
 
-import { useCluster, NodeStatus } from "@/hooks/useCluster";
+import { useCluster, NodeStatus, QueueItem } from "@/hooks/useCluster";
 
 const STATUS_COLORS: Record<string, string> = {
   idle: "bg-green-100 text-green-700",
@@ -10,48 +10,44 @@ const STATUS_COLORS: Record<string, string> = {
   maintenance: "bg-gray-100 text-gray-500",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  idle: "空闲",
-  running: "运行中",
-  draining: "让路中",
-  unhealthy: "异常",
-  maintenance: "维护",
-};
-
-const TASK_TYPE_LABELS: Record<string, string> = {
-  selection: "选股",
-  backtest: "回测",
-};
-
 export function ClusterStatusBar() {
-  const { nodes, queueStats, canRunSelection, canRunBacktest, idleNodeCount } = useCluster();
+  const { nodes, queues, queueStats, canRunSelection, canRunBacktest, idleNodeCount } = useCluster();
+
+  const slotQueue = {
+    node1: queues?.selection,
+    node2: queues?.backtest,
+    node3: queues?.running,
+  };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 p-3 bg-gray-50 rounded-lg border">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-gray-500">集群:</span>
+    <div className="space-y-2 p-3 bg-gray-50 rounded-lg border">
+      <div className="flex flex-wrap gap-2">
         {nodes.map((node) => (
-          <NodeBadge key={node.node_id} node={node} />
+          <NodeCard
+            key={node.node_id}
+            node={node}
+            queue={slotQueue[node.node_id as keyof typeof slotQueue]}
+          />
         ))}
       </div>
 
-      <div className="flex items-center gap-2 ml-auto flex-wrap">
-        <div className="text-xs text-gray-500 flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <div className="flex items-center gap-2">
           <span className={`px-2 py-0.5 rounded ${queueStats.pending_selection > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
-            选股队列: {queueStats.pending_selection}
+            选股: {queueStats.pending_selection}
           </span>
           <span className={`px-2 py-0.5 rounded ${queueStats.pending_backtest > 0 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-400'}`}>
-            回测队列: {queueStats.pending_backtest}
+            回测: {queueStats.pending_backtest}
           </span>
           <span className={`px-2 py-0.5 rounded ${queueStats.running > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
             运行中: {queueStats.running}
           </span>
         </div>
 
-        <div className="flex gap-1">
+        <div className="flex gap-1 ml-auto">
           <button
             disabled={!canRunSelection}
-            title={canRunSelection ? "" : `需要 3 个节点全部空闲 (当前 ${idleNodeCount}/3 空闲)`}
+            title={canRunSelection ? "" : `需要 3 个节点全部空闲 (当前 ${idleNodeCount}/3)`}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
               canRunSelection
                 ? "bg-blue-600 text-white hover:bg-blue-700"
@@ -62,7 +58,7 @@ export function ClusterStatusBar() {
           </button>
           <button
             disabled={!canRunBacktest}
-            title={canRunBacktest ? "" : `需要至少 1 个节点空闲 (当前 ${idleNodeCount}/3 空闲)`}
+            title={canRunBacktest ? "" : `需要至少 1 个节点空闲 (当前 ${idleNodeCount}/3)`}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
               canRunBacktest
                 ? "bg-purple-600 text-white hover:bg-purple-700"
@@ -77,22 +73,38 @@ export function ClusterStatusBar() {
   );
 }
 
-function NodeBadge({ node }: { node: NodeStatus }) {
+function NodeCard({ node, queue }: { node: NodeStatus; queue?: { title: string; count: number; items: QueueItem[] } }) {
   const colorClass = STATUS_COLORS[node.status] || "bg-gray-100 text-gray-700";
-  const label = STATUS_LABELS[node.status] || node.status;
 
   return (
-    <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono ${colorClass}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
-      <span>{node.name}</span>
-      <span>{label}</span>
-      {node.status === "running" && node.task_type && (
-        <>
-          <span className="opacity-60">·</span>
-          <span>{TASK_TYPE_LABELS[node.task_type] || node.task_type}</span>
-          {node.current_task_id && <span className="opacity-60">#{node.current_task_id}</span>}
-        </>
+    <div className={`flex-1 min-w-[200px] rounded-lg border p-2.5 text-xs ${colorClass}`}>
+      <div className="flex items-center gap-1.5 font-medium mb-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+        <span>{node.name}</span>
+        <span className="opacity-70">·</span>
+        <span>{node.display_label || node.status}</span>
+      </div>
+
+      {queue && queue.count > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          <div className="font-medium opacity-70">{queue.title} {queue.count}</div>
+          {queue.items.map((it) => (
+            <div key={it.id} className="pl-2 opacity-80 truncate">
+              {itemLine(it)}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+function itemLine(it: QueueItem): string {
+  if (it.status === "running") {
+    const pct = it.progress_pct != null ? ` ${Math.round(it.progress_pct)}%` : "";
+    const where = it.assigned_node ? `@${it.assigned_node}` : "";
+    return `#${it.id} ${it.task_type_zh}${where}${pct}`;
+  }
+  const extra = it.date_range || it.formula_preview || "";
+  return `#${it.id} ${extra}`.trim();
 }

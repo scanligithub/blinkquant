@@ -6,10 +6,36 @@ export interface NodeStatus {
   node_id: string;
   name: string;
   status: "idle" | "running" | "draining" | "unhealthy" | "maintenance";
+  status_zh: string;
   current_task_id: number | null;
   task_type: "selection" | "backtest" | null;
-  load: number;
+  task_type_zh: string;
+  display_label: string;
   heartbeat_at: string | null;
+  last_error: string | null;
+  generation: number | null;
+}
+
+export interface QueueItem {
+  id: number;
+  task_type: string;
+  task_type_zh: string;
+  status: string;
+  user_id: string | null;
+  assigned_node: string | null;
+  priority: number | null;
+  progress_pct: number | null;
+  formula_preview: string | null;
+  date_range: string | null;
+  created_at: string | null;
+  queued_at: string | null;
+  started_at: string | null;
+}
+
+export interface QueueSection {
+  title: string;
+  count: number;
+  items: QueueItem[];
 }
 
 export interface QueueStats {
@@ -21,6 +47,11 @@ export interface QueueStats {
 export interface ClusterState {
   nodes: NodeStatus[];
   queueStats: QueueStats;
+  queues?: {
+    selection: QueueSection;
+    backtest: QueueSection;
+    running: QueueSection;
+  };
 }
 
 export interface Task {
@@ -145,6 +176,7 @@ export function useCluster() {
   return {
     nodes: clusterState.nodes,
     queueStats: clusterState.queueStats,
+    queues: clusterState.queues,
     myTasks,
     loading,
     canRunSelection,
