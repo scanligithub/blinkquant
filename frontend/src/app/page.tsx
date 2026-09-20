@@ -7,7 +7,6 @@ import StockSearch from '../components/StockSearch';
 import AISelectModal from '../components/AISelectModal';
 import BacktestPanel from '../components/BacktestPanel';
 import BacktestResults from '../components/BacktestResults';
-import { ClusterStatusBar } from '../components/ClusterStatusBar';
 import { TaskList } from '../components/TaskList';
 import { useCluster } from '@/hooks/useCluster';
 
@@ -101,11 +100,7 @@ export default function Home() {
   const { 
     nodes: clusterNodes, 
     queues,
-    queueStats, 
     myTasks, 
-    canRunSelection, 
-    canRunBacktest, 
-    idleNodeCount,
     submitTask,
     cancelTask,
     deleteTask,
@@ -726,11 +721,6 @@ setDailyDataCache(dailyData);
             )}
           </div>
           <div className="flex flex-col gap-3">
-            <div className="flex justify-center">
-              <div className="text-xs md:text-sm font-mono text-slate-400 bg-white px-3 py-2 rounded-lg border shadow-sm">
-                集群: {clusterStatus?.cluster_health || '连接中...'}
-              </div>
-            </div>
             <div className="flex flex-wrap justify-center gap-3">
               {clusterStatus?.nodes?.map((node: any, idx: number) => {
                 const slot = nodeIdFromHealthCard(node, idx);
@@ -896,7 +886,6 @@ setDailyDataCache(dailyData);
                 </div>
               ) : sidebarTab === 'backtest' ? (
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
-                  <ClusterStatusBar />
                   <BacktestPanel initialFormula={formula} onRun={handleBacktest} loading={backtestLoading} />
                   {backtestResult && (
                     <BacktestResults
@@ -936,7 +925,6 @@ setDailyDataCache(dailyData);
           <section className="lg:col-span-3 order-2 lg:order-2">
             {sidebarTab === 'backtest' ? (
               <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full p-4 overflow-y-auto">
-                <ClusterStatusBar />
                 {backtestResult ? (
                   <BacktestResults
                     result={backtestResult.legacy}
