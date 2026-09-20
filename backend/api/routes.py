@@ -499,31 +499,87 @@ def get_nl_meta():
 
 @router.get("/status")
 def get_node_status():
+    """
+    节点观测指标（容器视角，HF Spaces 下不代表真实配额）。
+    磁盘优先看业务目录（RESULT_DIR / 调度库所在盘），避免根分区虚高。
+    """
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
-    
-    # 获取系统级统计
     vm = psutil.virtual_memory()
-    du = psutil.disk_usage('/')
+
+    disk_path = _resolve_disk_monitor_path()
+    try:
+        du = psutil.disk_usage(disk_path)
+        disk_ok = True
+        disk_err = None
+    except Exception as e:
+        du = None
+        disk_ok = False
+        disk_err = str(e)
+
+    process_uss_gb = None
+    try:
+        full = process.memory_full_info()
+        process_uss_gb = round(full.uss / (1024**3), 2)
+    except Exception:
+        pass
 
     return {
         "node": os.getenv("NODE_INDEX"),
         "status": "healthy" if data_manager.df_daily is not None else "loading",
-        
+        "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0,
+
         # 进程内存
         "process_memory_gb": round(mem_info.rss / (1024**3), 2),
-        
-        # 系统内存状态
+        "process_uss_gb": process_uss_gb,
+
+        # 系统内存（容器视角）
         "system_memory_total_gb": round(vm.total / (1024**3), 2),
-        "system_memory_free_gb": round(vm.available / (1024**3), 2), # available 比 free 更准确反映可用内存
-        
-        # 磁盘状态
-        "disk_total_gb": round(du.total / (1024**3), 2),
-        "disk_free_gb": round(du.free / (1024**3), 2),
-        
-        # 数据量
-        "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0
+        "system_memory_available_gb": round(vm.available / (1024**3), 2),
+        "system_memory_free_gb": round(vm.available / (1024**3), 2),
+        "system_memory_percent": round(vm.percent, 1),
+
+        # 业务磁盘
+        "disk_path": disk_path,
+        "disk_total_gb": round(du.total / (1024**3), 2) if disk_ok else None,
+        "disk_free_gb": round(du.free / (1024**3), 2) if disk_ok else None,
+        "disk_percent": round(du.percent, 1) if disk_ok else None,
+        "disk_ok": disk_ok,
+        "disk_error": disk_err,
+
+        "note": "container-observed; disk is RESULT_DIR/scheduler path, not host quota",
     }
+
+
+def _resolve_disk_monitor_path() -> str:
+    candidates = []
+    result_dir = os.getenv("RESULT_DIR")
+    if not result_dir:
+        try:
+            from scheduler.config import RESULT_DIR as _RD
+            result_dir = _RD
+        except Exception:
+            result_dir = None
+    if result_dir:
+        candidates.append(result_dir)
+
+    sched_db = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
+    candidates.append(os.path.dirname(os.path.abspath(sched_db)) or "/")
+    candidates.append(os.getcwd())
+
+    for p in candidates:
+        if not p:
+            continue
+        path = os.path.abspath(p)
+        check = path
+        while check and not os.path.exists(check):
+            parent = os.path.dirname(check)
+            if parent == check:
+                break
+            check = parent
+        if check and os.path.exists(check):
+            return check
+    return "/"
 
 @router.get("/health")
 def health_check():
