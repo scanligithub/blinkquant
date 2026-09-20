@@ -397,41 +397,137 @@ async def trigger_cycle() -> dict:
     return {"ok": True, "message": "Schedule cycle triggered"}
 
 
+TASK_TYPE_ZH = {"selection": "选股", "backtest": "回测"}
+NODE_STATUS_ZH = {"idle": "空闲", "running": "运行中", "draining": "排空中", "unhealthy": "异常", "maintenance": "维护"}
+
+
+def _node_display_label(status: str, task_type: str | None, task_id: int | None) -> str:
+    st = (status or "").lower()
+    if st == "idle":
+        return "空闲"
+    if st == "running":
+        zh = TASK_TYPE_ZH.get(task_type or "", task_type or "任务")
+        return f"运行中  {zh} #{task_id}" if task_id is not None else f"运行中  {zh}"
+    base = NODE_STATUS_ZH.get(st, st or "未知")
+    if task_id is not None and task_type:
+        return f"{base}  {TASK_TYPE_ZH.get(task_type, task_type)} #{task_id}"
+    return base
+
+
+def _task_brief(row: dict) -> dict:
+    payload = row.get("payload")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    payload = payload or {}
+    formula = (payload.get("formula") or "")[:48]
+    start = payload.get("start_date") or payload.get("start")
+    end = payload.get("end_signal_date") or payload.get("end_date") or payload.get("signal_end_date")
+    range_s = f"{str(start)[:10]}→{str(end)[:10]}" if start and end else None
+    return {
+        "id": row["id"],
+        "task_type": row["task_type"],
+        "task_type_zh": TASK_TYPE_ZH.get(row["task_type"], row["task_type"]),
+        "status": row["status"],
+        "user_id": row.get("user_id"),
+        "assigned_node": row.get("assigned_node"),
+        "priority": row.get("priority"),
+        "progress_pct": row.get("progress_pct"),
+        "formula_preview": formula or None,
+        "date_range": range_s,
+        "created_at": row.get("created_at"),
+        "queued_at": row.get("queued_at"),
+        "started_at": row.get("started_at"),
+    }
+
+
 @router.get("/cluster/status", dependencies=[Depends(verify_internal_token)])
-async def get_cluster_status() -> dict:
-    """获取集群状态：节点列表 + 队列统计"""
+async def get_cluster_status(queue_limit: int = 8) -> dict:
+    limit = max(1, min(int(queue_limit), 30))
+
     nodes = await fetch("""
         SELECT node_id, name, endpoint, weight, status, current_task_id,
-               task_type, heartbeat_at, last_error
-        FROM cluster_nodes
-        ORDER BY node_id
+               task_type, heartbeat_at, last_error, generation, updated_at
+        FROM cluster_nodes ORDER BY node_id
     """)
 
     stats = await fetchrow("""
         SELECT
-            SUM(CASE WHEN status = 'pending' AND task_type = 'selection' THEN 1 ELSE 0 END) AS pending_selection,
-            SUM(CASE WHEN status = 'pending' AND task_type = 'backtest' THEN 1 ELSE 0 END) AS pending_backtest,
+            SUM(CASE WHEN status IN ('pending','queued') AND task_type='selection' THEN 1 ELSE 0 END) AS sel_q,
+            SUM(CASE WHEN status IN ('pending','queued') AND task_type='backtest' THEN 1 ELSE 0 END) AS bt_q,
             SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running
         FROM task_queue
     """)
 
+    sel_rows = await fetch("""
+        SELECT id, user_id, task_type, payload, priority, status,
+               assigned_node, progress_pct, created_at, queued_at, started_at
+        FROM task_queue
+        WHERE status IN ('pending','queued') AND task_type = 'selection'
+        ORDER BY priority DESC, created_at ASC LIMIT ?
+    """, limit)
+
+    bt_rows = await fetch("""
+        SELECT id, user_id, task_type, payload, priority, status,
+               assigned_node, progress_pct, created_at, queued_at, started_at
+        FROM task_queue
+        WHERE status IN ('pending','queued') AND task_type = 'backtest'
+        ORDER BY priority DESC, created_at ASC LIMIT ?
+    """, limit)
+
+    run_rows = await fetch("""
+        SELECT id, user_id, task_type, payload, priority, status,
+               assigned_node, progress_pct, created_at, queued_at, started_at
+        FROM task_queue
+        WHERE status = 'running'
+        ORDER BY started_at ASC LIMIT ?
+    """, limit)
+
+    node_list = []
+    for n in nodes:
+        st = n["status"] or "idle"
+        tid = n["current_task_id"]
+        tt = n["task_type"]
+        node_list.append({
+            "node_id": n["node_id"],
+            "name": n["name"],
+            "status": st,
+            "status_zh": NODE_STATUS_ZH.get(st, st),
+            "current_task_id": tid,
+            "task_type": tt,
+            "task_type_zh": TASK_TYPE_ZH.get(tt or "", tt),
+            "display_label": _node_display_label(st, tt, tid),
+            "heartbeat_at": n["heartbeat_at"],
+            "last_error": n["last_error"],
+            "generation": n.get("generation"),
+            "updated_at": n.get("updated_at"),
+        })
+
     return {
-        "nodes": [
-            {
-                "node_id": n["node_id"],
-                "name": n["name"],
-                "status": n["status"],
-                "current_task_id": n["current_task_id"],
-                "task_type": n["task_type"],
-                "heartbeat_at": n["heartbeat_at"],
-                "last_error": n["last_error"],
-            }
-            for n in nodes
-        ],
+        "nodes": node_list,
         "queueStats": {
-            "pending_selection": int(stats["pending_selection"] or 0) if stats else 0,
-            "pending_backtest": int(stats["pending_backtest"] or 0) if stats else 0,
+            "pending_selection": int(stats["sel_q"] or 0) if stats else 0,
+            "pending_backtest": int(stats["bt_q"] or 0) if stats else 0,
             "running": int(stats["running"] or 0) if stats else 0,
+        },
+        "queues": {
+            "selection": {
+                "title": "选股队列",
+                "count": int(stats["sel_q"] or 0) if stats else 0,
+                "items": [_task_brief(r) for r in sel_rows],
+            },
+            "backtest": {
+                "title": "回测队列",
+                "count": int(stats["bt_q"] or 0) if stats else 0,
+                "items": [_task_brief(r) for r in bt_rows],
+            },
+            "running": {
+                "title": "运行中",
+                "count": int(stats["running"] or 0) if stats else 0,
+                "items": [_task_brief(r) for r in run_rows],
+            },
         },
     }
 
