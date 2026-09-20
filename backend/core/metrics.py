@@ -330,3 +330,37 @@ def compute_metrics(result, initial_cash: float) -> BacktestMetrics:
             c.target_weight_mae = sum(wae_vals) / len(wae_vals)
 
     return m
+
+
+def enrich_result_metrics(result, initial_cash: float) -> dict:
+    """合并引擎轻量 metrics 与 compute_metrics 第一档字段。
+
+    不修改 result 对象；返回可 JSON 序列化的扁平 dict。
+    """
+    base = dict(result.metrics) if isinstance(result.metrics, dict) else {}
+    rich = compute_metrics(result, initial_cash)
+
+    p, t = rich.performance, rich.trading
+    out = {
+        **base,
+        "total_return": p.total_return,
+        "cagr": p.annualized_return,
+        "annualized_return": p.annualized_return,
+        "max_drawdown": p.max_drawdown,
+        "drawdown_duration": p.drawdown_duration,
+        "sharpe": base.get("sharpe", 0.0),
+        "sortino": rich.sortino_ratio,
+        "calmar": rich.calmar_ratio,
+        "total_days": base.get("total_days", result.equity_curve.height if result.equity_curve is not None else 0),
+        "trade_count": t.trade_count,
+        "buy_count": t.buy_count,
+        "sell_count": t.sell_count,
+        "turnover": t.turnover,
+        "total_fees": t.total_fees,
+        "avg_trade_value": t.avg_trade_value,
+        "trade_days": t.trade_days,
+    }
+    for k, v in list(out.items()):
+        if isinstance(v, float):
+            out[k] = float(v)
+    return out

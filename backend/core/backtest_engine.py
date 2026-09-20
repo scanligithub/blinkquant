@@ -431,7 +431,7 @@ class BacktestEngine:
         # Collect signal traces
         signal_traces = getattr(self, '_signal_traces', {})
         
-        return BacktestResult(
+        result = BacktestResult(
             equity_curve=pl.DataFrame(equity_curve_rows) if equity_curve_rows else pl.DataFrame(schema={
                 "date": pl.Date, "equity": pl.Float64, "cash": pl.Float64, "positions_value": pl.Float64, "signal_date": pl.Date
             }),
@@ -445,6 +445,15 @@ class BacktestEngine:
             execution_diagnostics=diag,
             signal_traces=getattr(self, '_signal_traces', {}),
         )
+
+        # Enrich with compute_metrics (sortino, calmar, turnover, etc.)
+        try:
+            from core.metrics import enrich_result_metrics
+            result.metrics = enrich_result_metrics(result, initial_cash)
+        except Exception:
+            logger.exception("enrich_result_metrics failed; keep base metrics")
+
+        return result
     
     def export_state(self) -> dict:
         """导出 checkpoint（账户状态 + carry 缓存 + 解冻/选股游标 + 在途意图）。

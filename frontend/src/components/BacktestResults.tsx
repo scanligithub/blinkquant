@@ -36,12 +36,28 @@ interface LegacyBacktestResult {
     sharpe: number;
     max_drawdown: number;
     total_days: number;
+    sortino?: number;
+    calmar?: number;
+    drawdown_duration?: number;
+    turnover?: number;
+    total_fees?: number;
+    buy_count?: number;
+    sell_count?: number;
   };
 }
 
 interface Summary {
   total_return?: number;
   max_drawdown?: number;
+  cagr?: number;
+  sharpe?: number;
+  sortino?: number;
+  calmar?: number;
+  drawdown_duration?: number;
+  turnover?: number;
+  total_fees?: number;
+  buy_count?: number;
+  sell_count?: number;
   n_trades?: number;
   n_positions?: number;
   final_equity?: number;
@@ -232,13 +248,13 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-center">
         <div className="bg-gray-50 rounded-lg p-2">
           <div className="text-xs text-gray-500">最终权益</div>
           <div className="text-sm font-semibold">{finalEquity.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
         </div>
         <div className="bg-gray-50 rounded-lg p-2">
-          <div className="text-xs text-gray-500">收益率</div>
+          <div className="text-xs text-gray-500">总收益</div>
           <div className={`text-sm font-semibold ${((m?.total_return ?? 0)) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
             {(((m?.total_return ?? 0)) * 100).toFixed(2)}%
           </div>
@@ -247,6 +263,44 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
           <div className="text-xs text-gray-500">最大回撤</div>
           <div className="text-sm font-semibold text-green-600">
             {(((m?.max_drawdown ?? 0)) * 100).toFixed(2)}%
+          </div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">年化</div>
+          <div className="text-sm font-semibold">
+            {m?.cagr != null ? `${(m.cagr * 100).toFixed(2)}%` : '—'}
+          </div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">夏普</div>
+          <div className="text-sm font-semibold">{m?.sharpe != null ? m.sharpe.toFixed(2) : '—'}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">索提诺</div>
+          <div className="text-sm font-semibold">{m?.sortino != null ? m.sortino.toFixed(2) : '—'}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">卡尔玛</div>
+          <div className="text-sm font-semibold">{m?.calmar != null ? m.calmar.toFixed(2) : '—'}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">回撤天数</div>
+          <div className="text-sm font-semibold">{m?.drawdown_duration ?? '—'}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">换手</div>
+          <div className="text-sm font-semibold">{m?.turnover != null ? m.turnover.toFixed(2) : '—'}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">总费用</div>
+          <div className="text-sm font-semibold">
+            {m?.total_fees != null ? m.total_fees.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'}
+          </div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <div className="text-xs text-gray-500">买 / 卖</div>
+          <div className="text-sm font-semibold">
+            {(m?.buy_count ?? '—')} / {(m?.sell_count ?? '—')}
           </div>
         </div>
       </div>
