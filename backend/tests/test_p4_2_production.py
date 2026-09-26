@@ -260,9 +260,11 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
         assert checked_buys > 0
         assert checked_buys + checked_sells == result.trades.height
 
-        # Top-N contract: no execution batch may contain >20 distinct codes.
+        # Top-N contract: no signal date may buy more than 20 distinct codes.
+        # SELLs from the previous target are allowed in the same event-driven batch.
         for signal_date, batch in result.trades.group_by("signal_date"):
-            assert batch["code"].n_unique() <= 20
+            buys = batch.filter(pl.col("side") == "BUY")
+            assert buys["code"].n_unique() <= 20
 
     finally:
         data_manager.df_daily = old_daily
