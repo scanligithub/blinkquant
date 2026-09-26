@@ -385,6 +385,13 @@ class SelectionEngine:
                 min_date = df.select(pl.col("date").min()).item()
                 return {"error": f"指定日期 {target_date} 早于数据起点 {min_date}"}
 
+            # PIT Universe 必须在公式/指标计算前过滤，而不是选股后再过滤。
+            if eligible_codes is not None:
+                df = df.filter(pl.col("code").is_in(set(eligible_codes)))
+                if df.is_empty():
+                    return {"codes": [], "date": target_date.isoformat()}
+                lf = df.lazy()
+
             # per-code as-of：在 ≤ target_date 的全历史上计算指标，
             # 每只股票取最后一根 bar 的 _signal（与 MTF _eval_atom 语义一致，不再用全局 last_date）
             result_df = (
