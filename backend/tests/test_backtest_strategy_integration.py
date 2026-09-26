@@ -135,7 +135,7 @@ def test_event_driven_explicit_exit_generates_sell():
     assert len(intents) == 1
     assert intents[0].side == "SELL"
     assert intents[0].target_qty == 100
-def test_p4_1_weekly_pit_top20_schedules_next_open():
+# P4.1: weekly PIT universe, Top20 allocation, and next-open execution contract.\n\ndef test_p4_1_weekly_pit_top20_schedules_next_open():
     """P4.1 contract: W signal + PIT index + Top20 -> next trading-day Open."""
     import polars as pl
 
