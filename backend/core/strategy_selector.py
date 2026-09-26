@@ -101,7 +101,7 @@ class StrategySelector:
                 aggs.insert(-1, expr)
         every = "1w" if tf == "W" else "1mo"
         period_df = (
-            df.sort(["code", "date"])
+            df.sort("date")
             .group_by_dynamic("date", every=every, group_by="code")
             .agg(aggs)
             .drop("date")
