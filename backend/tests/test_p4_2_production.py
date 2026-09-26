@@ -65,7 +65,7 @@ def _load_real_data():
     original_daily = data_manager.df_daily
     original_weekly = data_manager.df_weekly
     original_monthly = data_manager.df_monthly
-    data_manager.df_daily = daily.sort(["code", "date"])
+    data_manager.df_daily = daily.sort("date")
     data_manager.df_weekly = None
     data_manager.df_monthly = None
     data_manager._asof_frame_cache.clear()
