@@ -4,7 +4,7 @@ import httpx
 import json
 from typing import Optional, Union
 
-from .config import HF_NODES, DISPATCH_TIMEOUT_SEC, POLL_JOB_TIMEOUT_SEC
+from .config import HF_NODES, DISPATCH_TIMEOUT_SEC, POLL_JOB_TIMEOUT_SEC, PREEMPT_CANCEL_TIMEOUT_SEC
 
 _client: httpx.AsyncClient | None = None
 
@@ -124,8 +124,14 @@ async def cancel_task(
                     return False
                 status_resp.raise_for_status()
                 status = status_resp.json().get("status")
-                if status in ("cancelled", "failed", "done"):
+                if status == "cancelled":
                     return True
+                if status in ("failed", "done"):
+                    # The backtest reached a terminal state without being
+                    # cooperatively cancelled. It must not be requeued as a
+                    # selection preemption, otherwise a naturally completed
+                    # task could be executed a second time.
+                    return False
             except Exception:
                 pass
             await asyncio.sleep(0.25)
