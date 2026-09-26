@@ -74,8 +74,8 @@ def _load_real_data():
     return store, original_daily, original_weekly, original_monthly
 
 
-def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
-    """Real HF data: PIT CSI300 -> real SelectionEngine -> BacktestEngine."""
+def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
+    """Real HF data: PIT CSI300 -> real SelectionEngine -> BacktestEngine (daily first)."""
     store, old_daily, old_weekly, old_monthly = _load_real_data()
 
     try:
@@ -112,7 +112,7 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
             entry=SignalDefinition(
                 condition="MA(CLOSE,5) > MA(CLOSE,60)",
                 trigger="cross_above",
-                timeframe="W",
+                timeframe="D",
             ),
             exit=SignalDefinition(
                 condition="MA(CLOSE,5) < MA(CLOSE,20)",
@@ -123,7 +123,7 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
                 method="top_n_equal_weight",
                 max_positions=20,
             ),
-            rebalance=RebalanceDefinition(frequency="weekly"),
+            rebalance=RebalanceDefinition(frequency="daily"),
             mode="event_driven",
         )
 
@@ -148,12 +148,9 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
         # expose the actual weekly signal dates and selector result sizes so a
         # production-data failure cannot be mistaken for an execution failure.
         if result.trades.is_empty():
-            weekly_dates = sorted(engine.calendar.weekly_signal_dates(
-                BACKTEST_START, BACKTEST_END
-            ))
-            selector = engine.strategy_selector
+            daily_dates = [d for d in trade_dates if BACKTEST_START <= d <= BACKTEST_END]
             signal_diag = []
-            for signal_date in weekly_dates:
+            for signal_date in daily_dates:
                 sr = selector.select(strategy, signal_date, backtest_mode=True)
                 signal_diag.append({
                     "date": signal_date.isoformat(),
@@ -162,8 +159,10 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
                     "target": len(sr.target_codes),
                     "eligible": sr.metadata.get("eligible_count"),
                 })
-            print("P4.2-2 signal diagnostics:", signal_diag)
+            print("P4.2-2 daily signal diagnostics:", signal_diag)
             print("P4.2-2 execution diagnostics:", result.execution_diagnostics)
+            weekly_dates = []
+            selector = engine.strategy_selector
 
         # Basic end-to-end invariants.
         assert not result.equity_curve.is_empty()
