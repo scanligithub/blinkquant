@@ -192,3 +192,29 @@ def test_monthly_cross_uses_previous_month_not_previous_day():
         assert selector._previous_signal_date(dt.date(2024,2,29), "M") == dt.date(2024,1,31)
     finally:
         data_manager.df_daily = original
+
+
+def test_strategy_selector_allocates_top_n_target_weights():
+    original = data_manager.df_daily
+    try:
+        data_manager.df_daily = pl.DataFrame({
+            "date": [dt.date(2024,1,4)],
+            "code": ["AAA"],
+            "close": [100.0],
+        })
+        result = StrategySelector(
+            selection_engine=FakeSelectionEngine(),
+        ).select(
+            StrategyDefinition(
+                universe=UniverseDefinition(type="all_a"),
+                entry=SignalDefinition(condition="ENTRY"),
+                sizing=PositionSizingDefinition(
+                    method="top_n_equal_weight", max_positions=1
+                ),
+            ),
+            dt.date(2024,1,4),
+        )
+        assert result.target_codes == ["AAA"]
+        assert result.target_weights == {"AAA": 1.0}
+    finally:
+        data_manager.df_daily = original
