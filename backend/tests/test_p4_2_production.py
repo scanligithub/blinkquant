@@ -37,6 +37,29 @@ BACKTEST_START = dt.date(2024, 1, 2)
 BACKTEST_END = dt.date(2024, 12, 27)
 DATA_END = dt.date(2024, 12, 31)
 
+def _market_codes(stock_ids):
+    """Convert stockA six-digit PIT IDs to BlinkQuant exchange-qualified codes."""
+    available = set(data_manager.df_daily.select("code").unique()["code"].to_list())
+    result = []
+    for stock_id in stock_ids:
+        stock_id = str(stock_id)
+        if stock_id in available:
+            result.append(stock_id)
+            continue
+        matches = [
+            f"sh.{stock_id}",
+            f"sz.{stock_id}",
+            f"bj.{stock_id}",
+        ]
+        result.extend([code for code in matches if code in available])
+    return sorted(set(result))
+
+
+def _stock_id(code):
+    return str(code).split(".", 1)[-1]
+
+
+
 
 def _load_real_data():
     """Load the minimum real stockA window needed by MA60 weekly signals."""
@@ -90,7 +113,9 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
         # Preflight the real SelectionEngine on one date before the full E2E loop.
         # This isolates a zero-MA-signal problem from StrategySelector/BacktestEngine.
         preflight_date = dt.date(2024, 12, 27)
-        preflight_members = resolver.members("000300", preflight_date)
+        preflight_members = _market_codes(
+            resolver.members("000300", preflight_date)
+        )
         preflight = SelectionEngine().execute_selector(
             "MA(CLOSE,5) > MA(CLOSE,60)",
             "D",
@@ -206,7 +231,10 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
         checked_buys = 0
         checked_sells = 0
         for row in result.trades.iter_rows(named=True):
-            members = set(resolver.members("000300", row["signal_date"]))
+            members = {
+                _stock_id(code)
+                for code in resolver.members("000300", row["signal_date"])
+            }
             if row["side"] == "BUY":
                 assert row["code"] in members, (
                     f"{row['code']} not in CSI300 PIT universe at "
@@ -220,9 +248,10 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
                     .select(pl.col("date").max())
                     .item()
                 )
-                previous_members = set(
-                    resolver.members("000300", prior_dates)
-                )
+                previous_members = {
+                    _stock_id(code)
+                    for code in resolver.members("000300", prior_dates)
+                }
                 assert row["code"] in members or row["code"] in previous_members, (
                     f"{row['code']} not in current/previous CSI300 PIT universe "
                     f"for exit at {row['signal_date']}"
