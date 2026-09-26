@@ -49,5 +49,5 @@ def test_cancel_task_succeeds_after_worker_reports_cancelled(monkeypatch):
     assert result is True
 
 
-def _async_return(value):
+async def _async_return(value):
     return value
