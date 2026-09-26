@@ -1,4 +1,6 @@
 import datetime as dt
+
+import pytest
 from types import SimpleNamespace
 
 from core.backtest_engine import BacktestEngine
@@ -228,5 +230,5 @@ def test_p4_1_weekly_pit_top20_schedules_next_open():
     assert len(intents) == 20
     assert all(intent.side == "BUY" for intent in intents)
     assert {intent.code for intent in intents} == set(members[:20])
-    assert diag["target_gross_by_date"][execution_date] == 1.0
+    assert diag["target_gross_by_date"][execution_date] == pytest.approx(1.0)
 \n
