@@ -128,18 +128,26 @@ def test_portfolio_bonus_shares_preserve_t1_split():
 
 
 def test_portfolio_same_day_dividend_and_bonus_are_both_applied():
-    """同一除权除息日同时存在现金分红和送股时，两项都必须生效。"""
+    """同一日期现金分红必须先于送转应用，避免重复计算分红现金。"""
     from core.portfolio import Portfolio, Position
     portfolio = Portfolio(initial_cash=5_000.0)
     portfolio.load_initial_positions({"sh.600000": Position(
         code="sh.600000", total_qty=1000, available_qty=1000, avg_cost=20.0)})
     date = datetime.date(2024, 6, 18)
-    portfolio.apply_corporate_action(CorporateAction(
-        date=date, code="sh.600000", action_type=ActionType.CASH_DIVIDEND,
-        cash_dividend_per_share=0.5))
-    portfolio.apply_corporate_action(CorporateAction(
-        date=date, code="sh.600000", action_type=ActionType.BONUS_SHARES,
-        split_ratio=1.2))
+    store = CorporateActionStore([
+        CorporateAction(date=date, code="sh.600000",
+                        action_type=ActionType.CASH_DIVIDEND,
+                        cash_dividend_per_share=0.5),
+        CorporateAction(date=date, code="sh.600000",
+                        action_type=ActionType.BONUS_SHARES,
+                        split_ratio=1.2),
+    ])
+    actions = store.query_all(date, date)
+    assert [a.action_type for a in actions] == [
+        ActionType.CASH_DIVIDEND, ActionType.BONUS_SHARES
+    ]
+    for action in actions:
+        portfolio.apply_corporate_action(action)
     pos = portfolio.positions["sh.600000"]
     assert portfolio.cash == 5_500.0
     assert pos.total_qty == 1200 and pos.available_qty == 1200 and pos.frozen_qty == 0
