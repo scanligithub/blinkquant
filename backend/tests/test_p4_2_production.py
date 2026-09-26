@@ -87,7 +87,27 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
 
         # Calendar is derived from the same real K-line window used by the
         # backtest, so execution dates are real market dates.
-        # Preflight the real SelectionEngine on one date before the full E2E loop.\n        # This isolates a zero-MA-signal problem from StrategySelector/BacktestEngine.\n        preflight_date = dt.date(2024, 12, 27)\n        preflight_members = resolver.members("000300", preflight_date)\n        preflight = SelectionEngine().execute_selector(\n            "MA(CLOSE,5) > MA(CLOSE,60)",\n            "D",\n            None,\n            target_date=preflight_date,\n            backtest_mode=True,\n            raise_on_error=True,\n            qfq_data_provider=store,\n            latest_adj=store.load_latest_adjust_factors(\n                start=BACKTEST_START, end=DATA_END\n            ),\n            eligible_codes=preflight_members,\n        )\n        print("P4.2-2 preflight MA5>MA60:", len(preflight.codes), preflight.codes[:10])\n        assert preflight.codes, "real SelectionEngine MA5>MA60 selects no CSI300 stocks"\n\n        trade_dates = (
+        # Preflight the real SelectionEngine on one date before the full E2E loop.
+        # This isolates a zero-MA-signal problem from StrategySelector/BacktestEngine.
+        preflight_date = dt.date(2024, 12, 27)
+        preflight_members = resolver.members("000300", preflight_date)
+        preflight = SelectionEngine().execute_selector(
+            "MA(CLOSE,5) > MA(CLOSE,60)",
+            "D",
+            None,
+            target_date=preflight_date,
+            backtest_mode=True,
+            raise_on_error=True,
+            qfq_data_provider=store,
+            latest_adj=store.load_latest_adjust_factors(
+                start=BACKTEST_START, end=DATA_END
+            ),
+            eligible_codes=preflight_members,
+        )
+        print("P4.2-2 preflight MA5>MA60:", len(preflight.codes), preflight.codes[:10])
+        assert preflight.codes, "real SelectionEngine MA5>MA60 selects no CSI300 stocks"
+
+        trade_dates = (
             data_manager.df_daily
             .filter(
                 (pl.col("date") >= BACKTEST_START)
