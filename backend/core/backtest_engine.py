@@ -865,7 +865,7 @@ class BacktestEngine:
             if hasattr(sel, 'codes') and sel.codes:
                 eligible = sel.codes
                 if universe_filter is not None and eligible:
-                    eligible = universe_filter.filter(eligible, t)
+                    eligible = universe_filter.filter(eligible, t, df=data_manager.df_daily)
                 import datetime as _dt
                 lookback_start = t - _dt.timedelta(days=75)
                 frame = data_manager.df_daily.filter(
@@ -890,7 +890,7 @@ class BacktestEngine:
             if not (isinstance(sel, dict) and "error" in sel):
                 codes = sel.codes
                 if universe_filter is not None and codes:
-                    codes = universe_filter.filter(codes, t)
+                    codes = universe_filter.filter(codes, t, df=data_manager.df_daily)
                 weights = self.allocator(codes, t)
                 new_intents = self._generate_intents(weights, new_prices)
                 diag["intents_total"] += len(new_intents)
