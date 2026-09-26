@@ -16,19 +16,30 @@ class UniverseFilter:
     min_listing_days: int = 60
     exclude_st: bool = True
 
-    def filter(self, df: pl.DataFrame, target_date: datetime.date) -> list[str]:
-        """从 df 中筛选 target_date 的 eligible codes。
+    def filter(
+        self,
+        codes_or_df,
+        target_date: datetime.date,
+        *,
+        df: Optional[pl.DataFrame] = None,
+    ) -> list[str]:
+        """过滤 target_date 的 eligible codes。
 
-        Args:
-            df: 包含 'date', 'code' 列，可选 'listing_date', 'is_st' 列
-            target_date: 选股目标日期
-
-        Returns:
-            过滤后的 code 列表
+        兼容旧的 DataFrame 调用，同时支持 BacktestEngine 的
+        filter(codes, target_date, df=...) 契约。
         """
-        day_df = df.filter(pl.col("date") == target_date)
-        if day_df.is_empty():
-            return []
+        if isinstance(codes_or_df, pl.DataFrame):
+            day_df = codes_or_df.filter(pl.col("date") == target_date)
+        else:
+            if df is None or not isinstance(df, pl.DataFrame):
+                raise TypeError("list[str] input requires df=Polars DataFrame")
+            codes = list(codes_or_df)
+            if not codes:
+                return []
+            day_df = df.filter(
+                (pl.col("date") == target_date)
+                & pl.col("code").is_in(codes)
+            )
 
         # IPO 过滤
         if self.min_listing_days > 0 and "listing_date" in day_df.columns:
