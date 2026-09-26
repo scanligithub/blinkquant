@@ -6,6 +6,7 @@ on:
       - 'backend/**'
       - 'tests/golden/**'
       - 'tests/test_strategy_selector.py'
+      - '.github/workflows/golden-tests.yml'
       - 'tests/test_strategy_selector.py'
       - 'config/**'
   push:
