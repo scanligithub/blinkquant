@@ -24,6 +24,10 @@ from core.corporate_actions import CorporateAction
 from core.signal_trace import SignalTraceData, CodeTrace
 
 
+class BacktestCancelled(Exception):
+    """Raised when a running backtest receives a cooperative cancellation request."""
+
+
 class EventPhase(enum.Enum):
     """Event State Machine phases (from 2026-08-27 spec)."""
     PRE_OPEN = "pre_open"              # thaw + corporate actions
@@ -164,6 +168,7 @@ class BacktestEngine:
         universe_filter: 'UniverseFilter' = None,
         fee_schedule: 'FeeSchedule' = None,
         on_progress: 'Callable[[dict], None] | None' = None,
+        cancel_check: 'Callable[[], bool] | None' = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -193,6 +198,10 @@ class BacktestEngine:
 """
         if rebalance_freq not in ("daily", "weekly"):
             raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
+
+        def _check_cancelled() -> None:
+            if cancel_check is not None and cancel_check():
+                raise BacktestCancelled("backtest cancelled by scheduler")
         # 初始化组合（Phase 0 契约：initial_positions 可选，默认空仓）
         self.portfolio = Portfolio(initial_cash=initial_cash)
         
@@ -347,6 +356,9 @@ class BacktestEngine:
             })
 
         for i, t in enumerate(all_days):
+            # Cooperative cancellation boundary: stop before starting the next trading day.
+            _check_cancelled()
+
             # PRE_OPEN: thaw + corporate actions
             _t0 = _time.perf_counter()
             self._phase_pre_open(t, corporate_action_store, fee_schedule, diag)
@@ -398,6 +410,8 @@ class BacktestEngine:
                 equity_curve_rows, positions_daily_rows,
             )
             _profiler["Output"] += _time.perf_counter() - _t0
+
+            _check_cancelled()
 
             # Progress callback (throttle: every 5 days or last day)
             if on_progress and (i % 5 == 0 or i + 1 == total_days):
