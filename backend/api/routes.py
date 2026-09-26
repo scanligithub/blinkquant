@@ -224,14 +224,24 @@ def _set_job_progress(job_id: str, progress: dict) -> None:
     }
 
 async def _run_backtest_async(job_id: str, req: BacktestRequest):
+    # 每个异步回测在提交时都会创建对应的取消 Event。
+    # 必须在 worker 协程内部取得它，供线程中的 BacktestEngine 进行协作式取消检查。
+    cancel_event = _backtest_cancel_events.get(job_id)
+    if cancel_event is None:
+        # 防御性兜底：正常路径不会走这里，但避免取消状态检查再次触发 NameError。
+        cancel_event = threading.Event()
+        _backtest_cancel_events[job_id] = cancel_event
+
     try:
         if data_manager.df_daily is None:
             _backtest_jobs[job_id] = {"status": "failed", "error": "Nodes are loading data..."}
             return
 
-        # 检查是否已被取消
+        # 检查是否已被取消。queued 状态下收到取消请求时，不能把 cancelling
+        # 覆盖成 running；必须在进入耗时计算前直接结束。
         job = _backtest_jobs.get(job_id)
-        if job and job.get("status") == "cancelled":
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
+            _backtest_jobs[job_id] = {"status": "cancelled", "error": "cancelled before compute"}
             return
 
         # 标记任务开始执行
