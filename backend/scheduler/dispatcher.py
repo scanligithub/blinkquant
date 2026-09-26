@@ -89,8 +89,18 @@ async def dispatch_selection(payload: Union[dict, str], timeout: int = 60) -> di
     
     return {"nodes": success, "codes": list(all_codes)}
 
-async def cancel_task(node_id: str, job_id: str, reason: str = "preempted_by_selection") -> bool:
-    """协作式取消：POST /api/v1/backtest/cancel (需节点实现)"""
+async def cancel_task(
+    node_id: str,
+    job_id: str,
+    reason: str = "preempted_by_selection",
+    timeout: int = PREEMPT_CANCEL_TIMEOUT_SEC,
+) -> bool:
+    """Request cancellation and wait until the node confirms the worker stopped.
+
+    A 200 from /cancel only means the cancellation signal was accepted. The
+    scheduler must not release the worker slot until the async job reaches a
+    terminal state, otherwise selection could overlap the old backtest.
+    """
     client = await get_client()
     try:
         resp = await asyncio.wait_for(
@@ -100,7 +110,26 @@ async def cancel_task(node_id: str, job_id: str, reason: str = "preempted_by_sel
             ),
             timeout=10,
         )
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            return False
+
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                status_resp = await asyncio.wait_for(
+                    client.get(f"{HF_NODES[node_id]}/api/v1/backtest/async/{job_id}"),
+                    timeout=3,
+                )
+                if status_resp.status_code == 404:
+                    return False
+                status_resp.raise_for_status()
+                status = status_resp.json().get("status")
+                if status in ("cancelled", "failed", "done"):
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(0.25)
+        return False
     except Exception:
         return False
 
