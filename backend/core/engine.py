@@ -356,6 +356,27 @@ class SelectionEngine:
             df = qfq_data_provider.load_qfq_window(start_date, target_date, latest_adj)
             if df.is_empty():
                 return {"error": f"No data for target_date {target_date}"}
+
+            # qfq lazy-loading returns daily bars.  W/M strategies must use
+            # real weekly/monthly bars before evaluating period-based
+            # indicators; otherwise MA(5)/MA(60) would silently become
+            # daily-window indicators in production backtests.
+            tf = timeframe.upper()
+            if tf in ("W", "M"):
+                aggs = [
+                    pl.col("open").first(),
+                    pl.col("high").max(),
+                    pl.col("low").min(),
+                    pl.col("close").last(),
+                    pl.col("volume").sum(),
+                    pl.col("amount").sum(),
+                ]
+                every = "1w" if tf == "W" else "1mo"
+                df = (
+                    df.sort("date")
+                    .group_by_dynamic("date", every=every, by="code")
+                    .agg(aggs)
+                )
         else:
             df_attr = {'D': 'df_daily', 'W': 'df_weekly', 'M': 'df_monthly'}.get(timeframe, 'df_daily')
             df = getattr(data_manager, df_attr)
