@@ -13,7 +13,7 @@ StrategyDefinition 只描述策略，不执行策略。
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional
 
 from .backtest_types import ExecutionConfig, MVP_EXECUTION_CONFIG
@@ -132,7 +132,7 @@ class StrategyDefinition:
     sizing: PositionSizingDefinition = PositionSizingDefinition()
     rebalance: RebalanceDefinition = RebalanceDefinition()
     mode: StrategyMode = "target_portfolio"
-    execution: ExecutionConfig = MVP_EXECUTION_CONFIG
+    execution: ExecutionConfig = field(default_factory=lambda: MVP_EXECUTION_CONFIG)
     name: Optional[str] = None
 
     def __post_init__(self) -> None:
