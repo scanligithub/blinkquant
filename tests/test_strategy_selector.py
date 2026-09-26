@@ -218,3 +218,79 @@ def test_strategy_selector_allocates_top_n_target_weights():
         assert result.target_weights == {"AAA": 1.0}
     finally:
         data_manager.df_daily = original
+
+
+def test_p4_2_real_selection_engine_weekly_ma_cross_with_pit_top20():
+    """P4.2: real SelectionEngine + weekly MA cross + PIT Universe + Top20."""
+    import math
+
+    # 61 weekly bars: previous signal has flat MA5/MA60, current signal
+    # raises the last close so MA5 crosses above MA60.
+    weeks = [
+        dt.date(2023, 1, 6) + dt.timedelta(days=7 * i)
+        for i in range(61)
+    ]
+    signal_date = weeks[-1]
+    previous_date = weeks[-2]
+
+    codes = [f"sh.{600000 + i:06d}" for i in range(25)]
+    rows = []
+    for code in codes:
+        for i, day in enumerate(weeks):
+            close = 100.0
+            if code == codes[0] and i == len(weeks) - 1:
+                close = 120.0
+            rows.append({"date": day, "code": code, "close": close})
+
+    daily = pl.DataFrame(rows)
+    weekly = daily
+
+    membership = UniverseResolver(
+        pl.DataFrame({
+            "index_id": ["000300"] * 25,
+            "stock_id": codes,
+            "start_date": [dt.date(2020, 1, 1)] * 25,
+            "end_date": [None] * 25,
+        })
+    )
+
+    original_daily = data_manager.df_daily
+    original_weekly = data_manager.df_weekly
+    try:
+        data_manager.df_daily = daily
+        data_manager.df_weekly = weekly
+
+        strategy = StrategyDefinition(
+            universe=UniverseDefinition(type="index", index_id="000300"),
+            entry=SignalDefinition(
+                condition="MA(CLOSE,5) > MA(CLOSE,60)",
+                trigger="cross_above",
+                timeframe="W",
+            ),
+            exit=SignalDefinition(
+                condition="MA(CLOSE,5) < MA(CLOSE,20)",
+                trigger="cross_below",
+                timeframe="W",
+            ),
+            sizing=PositionSizingDefinition(
+                method="top_n_equal_weight",
+                max_positions=20,
+            ),
+            rebalance=RebalanceDefinition(frequency="weekly"),
+        )
+
+        result = StrategySelector(
+            selection_engine=__import__("core.engine", fromlist=["SelectionEngine"]).SelectionEngine(),
+            universe_resolver=membership,
+        ).select(strategy, signal_date)
+
+    finally:
+        data_manager.df_daily = original_daily
+        data_manager.df_weekly = original_weekly
+
+    assert result.signal_date == signal_date
+    assert result.entry_codes == [codes[0]]
+    assert result.exit_codes == []
+    assert result.target_codes == [codes[0]]
+    assert result.target_weights == {codes[0]: 1.0}
+    assert result.metadata["eligible_count"] == 25
