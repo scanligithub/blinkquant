@@ -15,11 +15,12 @@ from pypinyin import pinyin, Style
 from core.data_manager import data_manager
 from core.engine import selection_engine
 from core.indicator_registry import nl_meta as build_nl_meta
-from core.backtest_engine import BacktestEngine, TradingCalendar
+from core.backtest_engine import BacktestEngine, TradingCalendar, BacktestCancelled
 from core.raw_price_store import RawPriceStore
 from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator
 import logging
 import io # New import
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
 # Async backtest endpoints
 _backtest_jobs: dict[str, dict] = {}
 _backtest_artifacts: dict[str, dict[str, bytes]] = {}
+_backtest_cancel_events: dict[str, threading.Event] = {}
 
 def _df_to_parquet_bytes(df: pl.DataFrame, level: int = 6) -> bytes:
     buf = io.BytesIO()
@@ -268,7 +270,8 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
 
         # 再次检查取消状态（在耗时操作前）
         job = _backtest_jobs.get(job_id)
-        if job and job.get("status") == "cancelled":
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
+            _backtest_jobs[job_id] = {"status": "cancelled", "error": "cancelled before compute"}
             return
 
         # 在线程池中运行同步回测，避免阻塞事件循环
@@ -282,10 +285,11 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             end_signal_date=req.end_signal_date,
             initial_cash=req.initial_cash,
             on_progress=_on_progress,
+            cancel_check=cancel_event.is_set,
         )
 
         job = _backtest_jobs.get(job_id)
-        if job and job.get("status") == "cancelled":
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
             return
 
         _set_job_progress(job_id, {
@@ -321,12 +325,17 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             },
             "artifacts": {k: True for k in artifacts},
         }
+    except BacktestCancelled as e:
+        _backtest_artifacts.pop(job_id, None)
+        _backtest_jobs[job_id] = {"status": "cancelled", "error": str(e)}
     except Exception as e:
         _backtest_artifacts.pop(job_id, None)
         job = _backtest_jobs.get(job_id)
-        if not (job and job.get("status") == "cancelled"):
+        if not (job and job.get("status") in ("cancelled", "cancelling")):
             logger.exception("backtest job %s failed", job_id)
             _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
+    finally:
+        _backtest_cancel_events.pop(job_id, None)
 
 
 @router.post("/backtest/async")
@@ -335,6 +344,7 @@ async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundT
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
 
     job_id = str(uuid.uuid4())
+    _backtest_cancel_events[job_id] = threading.Event()
     _backtest_jobs[job_id] = {"status": "queued"}
     background_tasks.add_task(_run_backtest_async, job_id, req)
     return {"job_id": job_id, "status": "queued"}
@@ -376,9 +386,16 @@ async def cancel_backtest(req: CancelBacktestRequest):
     if job.get("status") in ("done", "failed", "cancelled"):
         return {"ok": True, "status": job.get("status"), "message": "Job already finished"}
     
-    # 标记为取消，_run_backtest_async 会在下次检查时退出
-    _backtest_jobs[req.job_id] = {"status": "cancelled", "error": req.reason}
-    return {"ok": True, "status": "cancelled"}
+    cancel_event = _backtest_cancel_events.get(req.job_id)
+    if cancel_event is None:
+        cancel_event = threading.Event()
+        _backtest_cancel_events[req.job_id] = cancel_event
+    cancel_event.set()
+
+    # Keep the job observable as cancelling until the worker thread exits.
+    job["status"] = "cancelling"
+    job["error"] = req.reason
+    return {"ok": True, "status": "cancelling", "message": "cancellation requested"}
 
 
 @router.get("/kline")
