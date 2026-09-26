@@ -1,4 +1,4 @@
-"""统一策略选择流水线（P3/P4.2）。
+"""统一策略选择流水线（P3/P4.2/P4.2 verified）。
 
 StrategySelector 负责把 StrategyDefinition 转换为单个 as-of 日的策略信号：
     StrategyDefinition
