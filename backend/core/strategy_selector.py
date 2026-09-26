@@ -100,6 +100,8 @@ class StrategySelector:
             backtest_mode=backtest_mode,
             raise_on_error=True,
             eligible_codes=eligible_codes,
+            qfq_data_provider=getattr(self, "_qfq_data_provider", None),
+            latest_adj=getattr(self, "_latest_adj", None),
         )
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(result["error"])
