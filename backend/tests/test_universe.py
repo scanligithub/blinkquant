@@ -75,3 +75,19 @@ def test_filter_disabled():
     })
     result = uf.filter(dates, target_date=datetime.date(2024, 1, 1))
     assert set(result) == {"000001", "000002"}
+
+
+def test_filter_codes_contract():
+    """BacktestEngine passes candidate codes; filter must preserve the subset."""
+    uf = UniverseFilter(min_listing_days=0, exclude_st=True)
+    dates = pl.DataFrame({
+        "date": [datetime.date(2024, 1, 1)] * 3,
+        "code": ["000001", "000002", "000003"],
+        "is_st": [False, True, False],
+    })
+    result = uf.filter(
+        ["000001", "000002"],
+        target_date=datetime.date(2024, 1, 1),
+        df=dates,
+    )
+    assert result == ["000001"]
