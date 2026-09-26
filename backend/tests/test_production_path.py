@@ -8,6 +8,29 @@ from core.backtest_types import ExecutionConfig, FeeConfig, FeeSchedule
 from core.corporate_actions import CorporateActionStore
 
 
+class TestCorporateActionFileLoader:
+    def test_from_parquet_normalizes_records(self, tmp_path):
+        import pandas as pd
+
+        path = tmp_path / "corporate_actions.parquet"
+        pd.DataFrame([{
+            "date": "2024-06-18",
+            "code": "sh.600000",
+            "action_type": "cash_dividend",
+            "cash_dividend_per_share": 0.25,
+            "split_ratio": 1.0,
+            "rights_price": 0.0,
+            "rights_ratio": 0.0,
+        }]).to_parquet(path, index=False)
+
+        store = CorporateActionStore.from_file(str(path))
+        actions = store.query_all(__import__("datetime").date(2024, 6, 18),
+                                  __import__("datetime").date(2024, 6, 18))
+        assert len(actions) == 1
+        assert actions[0].code == "sh.600000"
+        assert actions[0].cash_dividend_per_share == 0.25
+
+
 class TestCorporateActionProductionInjection:
     def test_engine_accepts_injected_store(self):
         from core.backtest_engine import TradingCalendar
