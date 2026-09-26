@@ -212,6 +212,13 @@ class StrategySelector:
                 backtest_mode,
             )
 
+        if strategy.sizing.method == "equal_weight":
+            target_weights = equal_weight_allocator(entry_codes, effective_date)
+        else:
+            allocator = top_n_equal_weight_allocator(strategy.sizing.max_positions)
+            target_weights = allocator(entry_codes, effective_date)
+        target_codes = sorted(target_weights)
+
         return StrategySelectionResult(
             requested_date=target_date,
             signal_date=effective_date,
