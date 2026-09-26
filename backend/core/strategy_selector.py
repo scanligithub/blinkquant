@@ -76,10 +76,15 @@ class StrategySelector:
             if code in available:
                 mapped.append(code)
                 continue
+            if not code.isdigit() or len(code) != 6:
+                mapped.append(code)
+                continue
             candidates = [f"sh.{code}", f"sz.{code}", f"bj.{code}"]
             matches = [candidate for candidate in candidates if candidate in available]
             if len(matches) == 1:
                 mapped.append(matches[0])
+            elif not matches:
+                mapped.append(code)
         return sorted(set(mapped))
 
     def _eligible_codes(
