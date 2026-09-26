@@ -355,7 +355,7 @@ class SelectionEngine:
             df = getattr(data_manager, df_attr)
 
         s_df_attr = {'D': 'df_sector_daily', 'W': 'df_sector_weekly', 'M': 'df_sector_monthly'}.get(timeframe, 'df_sector_daily')
-        s_df = getattr(data_manager, s_df_attr)
+        s_df = getattr(data_manager, s_df_attr, None)
 
         if df is None:
             return {"error": "Data not loaded."}
