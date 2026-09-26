@@ -146,6 +146,7 @@ class BacktestEngine:
         allocator: 'Allocator' = None,
         strategy_selector: 'StrategySelector' = None,
         universe_resolver: 'UniverseResolver' = None,
+        universe_filter: 'UniverseFilter' = None,
     ):
         self.calendar = calendar
         self.selection_engine = selection_engine
@@ -156,6 +157,7 @@ class BacktestEngine:
         self.strategy_selector = strategy_selector or StrategySelector(
             selection_engine=self.selection_engine,
             universe_resolver=universe_resolver,
+            universe_filter=universe_filter,
         )
         
         # 组件将在 run() 中初始化
