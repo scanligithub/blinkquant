@@ -1,0 +1,212 @@
+"""统一策略选择流水线（P3）。
+
+StrategySelector 负责把 StrategyDefinition 转换为单个 as-of 日的策略信号：
+    StrategyDefinition
+        -> PIT Universe
+        -> SelectionEngine
+        -> Entry / Exit
+        -> StrategySelectionResult
+
+它不负责：
+- 调仓日期推进
+- 资金/持仓
+- 下单成交
+- 手续费
+这些仍由 BacktestEngine / ExecutionEngine 负责。
+"""
+from __future__ import annotations
+
+import datetime as dt
+
+import polars as pl
+from dataclasses import dataclass, field
+from typing import Optional
+
+from .data_manager import data_manager
+from .engine import SelectionEngine
+from .strategy import StrategyDefinition
+from .universe_resolver import UniverseResolver
+
+
+@dataclass(frozen=True)
+class StrategySelectionResult:
+    """单个 as-of 日的策略信号结果。"""
+
+    requested_date: Optional[dt.date]
+    signal_date: dt.date
+    entry_codes: list[str]
+    exit_codes: list[str]
+    target_codes: list[str]
+    metadata: dict = field(default_factory=dict)
+
+
+class StrategySelector:
+    """StrategyDefinition -> PIT Universe -> SelectionEngine 的统一入口。"""
+
+    def __init__(
+        self,
+        selection_engine: Optional[SelectionEngine] = None,
+        universe_resolver: Optional[UniverseResolver] = None,
+    ) -> None:
+        self.selection_engine = selection_engine or SelectionEngine()
+        self.universe_resolver = universe_resolver
+
+    def _eligible_codes(
+        self,
+        strategy: StrategyDefinition,
+        signal_date: dt.date,
+    ) -> Optional[list[str]]:
+        if strategy.universe.type == "all_a":
+            return None
+
+        if self.universe_resolver is None:
+            raise ValueError(
+                "index strategy requires a UniverseResolver"
+            )
+
+        return self.universe_resolver.members(
+            strategy.universe.index_id,
+            signal_date,
+        )
+
+    def _previous_signal_date(self, signal_date: dt.date) -> Optional[dt.date]:
+        """返回当前 signal_date 之前最近一个可用交易日。"""
+        df = data_manager.df_daily
+        if df is None or df.is_empty():
+            return None
+
+        previous = (
+            df.filter(pl.col("date") < signal_date)
+            .select(pl.col("date").max())
+            .item()
+        )
+        return previous
+
+    @staticmethod
+    def _codes(result) -> list[str]:
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(result["error"])
+        return list(result.codes)
+
+    def _select_signal(
+        self,
+        signal,
+        signal_date: dt.date,
+        eligible_codes: Optional[list[str]],
+        backtest_mode: bool,
+    ) -> list[str]:
+        result = self.selection_engine.execute_selector(
+            signal.condition,
+            signal.timeframe.upper(),
+            None,
+            target_date=signal_date,
+            backtest_mode=backtest_mode,
+            raise_on_error=True,
+            eligible_codes=eligible_codes,
+        )
+        return self._codes(result)
+
+    def _select_trigger(
+        self,
+        signal,
+        signal_date: dt.date,
+        eligible_codes: Optional[list[str]],
+        backtest_mode: bool,
+    ) -> list[str]:
+        current = set(
+            self._select_signal(
+                signal, signal_date, eligible_codes, backtest_mode
+            )
+        )
+
+        if signal.trigger == "condition":
+            return sorted(current)
+
+        previous_date = self._previous_signal_date(signal_date)
+        if previous_date is None:
+            return []
+
+        # 对 cross_*，Universe 也必须按各自历史 as-of 日解析，
+        # 不能把当前 Universe 套到历史信号日上。
+        previous_eligible = None
+        if self._strategy_for_index is not None:
+            previous_eligible = self._eligible_codes(
+                self._strategy_for_index, previous_date
+            )
+
+        previous = set(
+            self._select_signal(
+                signal,
+                previous_date,
+                previous_eligible,
+                backtest_mode,
+            )
+        )
+
+        if signal.trigger == "cross_above":
+            return sorted(current - previous)
+        if signal.trigger == "cross_below":
+            return sorted(previous - current)
+
+        raise ValueError(f"unsupported signal trigger: {signal.trigger!r}")
+
+    def select(
+        self,
+        strategy: StrategyDefinition,
+        target_date: dt.date,
+        *,
+        backtest_mode: bool = True,
+    ) -> StrategySelectionResult:
+        """计算 strategy 在 target_date 的 Entry/Exit/Target 信号。
+
+        target_portfolio:
+            target_codes = entry_codes；BacktestEngine 根据目标组合与当前持仓
+            的差异决定买卖。
+
+        event_driven:
+            target_codes 仍保留为 entry_codes，便于统一观察；
+            BacktestEngine 应使用 entry_codes / exit_codes 作为事件。
+        """
+        if not isinstance(target_date, dt.date):
+            raise TypeError("target_date must be datetime.date")
+
+        self._strategy_for_index = strategy
+
+        eligible = self._eligible_codes(strategy, target_date)
+
+        entry_codes = self._select_trigger(
+            strategy.entry,
+            target_date,
+            eligible,
+            backtest_mode,
+        )
+
+        exit_codes: list[str] = []
+        if strategy.exit is not None:
+            exit_codes = self._select_trigger(
+                strategy.exit,
+                target_date,
+                eligible,
+                backtest_mode,
+            )
+
+        return StrategySelectionResult(
+            requested_date=target_date,
+            signal_date=target_date,
+            entry_codes=entry_codes,
+            exit_codes=exit_codes,
+            target_codes=entry_codes,
+            metadata={
+                "strategy_name": strategy.name,
+                "universe_type": strategy.universe.type,
+                "index_id": strategy.universe.index_id,
+                "eligible_count": None if eligible is None else len(eligible),
+                "mode": strategy.mode,
+                "rebalance_frequency": strategy.rebalance.frequency,
+                "entry_trigger": strategy.entry.trigger,
+                "exit_trigger": None if strategy.exit is None else strategy.exit.trigger,
+            },
+        )
+
+
+__all__ = ["StrategySelector", "StrategySelectionResult"]
