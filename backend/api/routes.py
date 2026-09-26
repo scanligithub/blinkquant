@@ -22,6 +22,7 @@ from core.fee_config import load_fee_schedule
 from core.strategy import StrategyDefinition, UniverseDefinition, SignalDefinition, PositionSizingDefinition, RebalanceDefinition
 from core.universe import UniverseFilter
 from core.universe_resolver import UniverseResolver
+from core.corporate_actions import CorporateActionStore
 import logging
 import io # New import
 import threading
@@ -128,6 +129,20 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
     }
 
 
+def _load_production_corporate_action_store() -> Optional[CorporateActionStore]:
+    """加载生产环境已校验的公司行为事件。
+
+    数据源通过 CORPORATE_ACTIONS_FILE 注入（JSON/CSV/Parquet）。
+    未配置时返回 None，保持旧行为；绝不从 adjustFactor/价格跳变推断事件。
+    """
+    path = os.getenv("CORPORATE_ACTIONS_FILE")
+    if not path:
+        return None
+    store = CorporateActionStore.from_file(path)
+    logger.info("Loaded corporate actions from %s", path)
+    return store
+
+
 def _build_backtest_request(req: BacktestRequest):
     """Normalize legacy flat parameters and the unified StrategyDefinition contract."""
     if req.strategy is not None:
@@ -193,6 +208,8 @@ def _build_backtest_request(req: BacktestRequest):
         else RawPriceStore(hf_repo_id=data_manager.repo_id)
     )
 
+    corporate_action_store = _load_production_corporate_action_store()
+
     engine = BacktestEngine(
         calendar=calendar,
         selection_engine=selection_engine,
@@ -202,6 +219,7 @@ def _build_backtest_request(req: BacktestRequest):
         allocator=top_n_equal_weight_allocator(req.top_n),
         universe_resolver=resolver,
         universe_filter=universe_filter,
+        corporate_action_store=corporate_action_store,
     )
     return engine, strategy, fee_schedule, universe_filter
 
