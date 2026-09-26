@@ -22,6 +22,8 @@ from core.backtest_types import (
 from core.checkpoint import BacktestCheckpoint, save_checkpoint, load_checkpoint
 from core.corporate_actions import CorporateAction
 from core.signal_trace import SignalTraceData, CodeTrace
+from core.strategy import StrategyDefinition
+from core.strategy_selector import StrategySelector
 
 
 class BacktestCancelled(Exception):
@@ -141,6 +143,7 @@ class BacktestEngine:
         fee_config: 'FeeConfig',
         execution_config: 'ExecutionConfig' = None,
         allocator: 'Allocator' = None,
+        strategy_selector: 'StrategySelector' = None,
     ):
         self.calendar = calendar
         self.selection_engine = selection_engine
@@ -148,6 +151,7 @@ class BacktestEngine:
         self.fee_config = fee_config
         self.execution_config = execution_config or MVP_EXECUTION_CONFIG
         self.allocator = allocator or equal_weight_allocator
+        self.strategy_selector = strategy_selector or StrategySelector(selection_engine=self.selection_engine)
         
         # 组件将在 run() 中初始化
         self.portfolio = None
@@ -155,8 +159,8 @@ class BacktestEngine:
     
     def run(
         self,
-        formula: str,
-        start_date: datetime.date,
+        formula: str = None,
+        start_date: datetime.date = None,
         end_signal_date: datetime.date,
         initial_cash: float = 1_000_000,
         initial_positions: dict[str, Position] = None,
@@ -169,6 +173,7 @@ class BacktestEngine:
         fee_schedule: 'FeeSchedule' = None,
         on_progress: 'Callable[[dict], None] | None' = None,
         cancel_check: 'Callable[[], bool] | None' = None,
+        strategy: StrategyDefinition = None,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -196,6 +201,20 @@ class BacktestEngine:
             fee_schedule: 可选 FeeSchedule，用于按日期查询历史费率。None 时使用
                 固定 fee_config（向后兼容）。
 """
+        if strategy is not None:
+            if not isinstance(strategy, StrategyDefinition):
+                raise TypeError("strategy must be a StrategyDefinition")
+            if formula is not None:
+                raise ValueError("strategy 与 formula 不能同时提供")
+            formula = strategy.entry.condition
+            rebalance_freq = strategy.rebalance.frequency
+            self.execution_config = strategy.execution
+            self.allocator = self._allocator_for_strategy(strategy)
+        elif formula is None:
+            raise ValueError("formula 或 strategy 至少提供一个")
+
+        if start_date is None or end_signal_date is None:
+            raise ValueError("start_date/end_signal_date 为必填参数")
         if rebalance_freq not in ("daily", "weekly"):
             raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
 
@@ -368,7 +387,7 @@ class BacktestEngine:
             _t0 = _time.perf_counter()
             new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
                 t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
-                corporate_action_store, diag,
+                corporate_action_store, diag, strategy=strategy,
             )
             _profiler["Selection"] += _time.perf_counter() - _t0
 
@@ -648,6 +667,46 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"prime_last_close failed (will fail-fast at valuation if needed): {e}")
 
+    def _allocator_for_strategy(self, strategy: StrategyDefinition) -> Allocator:
+        """Build the MVP allocator represented by StrategyDefinition."""
+        if strategy.sizing.method == "equal_weight":
+            return equal_weight_allocator
+        from core.backtest_types import top_n_equal_weight_allocator
+        return top_n_equal_weight_allocator(strategy.sizing.max_positions)
+
+    def _generate_event_intents(
+        self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict
+    ) -> list:
+        """Generate explicit Entry/Exit orders without implicit clearing."""
+        intents = []
+        entries = sorted(set(entry_codes))
+        exits = sorted(set(exit_codes))
+        if entries:
+            weight = 1.0 / len(entries)
+            total_equity = self.portfolio.cash + sum(
+                p.market_value for p in self.portfolio.positions.values()
+            )
+            for code in entries:
+                if code in self.portfolio.positions:
+                    continue
+                price = execution_prices.get(code, {}).get("open", 0)
+                if price <= 0 or total_equity <= 0:
+                    continue
+                qty = int((total_equity * weight) / price)
+                if qty > 0:
+                    intents.append(OrderIntent(
+                        code=code, side="BUY", target_qty=qty, target_weight=weight
+                    ))
+        for code in exits:
+            pos = self.portfolio.positions.get(code)
+            price = execution_prices.get(code, {}).get("open", 0)
+            if pos is None or pos.available_qty <= 0 or price <= 0:
+                continue
+            intents.append(OrderIntent(
+                code=code, side="SELL", target_qty=pos.available_qty, target_weight=0.0
+            ))
+        return intents
+
     def _generate_intents(self, target_weights: dict[str, float], execution_prices: dict) -> list:
         """生成目标订单意图（Rebalance Planner）。
 
@@ -748,7 +807,7 @@ class BacktestEngine:
     def _phase_post_close_signal(
         self, t: datetime.date, allowed_signals: set,
         formula: str, ranking_fn, top_n: int, universe_filter,
-        corporate_action_store, diag: dict,
+        corporate_action_store, diag: dict, strategy: StrategyDefinition = None,
     ) -> tuple:
         """POST_CLOSE_SIGNAL: selection scheduling for next trade day.
 
@@ -771,7 +830,21 @@ class BacktestEngine:
         # Generate SignalTrace for this signal date
         signal_trace = None
 
-        if ranking_fn is not None:
+        if strategy is not None:
+            result = self.strategy_selector.select(strategy, t, backtest_mode=True)
+            if strategy.mode == "target_portfolio":
+                weights = result.target_weights
+                new_intents = self._generate_intents(weights, new_prices)
+            else:
+                new_intents = self._generate_event_intents(
+                    result.entry_codes, result.exit_codes, new_prices
+                )
+            diag["intents_total"] += len(new_intents)
+            if strategy.mode == "target_portfolio" and weights:
+                diag["target_gross_by_date"][exec_d] = sum(weights.values())
+            new_sig, new_exec = result.signal_date, exec_d
+
+        elif ranking_fn is not None:
             sel = self.selection_engine.execute_selector(
                 formula, "D", None, target_date=t,
                 backtest_mode=True, raise_on_error=True, trace=False,
