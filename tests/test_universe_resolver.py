@@ -89,6 +89,20 @@ def test_rejects_overlapping_intervals():
         )
 
 
+def test_rejects_interval_after_open_ended_interval():
+    with pytest.raises(UniverseDataError, match="overlapping"):
+        UniverseResolver(
+            pl.DataFrame(
+                {
+                    "index_id": ["000300", "000300"],
+                    "stock_id": ["sh.600001", "sh.600001"],
+                    "start_date": ["2020-01-01", "2021-01-01"],
+                    "end_date": [None, "2022-01-01"],
+                }
+            )
+        )
+
+
 def test_rejects_duplicate_intervals():
     with pytest.raises(UniverseDataError, match="duplicate"):
         UniverseResolver(
