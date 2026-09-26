@@ -185,6 +185,11 @@ def test_p4_1_weekly_pit_top20_schedules_next_open():
             "date": [dt.date(2024, 1, 5)] * len(members),
             "code": members,
             "close": [100.0] * len(members),
+            "open": [100.0] * len(members),
+            "high": [100.0] * len(members),
+            "low": [100.0] * len(members),
+            "volume": [1000.0] * len(members),
+            "amount": [100000.0] * len(members),
         })
         strategy = StrategyDefinition(
             universe=UniverseDefinition(type="index", index_id="000300"),
