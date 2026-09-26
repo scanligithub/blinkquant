@@ -71,14 +71,32 @@ class StrategySelector:
             signal_date,
         )
 
-    def _previous_signal_date(self, signal_date: dt.date) -> Optional[dt.date]:
-        """返回当前 signal_date 之前最近一个可用交易日。"""
+    def _previous_signal_date(
+        self, signal_date: dt.date, timeframe: str = "D"
+    ) -> Optional[dt.date]:
+        """返回当前信号周期之前的最后一个可用交易日。
+
+        D: 前一交易日；
+        W: 前一 ISO 周最后交易日；
+        M: 前一自然月最后交易日。
+        """
         df = data_manager.df_daily
         if df is None or df.is_empty():
             return None
 
+        tf = timeframe.upper()
+        if tf == "D":
+            boundary = signal_date
+        elif tf == "W":
+            iso = signal_date.isocalendar()
+            boundary = signal_date - dt.timedelta(days=iso.weekday)
+        elif tf == "M":
+            boundary = signal_date.replace(day=1)
+        else:
+            raise ValueError(f"unsupported timeframe: {timeframe!r}")
+
         previous = (
-            df.filter(pl.col("date") < signal_date)
+            df.filter(pl.col("date") < boundary)
             .select(pl.col("date").max())
             .item()
         )
@@ -123,7 +141,7 @@ class StrategySelector:
         if signal.trigger == "condition":
             return sorted(current)
 
-        previous_date = self._previous_signal_date(signal_date)
+        previous_date = self._previous_signal_date(signal_date, signal.timeframe)
         if previous_date is None:
             return []
 
