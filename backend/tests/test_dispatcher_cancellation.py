@@ -1,7 +1,7 @@
 """Regression tests for scheduler backtest preemption semantics."""
 
 # These tests intentionally distinguish worker termination from mere DB state.
-import pytest
+import asyncio
 
 from backend.scheduler import dispatcher
 
@@ -30,25 +30,23 @@ class _Client:
         return _Response(200, {"status": next(self.statuses)})
 
 
-@pytest.mark.asyncio
-async def test_cancel_task_requires_actual_cancelled_state(monkeypatch):
+def test_cancel_task_requires_actual_cancelled_state(monkeypatch):
     client = _Client(["running", "done"])
     monkeypatch.setattr(dispatcher, "get_client", lambda: _async_return(client))
 
-    result = await dispatcher.cancel_task("node1", "job-1", timeout=1)
+    result = asyncio.run(dispatcher.cancel_task("node1", "job-1", timeout=1))
 
     assert result is False
 
 
-@pytest.mark.asyncio
-async def test_cancel_task_succeeds_after_worker_reports_cancelled(monkeypatch):
+def test_cancel_task_succeeds_after_worker_reports_cancelled(monkeypatch):
     client = _Client(["running", "cancelling", "cancelled"])
     monkeypatch.setattr(dispatcher, "get_client", lambda: _async_return(client))
 
-    result = await dispatcher.cancel_task("node1", "job-2", timeout=1)
+    result = asyncio.run(dispatcher.cancel_task("node1", "job-2", timeout=1))
 
     assert result is True
 
 
-async def _async_return(value):
+def _async_return(value):
     return value
