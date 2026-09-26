@@ -54,6 +54,14 @@ jobs:
         run: |
           PYTHONPATH=backend pytest tests/test_strategy_selector.py -v
 
+      - name: Run P4.2-2 real stockA end-to-end test
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUN_P4_2_PRODUCTION: "1"
+        run: |
+          cd backend
+          pytest tests/test_p4_2_production.py -v
+
       - name: Run preemption tests
         run: |
           PYTHONPATH=. pytest backend/tests/test_backtest_progress.py backend/tests/test_dispatcher_cancellation.py -v
