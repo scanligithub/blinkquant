@@ -326,25 +326,12 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             },
         }
         
-        calendar = TradingCalendar()
-        if data_manager.df_daily is not None:
-            trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
-            calendar.set_trade_dates(trade_dates)
-
-        raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
-        if raw_data_root:
-            raw_price_store = RawPriceStore(data_root=raw_data_root)
-        else:
-            raw_price_store = RawPriceStore(hf_repo_id=data_manager.repo_id)
-        logger.info(f"Backtest raw price source: {raw_price_store.source_type}")
-
-        backtest_engine = BacktestEngine(
-            calendar=calendar,
-            selection_engine=selection_engine,
-            raw_price_store=raw_price_store,
-            fee_config=FeeConfig(),
-            execution_config=MVP_EXECUTION_CONFIG,
-            allocator=equal_weight_allocator,
+        backtest_engine, strategy, fee_schedule, universe_filter = _build_backtest_request(req)
+        logger.info(
+            "Backtest production strategy: universe=%s, rebalance=%s, sizing=%s",
+            strategy.universe.type,
+            strategy.rebalance.frequency,
+            strategy.sizing.method,
         )
 
         # 再次检查取消状态（在耗时操作前）
@@ -359,10 +346,12 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             _set_job_progress(job_id, p)
         result = await asyncio.to_thread(
             backtest_engine.run,
-            formula=req.formula,
+            strategy=strategy,
             start_date=req.start_date,
             end_signal_date=req.end_signal_date,
             initial_cash=req.initial_cash,
+            fee_schedule=fee_schedule,
+            universe_filter=universe_filter,
             on_progress=_on_progress,
             cancel_check=cancel_event.is_set,
         )
