@@ -49,12 +49,20 @@ class FakeSelectionEngine:
         **kwargs,
     ):
         # 模拟：AAA/BBB 当前满足；AAA 在前一交易日满足，BBB 不满足。
-        codes = list(eligible_codes) if eligible_codes is not None else ["AAA", "BBB"]
+        if eligible_codes is not None:
+            codes = list(eligible_codes)
+        else:
+            codes = (
+                data_manager.df_daily
+                .filter(pl.col("date") == target_date)
+                .select("code")
+                .unique()
+                .sort("code")["code"]
+                .to_list()
+            )
         if formula == "ENTRY":
             if target_date == dt.date(2024, 1, 3):
                 codes = [c for c in codes if c == "BBB"]
-            else:
-                codes = [c for c in codes if c in {"AAA", "BBB"}]
         elif formula == "EXIT":
             codes = [c for c in codes if c == "AAA"]
         return SelectionResult(
