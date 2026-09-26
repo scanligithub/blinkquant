@@ -52,6 +52,7 @@ class StrategySelector:
     ) -> None:
         self.selection_engine = selection_engine or SelectionEngine()
         self.universe_resolver = universe_resolver
+        self._period_frames_ready = set()
 
     def _eligible_codes(
         self,
@@ -70,6 +71,45 @@ class StrategySelector:
             strategy.universe.index_id,
             signal_date,
         )
+
+    def _ensure_correct_period_frame(self, timeframe: str) -> None:
+        """Build period bars whose date is the actual last trading day.
+
+        Polars group_by_dynamic defaults to a window label rather than the
+        last observed trading date.  In a PIT backtest that is fatal for W/M:
+        a Friday target can otherwise exclude the current week's bar and make
+        current/previous cross evaluations read the same period.
+        """
+        tf = timeframe.upper()
+        if tf not in ("W", "M") or tf in self._period_frames_ready:
+            return
+        df = data_manager.df_daily
+        if df is None or df.is_empty():
+            return
+
+        aggs = [
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
+            pl.col("amount").sum(),
+            pl.col("date").last().alias("_period_date"),
+        ]
+        every = "1w" if tf == "W" else "1mo"
+        period_df = (
+            df.sort(["code", "date"])
+            .group_by_dynamic("date", every=every, by="code")
+            .agg(aggs)
+            .drop("date")
+            .rename({"_period_date": "date"})
+            .sort(["code", "date"])
+        )
+        if tf == "W":
+            data_manager.df_weekly = period_df
+        else:
+            data_manager.df_monthly = period_df
+        self._period_frames_ready.add(tf)
 
     def _previous_signal_date(
         self, signal_date: dt.date, timeframe: str = "D"
@@ -109,17 +149,23 @@ class StrategySelector:
         eligible_codes: Optional[list[str]],
         backtest_mode: bool,
     ):
+        timeframe = signal.timeframe.upper()
+        self._ensure_correct_period_frame(timeframe)
 
+        # For W/M backtests use the corrected in-memory period frame.  The
+        # daily frame has already been loaded from the real QFQ provider by
+        # BacktestEngine, so no second data download is required.
+        use_provider = not (backtest_mode and timeframe in ("W", "M"))
         result = self.selection_engine.execute_selector(
             signal.condition,
-            signal.timeframe.upper(),
+            timeframe,
             None,
             target_date=signal_date,
             backtest_mode=backtest_mode,
             raise_on_error=True,
             eligible_codes=eligible_codes,
-            qfq_data_provider=getattr(self, "_qfq_data_provider", None),
-            latest_adj=getattr(self, "_latest_adj", None),
+            qfq_data_provider=(getattr(self, "_qfq_data_provider", None) if use_provider else None),
+            latest_adj=(getattr(self, "_latest_adj", None) if use_provider else None),
         )
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(result["error"])
