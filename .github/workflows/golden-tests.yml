@@ -45,4 +45,4 @@ jobs:
       - name: Run all backend tests
         run: |
           cd backend
-          pytest tests/ -v --ignore=tests/test_golden_2024q1.py
+          PYTHONPATH=.. pytest tests/ -v --ignore=tests/test_golden_2024q1.py
