@@ -234,7 +234,7 @@ class SelectionEngine:
         df = data_manager.df_daily.filter(
             (pl.col("date") >= history_start) & (pl.col("date") <= target_date)
         )
-        if eligible_codes:
+        if eligible_codes is not None:
             df = df.filter(pl.col("code").is_in(eligible_codes))
 
         if df.is_empty():
