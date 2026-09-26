@@ -5,6 +5,8 @@ on:
     paths:
       - 'backend/**'
       - 'tests/golden/**'
+      - 'tests/test_strategy_selector.py'
+      - 'tests/test_strategy_selector.py'
       - 'config/**'
   push:
     branches: [main]
@@ -46,6 +48,10 @@ jobs:
         run: |
           cd backend
           pytest tests/test_backtest_strategy_integration.py -v
+
+      - name: Run P4.2 real SelectionEngine strategy tests
+        run: |
+          PYTHONPATH=backend pytest tests/test_strategy_selector.py -v
 
       - name: Run preemption tests
         run: |
