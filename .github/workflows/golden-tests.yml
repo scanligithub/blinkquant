@@ -42,6 +42,10 @@ jobs:
           cd backend
           pytest tests/test_golden_2024q1.py -v
           
+      - name: Run preemption tests
+        run: |
+          PYTHONPATH=. pytest backend/tests/test_backtest_progress.py backend/tests/test_dispatcher_cancellation.py -v
+
       - name: Run all backend tests
         run: |
           cd backend
