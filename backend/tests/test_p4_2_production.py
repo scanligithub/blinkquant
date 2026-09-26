@@ -236,7 +236,7 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
                 for code in resolver.members("000300", row["signal_date"])
             }
             if row["side"] == "BUY":
-                assert row["code"] in members, (
+                assert _stock_id(row["code"]) in members, (
                     f"{row['code']} not in CSI300 PIT universe at "
                     f"{row['signal_date']}"
                 )
@@ -252,7 +252,7 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
                     _stock_id(code)
                     for code in resolver.members("000300", prior_dates)
                 }
-                assert row["code"] in members or row["code"] in previous_members, (
+                assert _stock_id(row["code"]) in members or _stock_id(row["code"]) in previous_members, (
                     f"{row['code']} not in current/previous CSI300 PIT universe "
                     f"for exit at {row['signal_date']}"
                 )
