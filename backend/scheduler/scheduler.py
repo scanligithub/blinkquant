@@ -138,25 +138,32 @@ class ClusterScheduler:
             ORDER BY started_at ASC
         """)
         
+        # Actual preemption is a two-phase operation:
+        # 1) signal the node and wait until the worker really stops;
+        # 2) only then requeue the task and release the node.
+        # Never force an occupied node to idle while its compute thread may
+        # still be running.
         for victim in victims:
-            await self._preempt_backtest(conn, victim["id"], victim["cluster_job_id"], 
-                                         victim["assigned_node"], selection_task_id,
-                                         victim["generation"])
+            stopped = await self._preempt_backtest(
+                conn,
+                victim["id"],
+                victim["cluster_job_id"],
+                victim["assigned_node"],
+                selection_task_id,
+                victim["generation"],
+            )
+            if not stopped:
+                log.warning(
+                    "Selection #%s waiting for backtest %s to stop before dispatch",
+                    selection_task_id,
+                    victim["id"],
+                )
+                return
 
-        # 2. 兜底：节点表仍非 idle 的强制清空（含 selection 残留、假占用）
-        await conn.execute("""
-            UPDATE cluster_nodes
-            SET status = 'idle',
-                current_task_id = NULL,
-                task_type = NULL,
-                generation = generation + 1,
-                updated_at = datetime('now')
-            WHERE node_id IN ('node1', 'node2', 'node3')
-              AND status <> 'idle'
-        """)
-
-        # 3. 同一轮立刻派选股（不要等下一轮 / draining）
-        await self._dispatch_selection_now(conn, selection_task_id, selection_payload, selection_generation)
+        # All backtest workers have now confirmed termination.
+        await self._dispatch_selection_now(
+            conn, selection_task_id, selection_payload, selection_generation
+        )
 
     async def _dispatch_selection_now(self, conn, selection_task_id: int, selection_payload: dict, 
                                       selection_generation: int) -> None:
@@ -334,12 +341,34 @@ class ClusterScheduler:
     # 抢占与恢复
     # ═══════════════════════════════════════════════════════════
 
-    async def _preempt_backtest(self, conn, task_id: int, job_id: str, node_id: str, 
-                                preempted_by: int, old_generation: int) -> None:
-        """抢占单个 backtest：协作取消 + 标记 preempted + 自动重入队
-        关键：节点立刻 idle（不 draining），任务回 pending，DB 先提交"""
-        # 1. 标记 preempted + 重入队（原子操作，用 task 的 generation 校验）
-        # 在 Python 侧拼 error，避免 SQL 参数类型推断冲突
+    async def _preempt_backtest(
+        self,
+        conn,
+        task_id: int,
+        job_id: str,
+        node_id: str,
+        preempted_by: int,
+        old_generation: int,
+    ) -> bool:
+        """Actually stop one backtest, then requeue/release it.
+
+        The node-side cancel endpoint is cooperative: it sets a thread-safe
+        cancellation event and the BacktestEngine exits at a safe trading-day
+        boundary. We wait for that terminal state before touching scheduler
+        resource state, preventing selection from overlapping old compute.
+        """
+        if not job_id or not node_id:
+            # The dispatch HTTP call may still be in flight. Keep the task
+            # running and retry on the next scheduler cycle once job_id exists.
+            return False
+
+        from .dispatcher import cancel_task
+
+        stopped = await cancel_task(node_id, job_id, "preempted_by_selection")
+        if not stopped:
+            return False
+
+        # Only after actual worker termination do we change scheduler state.
         err = f"preempted by selection #{preempted_by}"
         result = await conn.execute(
             """
@@ -358,30 +387,35 @@ class ClusterScheduler:
               AND generation = ?
               AND status = 'running'
             """,
-            err,                # ? text
-            preempted_by,       # ? bigint
-            task_id,            # ? bigint
-            old_generation,     # ? bigint
+            err,
+            preempted_by,
+            task_id,
+            old_generation,
         )
-        log.info("Preempted task %s (gen=%s) by selection #%s, rows=%s", task_id, old_generation, preempted_by, result)
+        log.info(
+            "Preempted task %s (gen=%s) by selection #%s, rows=%s",
+            task_id,
+            old_generation,
+            preempted_by,
+            result,
+        )
 
-        # 2. 协作式取消 HF job（异步，不阻塞调度）
-        if job_id and node_id:
-            from .dispatcher import cancel_task
-            asyncio.create_task(cancel_task(node_id, job_id, "preempted_by_selection"))
-
-        # 3. 立刻释放节点（关键：idle，不是 draining），按 node_id 更新，不依赖 task 的 generation
-        if node_id:
-            await conn.execute("""
-                UPDATE cluster_nodes
-                SET status = 'idle',
-                    current_task_id = NULL,
-                    task_type = NULL,
-                    generation = generation + 1,
-                    updated_at = datetime('now')
-                WHERE node_id = ?
-            """, node_id)
-            log.info("Released node %s for selection preemption", node_id)
+        await conn.execute(
+            """
+            UPDATE cluster_nodes
+            SET status = 'idle',
+                current_task_id = NULL,
+                task_type = NULL,
+                generation = generation + 1,
+                updated_at = datetime('now')
+            WHERE node_id = ?
+              AND current_task_id = ?
+            """,
+            node_id,
+            task_id,
+        )
+        log.info("Released node %s after confirmed backtest preemption", node_id)
+        return True
 
     async def _recover_stuck(self, conn) -> None:
         """回收超时任务 & 心跳丢失节点 & 任务终态但节点未释放"""
