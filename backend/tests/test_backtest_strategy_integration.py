@@ -1,4 +1,6 @@
 import datetime as dt
+
+import pytest
 from types import SimpleNamespace
 
 from core.backtest_engine import BacktestEngine
@@ -135,7 +137,9 @@ def test_event_driven_explicit_exit_generates_sell():
     assert len(intents) == 1
     assert intents[0].side == "SELL"
     assert intents[0].target_qty == 100
-# P4.1: weekly PIT universe, Top20 allocation, and next-open execution contract.\n\ndef test_p4_1_weekly_pit_top20_schedules_next_open():
+# P4.1: weekly PIT universe, Top20 allocation, and next-open execution contract.
+
+def test_p4_1_weekly_pit_top20_schedules_next_open():
     """P4.1 contract: W signal + PIT index + Top20 -> next trading-day Open."""
     import polars as pl
 
@@ -228,4 +232,4 @@ def test_event_driven_explicit_exit_generates_sell():
     assert len(intents) == 20
     assert all(intent.side == "BUY" for intent in intents)
     assert {intent.code for intent in intents} == set(members[:20])
-    assert diag["target_gross_by_date"][execution_date] == 1.0
+    assert diag["target_gross_by_date"][execution_date] == pytest.approx(1.0)
