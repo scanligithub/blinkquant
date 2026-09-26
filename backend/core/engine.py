@@ -343,9 +343,15 @@ class SelectionEngine:
 
         # 选择当前执行周期的数据表
         if qfq_data_provider is not None and latest_adj is not None:
-            # 回测懒加载模式：从 qfq_data_provider 加载目标日期的数据
-            # 需要 lookback 窗口来计算指标（如 MA250 需要 250 天）
-            lookback_days = 250
+            # 回测懒加载模式：从 qfq_data_provider 加载目标日期的数据。
+            # lookback 必须按信号周期计算：W/M 的 MA 参数是周期数，而不是
+            # 日历天数。W 线 MA60 至少需要约 60 周历史；M 线 MA60
+            # 至少需要约 60 个月历史。留出周末/节假日及不完整周期余量。
+            lookback_days = {
+                "D": 365,
+                "W": 600,
+                "M": 2200,
+            }.get(timeframe.upper(), 365)
             start_date = target_date - datetime.timedelta(days=lookback_days)
             df = qfq_data_provider.load_qfq_window(start_date, target_date, latest_adj)
             if df.is_empty():
