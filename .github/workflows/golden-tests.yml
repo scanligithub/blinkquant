@@ -42,6 +42,11 @@ jobs:
           cd backend
           pytest tests/test_golden_2024q1.py -v
           
+      - name: Run P4.1 strategy integration tests
+        run: |
+          cd backend
+          pytest tests/test_backtest_strategy_integration.py -v
+
       - name: Run preemption tests
         run: |
           PYTHONPATH=. pytest backend/tests/test_backtest_progress.py backend/tests/test_dispatcher_cancellation.py -v
