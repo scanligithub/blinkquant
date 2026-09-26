@@ -117,7 +117,7 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
             exit=SignalDefinition(
                 condition="MA(CLOSE,5) < MA(CLOSE,20)",
                 trigger="cross_below",
-                timeframe="W",
+                timeframe="D",
             ),
             sizing=PositionSizingDefinition(
                 method="top_n_equal_weight",
@@ -161,7 +161,6 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
                 })
             print("P4.2-2 daily signal diagnostics:", signal_diag)
             print("P4.2-2 execution diagnostics:", result.execution_diagnostics)
-            weekly_dates = []
             selector = engine.strategy_selector
 
         # Basic end-to-end invariants.
