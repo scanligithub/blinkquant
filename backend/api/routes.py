@@ -210,48 +210,24 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
     if data_manager.df_daily is None:
         raise HTTPException(status_code=503, detail="Nodes are loading data...")
 
-    # 初始化回测引擎组件
-    calendar = TradingCalendar()
-    # 从 df_daily 获取交易日列表
-    if data_manager.df_daily is not None:
-        trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
-        calendar.set_trade_dates(trade_dates)
-
-    # raw 数据源：本地目录仅限开发调试（env 覆写）；生产默认走 HF Dataset 按年懒下载
-    raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
-    if raw_data_root:
-        raw_price_store = RawPriceStore(data_root=raw_data_root)
-    else:
-        raw_price_store = RawPriceStore(hf_repo_id=data_manager.repo_id)
-    logger.info(f"Backtest raw price source: {raw_price_store.source_type}")
-
-    # 创建回测引擎 - 使用已配置的 calendar 与单一 raw store 实例
-    backtest_engine = BacktestEngine(
-        calendar=calendar,
-        selection_engine=selection_engine,
-        raw_price_store=raw_price_store,
-        fee_config=FeeConfig(),
-        execution_config=MVP_EXECUTION_CONFIG,
-        allocator=equal_weight_allocator,
-    )
-
-    # 运行回测
     try:
-        result = backtest_engine.run(
-            formula=req.formula,
+        backtest_engine, strategy, fee_schedule, universe_filter = _build_backtest_request(req)
+        result = await __import__("asyncio").to_thread(
+            backtest_engine.run,
+            strategy=strategy,
             start_date=req.start_date,
             end_signal_date=req.end_signal_date,
             initial_cash=req.initial_cash,
+            fee_schedule=fee_schedule,
+            universe_filter=universe_filter,
         )
 
-        # 估值截止日 = equity curve 最后一条（可能超出 end_signal_date，属冻结语义）
         valuation_end_date = None
         if not result.equity_curve.is_empty():
             valuation_end_date = result.equity_curve["date"].max().isoformat()
 
-        # 返回结果
         return {
-            "formula": req.formula,
+            "strategy": strategy.to_dict(),
             "start_date": req.start_date.isoformat(),
             "signal_end_date": req.end_signal_date.isoformat(),
             "valuation_end_date": valuation_end_date,
@@ -260,10 +236,13 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
             "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
             "metrics": result.metrics,
+            "execution_diagnostics": result.execution_diagnostics or {},
         }
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("backtest failed")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # Async backtest endpoints
 _backtest_jobs: dict[str, dict] = {}
