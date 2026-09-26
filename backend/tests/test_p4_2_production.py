@@ -35,6 +35,7 @@ pytestmark = pytest.mark.skipif(
 HISTORY_START = dt.date(2022, 1, 1)
 BACKTEST_START = dt.date(2024, 1, 2)
 BACKTEST_END = dt.date(2024, 12, 27)
+DATA_END = dt.date(2024, 12, 31)
 
 
 def _load_real_data():
@@ -48,13 +49,13 @@ def _load_real_data():
     # SelectionEngine and BacktestEngine see the same QFQ price convention.
     latest_adj = store.load_latest_adjust_factors(
         start=BACKTEST_START,
-        end=BACKTEST_END,
+        end=DATA_END,
     )
     assert latest_adj, "stockA latest adjust factors are empty"
 
     daily = store.load_qfq_window(
         HISTORY_START,
-        BACKTEST_END,
+        DATA_END,
         latest_adj,
     )
     assert not daily.is_empty(), "stockA K-line window is empty"
@@ -90,7 +91,7 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
             data_manager.df_daily
             .filter(
                 (pl.col("date") >= BACKTEST_START)
-                & (pl.col("date") <= BACKTEST_END)
+                & (pl.col("date") <= DATA_END)
             )
             .select("date")
             .unique()
@@ -98,6 +99,12 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
             .to_list()
         )
         assert len(trade_dates) > 200
+
+        # The calendar must include the first real trading day after the
+        # signal end date, because execution is next-open.
+        next_trade_dates = [d for d in trade_dates if d > BACKTEST_END]
+        assert next_trade_dates, "real K-line window has no T+1 trading day"
+        assert next_trade_dates[0] == dt.date(2024, 12, 30)
 
         strategy = StrategyDefinition(
             name="P4.2-2 CSI300 MA Cross Top20",
