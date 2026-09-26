@@ -178,7 +178,7 @@ def test_event_driven_explicit_exit_generates_sell():
     original = data_manager.df_daily
     try:
         data_manager.df_daily = pl.DataFrame({
-            "date": [dt.date(2024, 1, 5)],
+            "date": [dt.date(2024, 1, 5)] * len(members),
             "code": members,
             "close": [100.0] * len(members),
         })
