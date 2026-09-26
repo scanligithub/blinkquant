@@ -82,19 +82,14 @@ class StrategySelector:
         )
         return previous
 
-    @staticmethod
-    def _codes(result) -> list[str]:
-        if isinstance(result, dict) and "error" in result:
-            raise RuntimeError(result["error"])
-        return list(result.codes)
-
     def _select_signal(
         self,
         signal,
         signal_date: dt.date,
         eligible_codes: Optional[list[str]],
         backtest_mode: bool,
-    ) -> list[str]:
+    ):
+
         result = self.selection_engine.execute_selector(
             signal.condition,
             signal.timeframe.upper(),
@@ -104,20 +99,22 @@ class StrategySelector:
             raise_on_error=True,
             eligible_codes=eligible_codes,
         )
-        return self._codes(result)
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(result["error"])
+        return result
 
     def _select_trigger(
         self,
+        strategy: StrategyDefinition,
         signal,
         signal_date: dt.date,
-        eligible_codes: Optional[list[str]],
         backtest_mode: bool,
     ) -> list[str]:
-        current = set(
-            self._select_signal(
-                signal, signal_date, eligible_codes, backtest_mode
-            )
+        eligible_codes = self._eligible_codes(strategy, signal_date)
+        current_result = self._select_signal(
+            signal, signal_date, eligible_codes, backtest_mode
         )
+        current = set(current_result.codes)
 
         if signal.trigger == "condition":
             return sorted(current)
@@ -128,20 +125,14 @@ class StrategySelector:
 
         # 对 cross_*，Universe 也必须按各自历史 as-of 日解析，
         # 不能把当前 Universe 套到历史信号日上。
-        previous_eligible = None
-        if self._strategy_for_index is not None:
-            previous_eligible = self._eligible_codes(
-                self._strategy_for_index, previous_date
-            )
-
-        previous = set(
-            self._select_signal(
-                signal,
-                previous_date,
-                previous_eligible,
-                backtest_mode,
-            )
+        previous_eligible = self._eligible_codes(strategy, previous_date)
+        previous_result = self._select_signal(
+            signal,
+            previous_date,
+            previous_eligible,
+            backtest_mode,
         )
+        previous = set(previous_result.codes)
 
         if signal.trigger == "cross_above":
             return sorted(current - previous)
@@ -170,29 +161,38 @@ class StrategySelector:
         if not isinstance(target_date, dt.date):
             raise TypeError("target_date must be datetime.date")
 
-        self._strategy_for_index = strategy
-
-        eligible = self._eligible_codes(strategy, target_date)
+        df = data_manager.df_daily
+        if df is None or df.is_empty():
+            raise RuntimeError("Data not loaded.")
+        effective_date = (
+            df.filter(pl.col("date") <= target_date)
+            .select(pl.col("date").max())
+            .item()
+        )
+        if effective_date is None:
+            raise RuntimeError(
+                f"指定日期 {target_date} 早于数据起点，无可用交易日数据"
+            )
 
         entry_codes = self._select_trigger(
+            strategy,
             strategy.entry,
-            target_date,
-            eligible,
+            effective_date,
             backtest_mode,
         )
 
         exit_codes: list[str] = []
         if strategy.exit is not None:
             exit_codes = self._select_trigger(
+                strategy,
                 strategy.exit,
-                target_date,
-                eligible,
+                effective_date,
                 backtest_mode,
             )
 
         return StrategySelectionResult(
             requested_date=target_date,
-            signal_date=target_date,
+            signal_date=effective_date,
             entry_codes=entry_codes,
             exit_codes=exit_codes,
             target_codes=entry_codes,
@@ -200,7 +200,11 @@ class StrategySelector:
                 "strategy_name": strategy.name,
                 "universe_type": strategy.universe.type,
                 "index_id": strategy.universe.index_id,
-                "eligible_count": None if eligible is None else len(eligible),
+                "eligible_count": (
+                    None
+                    if strategy.universe.type == "all_a"
+                    else len(self._eligible_codes(strategy, effective_date))
+                ),
                 "mode": strategy.mode,
                 "rebalance_frequency": strategy.rebalance.frequency,
                 "entry_trigger": strategy.entry.trigger,
