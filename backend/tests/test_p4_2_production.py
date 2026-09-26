@@ -144,6 +144,8 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
             initial_cash=1_000_000,
         )
 
+        selector = engine.strategy_selector
+
         # Signal-layer diagnostics: if the end-to-end run produces no trades,
         # expose the actual weekly signal dates and selector result sizes so a
         # production-data failure cannot be mistaken for an execution failure.
@@ -161,7 +163,6 @@ def test_p4_2_2_real_stocka_csi300_daily_cross_top20_e2e():
                 })
             print("P4.2-2 daily signal diagnostics:", signal_diag)
             print("P4.2-2 execution diagnostics:", result.execution_diagnostics)
-            selector = engine.strategy_selector
 
         # Basic end-to-end invariants.
         assert not result.equity_curve.is_empty()
