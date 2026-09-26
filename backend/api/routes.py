@@ -17,7 +17,11 @@ from core.engine import selection_engine
 from core.indicator_registry import nl_meta as build_nl_meta
 from core.backtest_engine import BacktestEngine, TradingCalendar, BacktestCancelled
 from core.raw_price_store import RawPriceStore
-from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator
+from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator, top_n_equal_weight_allocator
+from core.fee_config import load_fee_schedule
+from core.strategy import StrategyDefinition, UniverseDefinition, SignalDefinition, PositionSizingDefinition, RebalanceDefinition
+from core.universe import UniverseFilter
+from core.universe_resolver import UniverseResolver
 import logging
 import io # New import
 import threading
@@ -38,10 +42,19 @@ class SelectionRequest(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    formula: str
+    # Legacy flat form remains supported; strategy is the preferred contract.
+    formula: Optional[str] = None
     start_date: datetime.date
     end_signal_date: datetime.date
     initial_cash: float = 1_000_000
+    strategy: Optional[dict] = None
+    top_n: int = 20
+    rebalance_freq: str = "daily"
+    universe_type: str = "all_a"
+    index_id: Optional[str] = None
+    min_listing_days: int = 0
+    exclude_st: bool = False
+    historical_fees: bool = True
 
 
 class BenchmarkRequest(BaseModel):
@@ -114,6 +127,83 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
         "metadata": result.metadata,
     }
 
+
+def _build_backtest_request(req: BacktestRequest):
+    """Normalize legacy flat parameters and the unified StrategyDefinition contract."""
+    if req.strategy is not None:
+        strategy = StrategyDefinition.from_dict(req.strategy)
+    else:
+        if not req.formula:
+            raise ValueError("formula is required when strategy is not provided")
+        if req.universe_type not in ("all_a", "index"):
+            raise ValueError("universe_type must be all_a or index")
+        if req.universe_type == "index" and not req.index_id:
+            raise ValueError("index_id is required for index universe")
+        if req.top_n <= 0:
+            raise ValueError("top_n must be > 0")
+        strategy = StrategyDefinition(
+            universe=UniverseDefinition(type=req.universe_type, index_id=req.index_id),
+            entry=SignalDefinition(condition=req.formula, timeframe="D"),
+            sizing=PositionSizingDefinition(method="top_n_equal_weight", max_positions=req.top_n),
+            rebalance=RebalanceDefinition(frequency=req.rebalance_freq),
+            mode="target_portfolio",
+        )
+
+    if req.start_date > req.end_signal_date:
+        raise ValueError("start_date must be <= end_signal_date")
+    if req.min_listing_days < 0:
+        raise ValueError("min_listing_days must be >= 0")
+
+    universe_filter = None
+    if req.min_listing_days > 0 or req.exclude_st:
+        universe_filter = UniverseFilter(
+            min_listing_days=req.min_listing_days,
+            exclude_st=req.exclude_st,
+        )
+
+    resolver = None
+    if strategy.universe.type == "index":
+        resolver = UniverseResolver.from_huggingface(
+            repo_id=data_manager.repo_id,
+            token=os.getenv("HF_TOKEN"),
+        )
+
+    fee_schedule = None
+    if req.historical_fees:
+        fee_schedule_path = os.path.join(
+            os.path.dirname(__file__), "..", "config", "fee_schedule.yaml"
+        )
+        if not os.path.exists(fee_schedule_path):
+            fee_schedule_path = os.path.join(
+                os.path.dirname(__file__), "..", "..", "config", "fee_schedule.yaml"
+            )
+        fee_schedule = load_fee_schedule(fee_schedule_path)
+
+    calendar = TradingCalendar()
+    trade_dates = (
+        data_manager.df_daily
+        .select(pl.col("date")).unique().sort("date").to_series().to_list()
+    )
+    calendar.set_trade_dates(trade_dates)
+
+    raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
+    raw_price_store = (
+        RawPriceStore(data_root=raw_data_root)
+        if raw_data_root
+        else RawPriceStore(hf_repo_id=data_manager.repo_id)
+    )
+
+    engine = BacktestEngine(
+        calendar=calendar,
+        selection_engine=selection_engine,
+        raw_price_store=raw_price_store,
+        fee_config=FeeConfig(),
+        execution_config=strategy.execution,
+        allocator=top_n_equal_weight_allocator(req.top_n),
+        universe_resolver=resolver,
+        universe_filter=universe_filter,
+    )
+    return engine, strategy, fee_schedule, universe_filter
 
 @router.post("/backtest")
 async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
