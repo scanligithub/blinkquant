@@ -392,10 +392,16 @@ class BacktestEngine:
 
             # POST_CLOSE_SIGNAL: selection + ranking + intent generation
             _t0 = _time.perf_counter()
-            new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
-                t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
-                corporate_action_store, diag, strategy=strategy,
-            )
+            if strategy is None:
+                new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
+                    t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
+                    corporate_action_store, diag,
+                )
+            else:
+                new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
+                    t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
+                    corporate_action_store, diag, strategy=strategy,
+                )
             _profiler["Selection"] += _time.perf_counter() - _t0
 
             # POST_EXECUTION: execute pending intents
