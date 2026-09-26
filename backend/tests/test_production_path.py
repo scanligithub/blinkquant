@@ -5,6 +5,23 @@ import datetime
 from core.backtest_engine import BacktestEngine
 from core.engine import SelectionEngine, UnsupportedInBacktestError, BacktestSelectionError
 from core.backtest_types import ExecutionConfig, FeeConfig, FeeSchedule
+from core.corporate_actions import CorporateActionStore
+
+
+class TestCorporateActionProductionInjection:
+    def test_engine_accepts_injected_store(self):
+        from core.backtest_engine import TradingCalendar
+        from core.raw_price_store import RawPriceStore
+
+        store = CorporateActionStore([])
+        engine = BacktestEngine(
+            calendar=TradingCalendar(),
+            selection_engine=SelectionEngine(),
+            raw_price_store=RawPriceStore(data_root="tests/fixtures"),
+            fee_config=FeeConfig(),
+            corporate_action_store=store,
+        )
+        assert engine.corporate_action_store is store
 
 
 class TestBacktestEngineSignature:
