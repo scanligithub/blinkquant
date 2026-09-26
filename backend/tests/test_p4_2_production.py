@@ -167,9 +167,14 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
                 )
                 checked_buys += 1
             else:
-                previous_date = row["signal_date"] - dt.timedelta(days=7)
+                prior_dates = (
+                    data_manager.df_daily
+                    .filter(pl.col("date") < row["signal_date"])
+                    .select(pl.col("date").max())
+                    .item()
+                )
                 previous_members = set(
-                    resolver.members("000300", previous_date)
+                    resolver.members("000300", prior_dates)
                 )
                 assert row["code"] in members or row["code"] in previous_members, (
                     f"{row['code']} not in current/previous CSI300 PIT universe "
