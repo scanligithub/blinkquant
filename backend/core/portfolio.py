@@ -232,7 +232,7 @@ class Portfolio:
 
         - 现金分红：增加现金，调低 avg_cost
         - 送股/转增/拆股：调整持股数量和 avg_cost
-        - 配股：暂不实现（raise NotImplementedError）
+        - 配股：默认不参与认购（数量/现金不变）；后续可扩展为可配置认购。
         """
         from core.corporate_actions import ActionType, adjust_qty_for_split, adjust_avg_cost_for_dividend
 
@@ -256,7 +256,9 @@ class Portfolio:
             pos.frozen_qty = new_frozen
 
         elif action.action_type == ActionType.RIGHTS_ISSUE:
-            raise NotImplementedError("配股暂未实现")
+            # 默认不参与配股。除权后的市场价格由行情数据体现，
+            # 未认购时持仓数量与现金均不变，避免人为假设认购资金。
+            return
 
     def update_daily_pnl(self, prev_equity: float, current_equity: float):
         self._daily_pnl = current_equity - prev_equity
