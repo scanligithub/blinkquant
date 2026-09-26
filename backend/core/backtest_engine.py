@@ -24,6 +24,7 @@ from core.corporate_actions import CorporateAction
 from core.signal_trace import SignalTraceData, CodeTrace
 from core.strategy import StrategyDefinition
 from core.strategy_selector import StrategySelector
+from core.universe_resolver import UniverseResolver
 
 
 class BacktestCancelled(Exception):
@@ -144,6 +145,7 @@ class BacktestEngine:
         execution_config: 'ExecutionConfig' = None,
         allocator: 'Allocator' = None,
         strategy_selector: 'StrategySelector' = None,
+        universe_resolver: 'UniverseResolver' = None,
     ):
         self.calendar = calendar
         self.selection_engine = selection_engine
@@ -151,7 +153,10 @@ class BacktestEngine:
         self.fee_config = fee_config
         self.execution_config = execution_config or MVP_EXECUTION_CONFIG
         self.allocator = allocator or equal_weight_allocator
-        self.strategy_selector = strategy_selector or StrategySelector(selection_engine=self.selection_engine)
+        self.strategy_selector = strategy_selector or StrategySelector(
+            selection_engine=self.selection_engine,
+            universe_resolver=universe_resolver,
+        )
         
         # 组件将在 run() 中初始化
         self.portfolio = None
@@ -354,6 +359,8 @@ class BacktestEngine:
             start=start_date, end=end_signal_date,
         )
         logger.info(f"Loaded latest adjust factors for {len(self._latest_adj)} codes")
+        self.strategy_selector._qfq_data_provider = self.raw_price_store
+        self.strategy_selector._latest_adj = self._latest_adj
         
         import time as _time
         _profiler = {
