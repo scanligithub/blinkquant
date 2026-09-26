@@ -294,3 +294,4 @@ def test_p4_2_real_selection_engine_weekly_ma_cross_with_pit_top20():
     assert result.target_codes == [codes[0]]
     assert result.target_weights == {codes[0]: 1.0}
     assert result.metadata["eligible_count"] == 25
+    assert len(result.target_weights) <= 20
