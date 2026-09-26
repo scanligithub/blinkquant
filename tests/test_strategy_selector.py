@@ -163,3 +163,31 @@ def test_all_a_keeps_existing_universe_behavior():
 
     assert result.entry_codes == ["AAA"]
     assert result.target_weights == {"AAA": 1.0}
+
+
+def test_weekly_cross_uses_previous_week_not_previous_day():
+    original = data_manager.df_daily
+    try:
+        data_manager.df_daily = pl.DataFrame({
+            "date": [dt.date(2024,1,4), dt.date(2024,1,5), dt.date(2024,1,8), dt.date(2024,1,12)],
+            "code": ["AAA"] * 4,
+            "close": [1.0] * 4,
+        })
+        selector = StrategySelector(selection_engine=FakeSelectionEngine())
+        assert selector._previous_signal_date(dt.date(2024,1,12), "W") == dt.date(2024,1,5)
+    finally:
+        data_manager.df_daily = original
+
+
+def test_monthly_cross_uses_previous_month_not_previous_day():
+    original = data_manager.df_daily
+    try:
+        data_manager.df_daily = pl.DataFrame({
+            "date": [dt.date(2024,1,30), dt.date(2024,1,31), dt.date(2024,2,1), dt.date(2024,2,29)],
+            "code": ["AAA"] * 4,
+            "close": [1.0] * 4,
+        })
+        selector = StrategySelector(selection_engine=FakeSelectionEngine())
+        assert selector._previous_signal_date(dt.date(2024,2,29), "M") == dt.date(2024,1,31)
+    finally:
+        data_manager.df_daily = original
