@@ -49,9 +49,11 @@ class StrategySelector:
         self,
         selection_engine: Optional[SelectionEngine] = None,
         universe_resolver: Optional[UniverseResolver] = None,
+        universe_filter=None,
     ) -> None:
         self.selection_engine = selection_engine or SelectionEngine()
         self.universe_resolver = universe_resolver
+        self.universe_filter = universe_filter
         self._period_frames_ready = set()
 
     def _eligible_codes(
@@ -60,16 +62,33 @@ class StrategySelector:
         signal_date: dt.date,
     ) -> Optional[list[str]]:
         if strategy.universe.type == "all_a":
-            return None
-
-        if self.universe_resolver is None:
-            raise ValueError(
-                "index strategy requires a UniverseResolver"
+            codes = None
+        else:
+            if self.universe_resolver is None:
+                raise ValueError(
+                    "index strategy requires a UniverseResolver"
+                )
+            codes = self.universe_resolver.members(
+                strategy.universe.index_id,
+                signal_date,
             )
 
-        return self.universe_resolver.members(
-            strategy.universe.index_id,
-            signal_date,
+        if self.universe_filter is None:
+            return codes
+
+        if codes is None:
+            if data_manager.df_daily is None:
+                return []
+            codes = (
+                data_manager.df_daily
+                .filter(pl.col("date") == signal_date)
+                .select("code")
+                .unique()
+                .sort("code")["code"]
+                .to_list()
+            )
+        return self.universe_filter.filter(
+            codes, signal_date, df=data_manager.df_daily
         )
 
     def _ensure_correct_period_frame(self, timeframe: str) -> None:
