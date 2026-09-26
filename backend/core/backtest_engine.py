@@ -147,6 +147,7 @@ class BacktestEngine:
         strategy_selector: 'StrategySelector' = None,
         universe_resolver: 'UniverseResolver' = None,
         universe_filter: 'UniverseFilter' = None,
+        corporate_action_store: 'CorporateActionStore' = None,
     ):
         self.calendar = calendar
         self.selection_engine = selection_engine
@@ -160,6 +161,9 @@ class BacktestEngine:
             universe_filter=universe_filter,
         )
         
+        # 生产入口可注入规范化公司行为 Store；run() 仍允许按次覆盖。
+        self.corporate_action_store = corporate_action_store
+
         # 组件将在 run() 中初始化
         self.portfolio = None
         self.execution_engine = None
@@ -222,6 +226,11 @@ class BacktestEngine:
 
         if start_date is None or end_signal_date is None:
             raise ValueError("start_date/end_signal_date 为必填参数")
+
+        # run() 参数优先；否则使用生产构造时注入的 Store。
+        # 两者均为空时保持历史向后兼容：不处理公司行为。
+        if corporate_action_store is None:
+            corporate_action_store = self.corporate_action_store
         if rebalance_freq not in ("daily", "weekly"):
             raise ValueError(f"rebalance_freq 仅支持 daily/weekly，收到 {rebalance_freq!r}")
 
