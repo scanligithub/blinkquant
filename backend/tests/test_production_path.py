@@ -96,3 +96,42 @@ class TestSelectionFailureAbort:
         sig = inspect.signature(SelectionEngine.execute_selector)
         assert 'raise_on_error' in sig.parameters
         assert sig.parameters['raise_on_error'].default is False
+
+
+class TestProductionBacktestRequestContract:
+    """P0: HTTP request must expose the same core controls as the engine."""
+
+    def test_legacy_request_defaults_to_top_n_daily_historical_fees(self):
+        from api.routes import BacktestRequest
+
+        req = BacktestRequest(
+            formula="CLOSE > MA(CLOSE, 20)",
+            start_date=datetime.date(2024, 1, 2),
+            end_signal_date=datetime.date(2024, 12, 30),
+        )
+        assert req.top_n == 20
+        assert req.rebalance_freq == "daily"
+        assert req.universe_type == "all_a"
+        assert req.historical_fees is True
+
+    def test_strategy_request_round_trips_universe_rebalance_and_sizing(self):
+        from api.routes import BacktestRequest
+
+        req = BacktestRequest(
+            strategy={
+                "universe": {"type": "index", "index_id": "000300"},
+                "entry": {
+                    "condition": "MA(CLOSE,5) > MA(CLOSE,60)",
+                    "trigger": "cross_above",
+                    "timeframe": "D",
+                },
+                "sizing": {"method": "top_n_equal_weight", "max_positions": 20},
+                "rebalance": {"frequency": "weekly"},
+                "mode": "target_portfolio",
+            },
+            start_date=datetime.date(2024, 1, 2),
+            end_signal_date=datetime.date(2024, 12, 30),
+        )
+        assert req.strategy["universe"]["index_id"] == "000300"
+        assert req.strategy["sizing"]["max_positions"] == 20
+        assert req.strategy["rebalance"]["frequency"] == "weekly"
