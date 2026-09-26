@@ -55,6 +55,11 @@ class StrategySelector:
         self.universe_resolver = universe_resolver
         self.universe_filter = universe_filter
         self._period_frames_ready = set()
+        # Reuse a completed as-of signal when it becomes the previous day
+        # of the next backtest date. This avoids recalculating entry/exit
+        # formulas twice for consecutive daily cross signals.
+        self._selection_cache: dict[tuple[str, dt.date, bool], StrategySelectionResult] = {}
+        self._selection_cache_max = 4096
 
     def _map_codes_to_data_format(self, codes: list[str]) -> list[str]:
         """Map canonical PIT stock IDs to the code format used by df_daily.
@@ -283,6 +288,11 @@ class StrategySelector:
         if not isinstance(target_date, dt.date):
             raise TypeError("target_date must be datetime.date")
 
+        cache_key = (repr(strategy.to_dict()), target_date, backtest_mode)
+        cached = self._selection_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         df = data_manager.df_daily
         if df is None or df.is_empty():
             raise RuntimeError("Data not loaded.")
@@ -319,7 +329,7 @@ class StrategySelector:
             target_weights = allocator(entry_codes, effective_date)
         target_codes = sorted(target_weights)
 
-        return StrategySelectionResult(
+        result = StrategySelectionResult(
             requested_date=target_date,
             signal_date=effective_date,
             entry_codes=entry_codes,
@@ -341,6 +351,10 @@ class StrategySelector:
                 "exit_trigger": None if strategy.exit is None else strategy.exit.trigger,
             },
         )
+        if len(self._selection_cache) >= self._selection_cache_max:
+            self._selection_cache.pop(next(iter(self._selection_cache)))
+        self._selection_cache[cache_key] = result
+        return result
 
 
 __all__ = ["StrategySelector", "StrategySelectionResult"]
