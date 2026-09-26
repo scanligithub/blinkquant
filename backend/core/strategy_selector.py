@@ -24,6 +24,7 @@ from typing import Optional
 
 from .data_manager import data_manager
 from .engine import SelectionEngine
+from .backtest_types import equal_weight_allocator, top_n_equal_weight_allocator
 from .strategy import StrategyDefinition
 from .universe_resolver import UniverseResolver
 
@@ -37,6 +38,7 @@ class StrategySelectionResult:
     entry_codes: list[str]
     exit_codes: list[str]
     target_codes: list[str]
+    target_weights: dict[str, float] = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
 
 
@@ -195,7 +197,8 @@ class StrategySelector:
             signal_date=effective_date,
             entry_codes=entry_codes,
             exit_codes=exit_codes,
-            target_codes=entry_codes,
+            target_codes=target_codes,
+            target_weights=target_weights,
             metadata={
                 "strategy_name": strategy.name,
                 "universe_type": strategy.universe.type,
