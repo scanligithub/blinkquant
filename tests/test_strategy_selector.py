@@ -51,7 +51,7 @@ class FakeSelectionEngine:
         codes = list(eligible_codes) if eligible_codes is not None else ["AAA", "BBB"]
         if formula == "ENTRY":
             if target_date == dt.date(2024, 1, 3):
-                codes = [c for c in codes if c == "AAA"]
+                codes = [c for c in codes if c == "BBB"]
             else:
                 codes = [c for c in codes if c in {"AAA", "BBB"}]
         elif formula == "EXIT":
