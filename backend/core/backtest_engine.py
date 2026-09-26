@@ -166,7 +166,7 @@ class BacktestEngine:
         self,
         formula: str = None,
         start_date: datetime.date = None,
-        end_signal_date: datetime.date,
+        end_signal_date: datetime.date = None,
         initial_cash: float = 1_000_000,
         initial_positions: dict[str, Position] = None,
         initial_state: dict = None,
