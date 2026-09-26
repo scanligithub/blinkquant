@@ -56,6 +56,32 @@ class StrategySelector:
         self.universe_filter = universe_filter
         self._period_frames_ready = set()
 
+    def _map_codes_to_data_format(self, codes: list[str]) -> list[str]:
+        """Map canonical PIT stock IDs to the code format used by df_daily.
+
+        stockA membership stores six-digit stock IDs (for example 000001),
+        while BlinkQuant market data uses exchange-qualified codes
+        (for example sz.000001). Keep the PIT file exchange-neutral and map
+        only against codes actually present in the loaded market data.
+        """
+        if not codes or data_manager.df_daily is None:
+            return list(codes)
+
+        available = set(
+            data_manager.df_daily.select("code").unique()["code"].to_list()
+        )
+        mapped = []
+        for code in codes:
+            code = str(code).strip()
+            if code in available:
+                mapped.append(code)
+                continue
+            candidates = [f"sh.{code}", f"sz.{code}", f"bj.{code}"]
+            matches = [candidate for candidate in candidates if candidate in available]
+            if len(matches) == 1:
+                mapped.append(matches[0])
+        return sorted(set(mapped))
+
     def _eligible_codes(
         self,
         strategy: StrategyDefinition,
@@ -72,6 +98,7 @@ class StrategySelector:
                 strategy.universe.index_id,
                 signal_date,
             )
+            codes = self._map_codes_to_data_format(codes)
 
         if self.universe_filter is None:
             return codes
