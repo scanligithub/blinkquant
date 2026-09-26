@@ -46,6 +46,7 @@ class FakeSelectionEngine:
         backtest_mode,
         raise_on_error,
         eligible_codes,
+        **kwargs,
     ):
         # 模拟：AAA/BBB 当前满足；AAA 在前一交易日满足，BBB 不满足。
         codes = list(eligible_codes) if eligible_codes is not None else ["AAA", "BBB"]
