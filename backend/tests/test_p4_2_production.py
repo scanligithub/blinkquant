@@ -153,17 +153,31 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
         )
         assert bad_t1.is_empty(), bad_t1
 
-        # Every traded code must have been a PIT CSI300 member on its signal
-        # date.  This validates Universe injection before signal evaluation.
-        checked = 0
+        # BUY signals must be members of the CSI300 universe on the
+        # signal date.  SELL signals may legitimately be generated from the
+        # previous-period universe when a constituent leaves the index.
+        checked_buys = 0
+        checked_sells = 0
         for row in result.trades.iter_rows(named=True):
             members = set(resolver.members("000300", row["signal_date"]))
-            assert row["code"] in members, (
-                f"{row['code']} not in CSI300 PIT universe at "
-                f"{row['signal_date']}"
-            )
-            checked += 1
-        assert checked > 0
+            if row["side"] == "BUY":
+                assert row["code"] in members, (
+                    f"{row['code']} not in CSI300 PIT universe at "
+                    f"{row['signal_date']}"
+                )
+                checked_buys += 1
+            else:
+                previous_date = row["signal_date"] - dt.timedelta(days=7)
+                previous_members = set(
+                    resolver.members("000300", previous_date)
+                )
+                assert row["code"] in members or row["code"] in previous_members, (
+                    f"{row['code']} not in current/previous CSI300 PIT universe "
+                    f"for exit at {row['signal_date']}"
+                )
+                checked_sells += 1
+        assert checked_buys > 0
+        assert checked_buys + checked_sells == result.trades.height
 
         # Top-N contract: no execution batch may contain >20 distinct codes.
         for signal_date, batch in result.trades.group_by("signal_date"):
