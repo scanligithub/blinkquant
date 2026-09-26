@@ -144,6 +144,27 @@ def test_p4_2_2_real_stocka_csi300_weekly_cross_top20_e2e():
             initial_cash=1_000_000,
         )
 
+        # Signal-layer diagnostics: if the end-to-end run produces no trades,
+        # expose the actual weekly signal dates and selector result sizes so a
+        # production-data failure cannot be mistaken for an execution failure.
+        if result.trades.is_empty():
+            weekly_dates = sorted(engine.calendar.weekly_signal_dates(
+                BACKTEST_START, BACKTEST_END
+            ))
+            selector = engine.strategy_selector
+            signal_diag = []
+            for signal_date in weekly_dates:
+                sr = selector.select(strategy, signal_date, backtest_mode=True)
+                signal_diag.append({
+                    "date": signal_date.isoformat(),
+                    "entry": len(sr.entry_codes),
+                    "exit": len(sr.exit_codes),
+                    "target": len(sr.target_codes),
+                    "eligible": sr.metadata.get("eligible_count"),
+                })
+            print("P4.2-2 signal diagnostics:", signal_diag)
+            print("P4.2-2 execution diagnostics:", result.execution_diagnostics)
+
         # Basic end-to-end invariants.
         assert not result.equity_curve.is_empty()
         assert result.equity_curve["date"].min() == BACKTEST_START
