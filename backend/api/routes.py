@@ -132,15 +132,37 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
 def _load_production_corporate_action_store() -> Optional[CorporateActionStore]:
     """加载生产环境已校验的公司行为事件。
 
-    数据源通过 CORPORATE_ACTIONS_FILE 注入（JSON/CSV/Parquet）。
-    未配置时返回 None，保持旧行为；绝不从 adjustFactor/价格跳变推断事件。
+    优先使用本地 CORPORATE_ACTIONS_FILE；否则从 HF Dataset 下载标准产物。
+    数据必须来自规范化 GBBQ 事件，不从 adjustFactor/价格跳变推断。
     """
     path = os.getenv("CORPORATE_ACTIONS_FILE")
-    if not path:
+    if path:
+        store = CorporateActionStore.from_file(path)
+        logger.info("Loaded corporate actions from %s", path)
+        return store
+
+    repo_id = os.getenv("CORPORATE_ACTIONS_HF_REPO", "scanli/stocka-data")
+    filename = os.getenv(
+        "CORPORATE_ACTIONS_HF_FILE",
+        "corporate_actions/corporate_actions.parquet",
+    )
+    try:
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            repo_type="dataset",
+            token=os.getenv("HF_TOKEN"),
+        )
+        store = CorporateActionStore.from_file(path)
+        logger.info(
+            "Loaded corporate actions from HF dataset %s/%s",
+            repo_id, filename,
+        )
+        return store
+    except Exception as exc:
+        logger.warning("Corporate action dataset unavailable: %s", exc)
         return None
-    store = CorporateActionStore.from_file(path)
-    logger.info("Loaded corporate actions from %s", path)
-    return store
 
 
 def _build_backtest_request(req: BacktestRequest):
