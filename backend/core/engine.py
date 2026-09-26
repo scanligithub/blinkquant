@@ -37,9 +37,11 @@ class SelectionEngine:
         self._set_cache: dict = {}
         self._set_cache_max = 32
 
-    def _canonical_atom_key(self, tf: str, target_date: datetime.date, atom_expr_str: str) -> str:
-        """生成 atom 的 canonical key（用于 set cache 去重），含 target_date 隔离不同交易日。"""
-        return f"{tf}:{target_date.isoformat()}:{atom_expr_str}"
+    def _canonical_atom_key(self, tf: str, target_date: datetime.date, atom_expr_str: str,
+                            eligible_codes=None) -> str:
+        """生成 atom cache key；target_date 与 Universe 均隔离，避免跨 Universe 串缓存。"""
+        universe_key = "*" if eligible_codes is None else ",".join(sorted(set(eligible_codes)))
+        return f"{tf}:{target_date.isoformat()}:{atom_expr_str}:U={universe_key}"
 
     def _prepare_hot_jit(self, formula: str):
         """
@@ -90,7 +92,8 @@ class SelectionEngine:
 
     def execute_selector(self, formula: str, timeframe: str, background_tasks, target_date=None,
                          backtest_mode: bool = False, raise_on_error: bool = False,
-                         trace: bool = False, qfq_data_provider=None, latest_adj: dict = None):
+                         trace: bool = False, qfq_data_provider=None, latest_adj: dict = None,
+                         eligible_codes=None):
         """执行选股。
 
         target_date（datetime.date）可选：指定时回退到 ≤ 该日的最近交易日，未指定用数据最新日。
@@ -99,6 +102,7 @@ class SelectionEngine:
         trace: True 时生成完整 SignalTraceData（P2-2A lazy trace）。
         qfq_data_provider: 可选，用于回测模式的前复权数据提供者（懒加载）。
         latest_adj: 可选，{code: latest_adjust_factor} 用于前复权计算。
+        eligible_codes: 可选的 PIT Universe 股票集合；若提供，必须在信号计算前过滤。
 
         多周期支持：
         - 检测 W./M. 前缀 → 使用 parse_multi_tf → plan tree
@@ -170,13 +174,15 @@ class SelectionEngine:
                                             backtest_mode=backtest_mode,
                                             raise_on_error=raise_on_error,
                                             qfq_data_provider=qfq_data_provider,
-                                            latest_adj=latest_adj)
+                                            latest_adj=latest_adj,
+                                            eligible_codes=eligible_codes)
         else:
             result_dict = self._execute_single(formula, timeframe, target_date,
                                                backtest_mode=backtest_mode,
                                                raise_on_error=raise_on_error,
                                                qfq_data_provider=qfq_data_provider,
-                                               latest_adj=latest_adj)
+                                               latest_adj=latest_adj,
+                                               eligible_codes=eligible_codes)
 
         # 返回 SelectionResult（保持错误 dict 兼容）
         if isinstance(result_dict, dict) and "error" in result_dict:
@@ -322,7 +328,8 @@ class SelectionEngine:
 
     def _execute_single(self, formula: str, timeframe: str, target_date: datetime.date,
                         backtest_mode: bool = False, raise_on_error: bool = False,
-                        qfq_data_provider=None, latest_adj: dict = None):
+                        qfq_data_provider=None, latest_adj: dict = None,
+                        eligible_codes=None):
         """单周期执行路径（向后兼容）。"""
         # P0-1: 回测模式下禁止板块/行业字段（PIT leakage）
         if backtest_mode:
@@ -400,7 +407,8 @@ class SelectionEngine:
 
     def _execute_mtf(self, formula: str, base_tf: str, target_date: datetime.date,
                      backtest_mode: bool = False, raise_on_error: bool = False,
-                     qfq_data_provider=None, latest_adj: dict = None):
+                     qfq_data_provider=None, latest_adj: dict = None,
+                     eligible_codes=None):
         """多周期执行路径。
 
         流程：
@@ -422,25 +430,31 @@ class SelectionEngine:
                                      backtest_mode=backtest_mode,
                                      raise_on_error=raise_on_error,
                                      qfq_data_provider=qfq_data_provider,
-                                     latest_adj=latest_adj)
+                                     latest_adj=latest_adj,
+                                     eligible_codes=eligible_codes)
         codes = sorted(result_set) if result_set else set()
 
         return {"codes": list(codes), "date": target_date.isoformat()}
 
     def _fold_plan(self, plan: dict, target_date: datetime.date, base_tf: str,
                    backtest_mode: bool = False, raise_on_error: bool = False,
-                   qfq_data_provider=None, latest_adj: dict = None) -> set:
+                   qfq_data_provider=None, latest_adj: dict = None,
+                   eligible_codes=None) -> set:
         """递归折叠 plan tree，返回 code set。"""
         if plan["type"] == "atom":
             return self._eval_atom(plan, target_date, base_tf,
                                    backtest_mode=backtest_mode,
-                                   raise_on_error=raise_on_error)
+                                   raise_on_error=raise_on_error,
+                                   qfq_data_provider=qfq_data_provider,
+                                   latest_adj=latest_adj,
+                                   eligible_codes=eligible_codes)
         elif plan["type"] == "bool":
             child_sets = [self._fold_plan(c, target_date, base_tf,
                                           backtest_mode=backtest_mode,
                                           raise_on_error=raise_on_error,
                                           qfq_data_provider=qfq_data_provider,
-                                          latest_adj=latest_adj)
+                                          latest_adj=latest_adj,
+                                          eligible_codes=eligible_codes)
                           for c in plan["children"]]
             if plan["op"] == "AND":
                 return set.intersection(*child_sets) if child_sets else set()
@@ -450,7 +464,8 @@ class SelectionEngine:
 
     def _eval_atom(self, atom: dict, target_date: datetime.date, base_tf: str,
                    backtest_mode: bool = False, raise_on_error: bool = False,
-                   qfq_data_provider=None, latest_adj: dict = None) -> set:
+                   qfq_data_provider=None, latest_adj: dict = None,
+                   eligible_codes=None) -> set:
         """对单个 atom 求值，返回 code set。
 
         契约：返回“每一只股票在 target_date 的 as-of bar 上，该 atom 是否成立”的集合。
@@ -474,7 +489,9 @@ class SelectionEngine:
                 )
 
         # 生成 canonical key（用于 set cache，含 target_date 隔离）
-        cache_key = self._canonical_atom_key(tf, target_date, atom.get("source", str(expr)))
+        cache_key = self._canonical_atom_key(
+            tf, target_date, atom.get("source", str(expr)), eligible_codes
+        )
         cached = self._set_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -483,6 +500,12 @@ class SelectionEngine:
         df = data_manager.build_asof_frame(tf, target_date)
         if df is None or df.is_empty():
             return set()
+
+        # PIT Universe 必须在 atom 指标计算之前注入。
+        if eligible_codes is not None:
+            df = df.filter(pl.col("code").is_in(set(eligible_codes)))
+            if df.is_empty():
+                return set()
 
         # 设置 mount_enabled：基础周期原子可挂载，非基础周期原子走 slow-path
         blink_parser.mount_enabled = (tf == base_tf)
