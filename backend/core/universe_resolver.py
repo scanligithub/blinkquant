@@ -129,21 +129,23 @@ class UniverseResolver:
         # 检查同一 index/stock 的有效区间不能重叠。
         # NULL end_date 视为 +infinity，因此后续任何区间都非法。
         ordered = result.sort(["index_id", "stock_id", "start_date", "end_date"])
+        # NULL end_date = +infinity。使用 date.max 作为校验哨兵，
+        # 同时保留原始 end_date 供最终 PIT 查询使用。
+        max_date = dt.date.max
         overlap = (
             ordered
             .with_columns(
                 pl.col("end_date")
+                .fill_null(max_date)
                 .shift(1)
                 .over(["index_id", "stock_id"])
                 .alias("_prev_end")
             )
             .filter(
-                pl.col("_prev_end").is_null()
-                | (pl.col("start_date") < pl.col("_prev_end"))
+                pl.col("_prev_end").is_not_null()
+                & (pl.col("start_date") < pl.col("_prev_end"))
             )
         )
-        # 第一条记录的 _prev_end 为 NULL，不能算 overlap。
-        overlap = overlap.filter(pl.col("_prev_end").is_not_null())
         if not overlap.is_empty():
             raise UniverseDataError(
                 f"membership contains overlapping intervals: {overlap.height} rows"
