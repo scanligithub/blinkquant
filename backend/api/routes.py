@@ -227,6 +227,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             valuation_end_date = result.equity_curve["date"].max().isoformat()
 
         return {
+            "formula": strategy.entry.condition,
             "strategy": strategy.to_dict(),
             "start_date": req.start_date.isoformat(),
             "signal_end_date": req.end_signal_date.isoformat(),
@@ -384,7 +385,8 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             "progress": {"pct": 100.0, "stage": "done", "updated_at": _utc_now_iso()},
             "summary": summary,
             "meta": {
-                "formula": req.formula,
+                "formula": strategy.entry.condition,
+                "strategy": strategy.to_dict(),
                 "start_date": req.start_date.isoformat(),
                 "signal_end_date": req.end_signal_date.isoformat(),
                 "valuation_end_date": valuation_end_date,
