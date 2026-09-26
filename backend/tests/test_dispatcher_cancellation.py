@@ -1,6 +1,7 @@
 """Regression tests for scheduler backtest preemption semantics."""
 
 # These tests intentionally distinguish worker termination from mere DB state.
+# Dedicated CI step runs these without requiring pytest-asyncio.
 import asyncio
 
 from backend.scheduler import dispatcher
