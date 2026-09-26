@@ -87,19 +87,22 @@ class StrategySelector:
         if df is None or df.is_empty():
             return
 
-        aggs = [
-            pl.col("open").first(),
-            pl.col("high").max(),
-            pl.col("low").min(),
-            pl.col("close").last(),
-            pl.col("volume").sum(),
-            pl.col("amount").sum(),
-            pl.col("date").last().alias("_period_date"),
-        ]
+        # Signal evaluation only requires OHLCV columns that actually exist.
+        # Lightweight selector fixtures may contain date/code/close only.
+        aggs = [pl.col("close").last(), pl.col("date").last().alias("_period_date")]
+        for column, expr in (
+            ("open", pl.col("open").first()),
+            ("high", pl.col("high").max()),
+            ("low", pl.col("low").min()),
+            ("volume", pl.col("volume").sum()),
+            ("amount", pl.col("amount").sum()),
+        ):
+            if column in df.columns:
+                aggs.insert(-1, expr)
         every = "1w" if tf == "W" else "1mo"
         period_df = (
             df.sort(["code", "date"])
-            .group_by_dynamic("date", every=every, by="code")
+            .group_by_dynamic("date", every=every, group_by="code")
             .agg(aggs)
             .drop("date")
             .rename({"_period_date": "date"})
