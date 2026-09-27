@@ -203,4 +203,3 @@ jobs:
               assert (buys["qty"] % 100 == 0).all(), buys
           print(f"EVENT-DRIVEN E2E OK: trades={trades.height}, buys={buys.height}, sells={trades.filter(pl.col('side')=='SELL').height}")
           PY
-          PY
