@@ -184,18 +184,20 @@ def test_L3_1_signal_poisoning_decision_layer_invariant():
             assert sel_a.codes == sel_b.codes == ["sh.AAA"]
             assert sel_a.signal_date == sel_b.signal_date == T1
 
-            # ② 意图决策层不变：每个 signal_date 的 (code,side) 集合一致
-            da = {(r["code"], r["side"]) for _, r in
-                  [(t["signal_date"], t) for t in res_a.trades.to_dicts()]}
-            db = {(r["code"], r["side"]) for _, r in
-                  [(t["signal_date"], t) for t in res_b.trades.to_dicts()]}
+            # ② 只比较 T1 信号产生的 T1→T2 决策。
+            #    date>T1 的投毒当然可以影响 T2/T3 后续信号；将整个回测
+            #    的 trades 混在一起比较，会把“后续信号变化”错误判成 L3-1 失败。
+            ta = res_a.trades.filter(pl.col("signal_date") == T1)
+            tb = res_b.trades.filter(pl.col("signal_date") == T1)
+            da = {(r["code"], r["side"]) for r in ta.to_dicts()}
+            db = {(r["code"], r["side"]) for r in tb.to_dicts()}
             assert da == db, f"方向集合漂移: {da} vs {db}"
             assert ("sh.AAA", "BUY") in da
 
-            # ③ 执行域允许变化：T2 开盘被 ×100 → 首笔 BUY qty 必然不同（锁死边界语义）
-            q_a = (res_a.trades.filter(pl.col("side") == "BUY")
+            # ③ 执行域允许变化：T2 开盘被 ×100 → T1→T2 BUY qty 必然不同
+            q_a = (ta.filter(pl.col("side") == "BUY")
                    .sort("execution_date")["qty"][0])
-            q_b = (res_b.trades.filter(pl.col("side") == "BUY")
+            q_b = (tb.filter(pl.col("side") == "BUY")
                    .sort("execution_date")["qty"][0])
             assert q_a != q_b, "预期 execution 敏感：T+1 open 投毒应改变定尺数量"
 
