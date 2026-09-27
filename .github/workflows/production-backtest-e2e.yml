@@ -105,6 +105,13 @@ jobs:
           assert b.get("index_id")=="000300",b
           assert len(b.get("series") or []) == s["n_equity_points"], (len(b.get("series") or []), s["n_equity_points"])
           assert b.get("cumulative_return") is not None,b
+          m=s.get("metrics") or {}
+          for key in ("benchmark_alpha","benchmark_beta","benchmark_tracking_error","benchmark_information_ratio"):
+              assert key in m, (key,m)
+              assert isinstance(m[key], (int,float)), (key,m[key])
+          assert "benchmark_alpha" in (r.get("meta") or {}).get("metrics",{}), r
+          print(json.dumps({"benchmark":b,"benchmark_metrics":{k:m[k] for k in ("benchmark_alpha","benchmark_beta","benchmark_tracking_error","benchmark_information_ratio")}},ensure_ascii=False,indent=2))
+          print("BENCHMARK RISK METRICS E2E OK")
           print(json.dumps(b,ensure_ascii=False,indent=2))
           print("BENCHMARK E2E OK")
           print(json.dumps(s,ensure_ascii=False,indent=2))
