@@ -204,6 +204,7 @@ def _build_backtest_request(req: BacktestRequest):
             repo_id=data_manager.repo_id,
             token=os.getenv("HF_TOKEN"),
         )
+        resolver.resolve_index_id(strategy.universe.index_id)
 
     fee_schedule = None
     if req.historical_fees:
