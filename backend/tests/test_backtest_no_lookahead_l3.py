@@ -162,7 +162,7 @@ def _base_rows():
 def test_L3_1_signal_poisoning_decision_layer_invariant():
     """投毒 date>T1：Selection(T1) 与意图决策层(code/side/weight) 不变；qty 允许变。"""
     base = _base_rows()
-    poisoned = _poison_after(base, T1)     # 严格晚于 signal_date=T1
+    poisoned = _poison_after(base, T1, factor=1.05)  # 仅制造执行价敏感性，不触发涨跌停闸门
 
     _install_dm(base)                      # 选股世界两次运行完全相同（不被投毒）
     try:
@@ -194,7 +194,7 @@ def test_L3_1_signal_poisoning_decision_layer_invariant():
             assert da == db, f"方向集合漂移: {da} vs {db}"
             assert ("sh.AAA", "BUY") in da
 
-            # ③ 执行域允许变化：T2 开盘被 ×100 → T1→T2 BUY qty 必然不同
+            # ③ 执行域允许变化：T2 开盘被 ×1.05 → T1→T2 BUY qty 必然不同
             q_a = (ta.filter(pl.col("side") == "BUY")
                    .sort("execution_date")["qty"][0])
             q_b = (tb.filter(pl.col("side") == "BUY")
