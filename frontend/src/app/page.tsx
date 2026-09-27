@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import StockSearch from '../components/StockSearch';
 import AISelectModal from '../components/AISelectModal';
-import BacktestPanel from '../components/BacktestPanel';
+import BacktestPanel, { type BacktestParams } from '../components/BacktestPanel';
 import BacktestResults from '../components/BacktestResults';
 import { TaskList } from '../components/TaskList';
 import { useCluster } from '@/hooks/useCluster';
@@ -444,12 +444,7 @@ const HF_NODES = [
 const SUBMIT_TIMEOUT = 240000; // 240s for cold start
 const POLL_TIMEOUT = 60000;
 
-  const handleBacktest = async (params: {
-    formula: string;
-    start_date: string;
-    end_signal_date: string;
-    initial_cash: number;
-  }) => {
+  const handleBacktest = async (params: BacktestParams) => {
     setBacktestLoading(true);
     setBacktestResult(null);
     try {
