@@ -1,8 +1,7 @@
 name: Production Backtest E2E
 
 on:
-  push:
-    branches: [main]
+  # E2E 必须在部署 workflow 成功后运行，避免 push 触发与 HF Space 滚动更新并发。
   workflow_run:
     workflows: ["Deploy Backend to HF Spaces"]
     types: [completed]
@@ -13,7 +12,7 @@ concurrency:
 
 jobs:
   production-e2e:
-    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Node1 to become ready
@@ -21,10 +20,16 @@ jobs:
           NODE1: https://scanli-blinkquant-node1.hf.space
         run: |
           set -euo pipefail
+          healthy_count=0
           for i in $(seq 1 60); do
             body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
             echo "$body"
-            if echo "$body" | grep -q '"status":"healthy"'; then exit 0; fi
+            if echo "$body" | grep -q '"status":"healthy"'; then
+              healthy_count=$((healthy_count + 1))
+              if [ "$healthy_count" -ge 3 ]; then exit 0; fi
+            else
+              healthy_count=0
+            fi
             sleep 10
           done
           exit 1
