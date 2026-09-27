@@ -88,7 +88,7 @@ class IndexPriceStore:
         end: dt.date,
     ) -> pl.DataFrame:
         canonical = self.canonical_index_id(index_id)
-        code = self._index_code(canonical)
+        code_variants = self._index_code_variants(canonical)
         frames = []
         for year in range(start.year, end.year + 1):
             path = self.backend.resolve_year_file(year)
@@ -105,7 +105,7 @@ class IndexPriceStore:
                 lf.filter(
                     (pl.col("date") >= start)
                     & (pl.col("date") <= end)
-                    & (pl.col("code") == code)
+                    & (pl.col("code").is_in(code_variants))
                 )
             )
         if not frames:
@@ -116,13 +116,13 @@ class IndexPriceStore:
         return df.collect()
 
     @staticmethod
-    def _index_code(index_id: str) -> str:
+    def _index_code_variants(index_id: str) -> list[str]:
         if index_id.isdigit():
-            if index_id.startswith("39"):
-                return f"sz.{index_id}"
-            return f"sh.{index_id}"
+            prefix = "sz" if index_id.startswith("39") else "sh"
+            return [index_id, f"{prefix}{index_id}", f"{prefix}.{index_id}"]
         if "." in index_id:
-            return index_id
+            prefix, number = index_id.split(".", 1)
+            return [index_id, f"{prefix}{number}", number]
         raise ValueError(f"unsupported benchmark index_id: {index_id}")
 
     def load_returns(
