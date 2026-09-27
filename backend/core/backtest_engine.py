@@ -164,9 +164,17 @@ class BacktestEngine:
         # 生产入口可注入规范化公司行为 Store；run() 仍允许按次覆盖。
         self.corporate_action_store = corporate_action_store
 
-        # 组件将在 run() 中初始化
+        # 运行时状态默认值：必须先初始化，再由 run()/checkpoint restore 覆盖。
+        # 特别是 selected_thru=None 的 checkpoint 也必须保留该属性。
         self.portfolio = None
         self.execution_engine = None
+        self._thru_thaw = None
+        self._selected_thru = None
+        self._pend_sig = None
+        self._pend_exec = None
+        self._pend_intents = []
+        self._pend_prices = {}
+        self._processed_actions = []
     
     def run(
         self,
