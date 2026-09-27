@@ -115,7 +115,7 @@ class IndexPriceStore:
             df = df.collect()
         if df.is_empty():
             raise ValueError(f"benchmark index {canonical} has no data in {start}..{end}")
-        return df.collect()
+        return df
 
     @staticmethod
     def _index_code_variants(index_id: str) -> list[str]:
