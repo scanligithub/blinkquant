@@ -22,7 +22,9 @@
 
 ## Persistence
 
-`backtest_strategy_templates` 独立于旧 `strategies` 表，避免把旧选股策略的 `formula + timeframe` 数据模型强行升级为回测模型。
+策略模板持久化在 Node1 的 Scheduler SQLite（`SCHEDULER_DB_PATH`）中，不进入 Neon。Vercel 只负责认证并代理模板 API 到 Node1。
+
+`backtest_strategy_templates` 独立于旧 `strategies` 表，并位于 Node1 Scheduler SQLite，避免把旧选股策略的 `formula + timeframe` 数据模型强行升级为回测模型。
 
 ## UI
 
@@ -41,7 +43,7 @@
 - PUT：更新模板
 - DELETE：删除模板
 
-所有操作均按当前登录用户隔离。
+所有操作均按当前登录用户隔离；Vercel 将认证后的 user_id 通过内部代理传给 Node1。
 
 ## Acceptance
 
