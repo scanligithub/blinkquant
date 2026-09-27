@@ -208,6 +208,9 @@ class RawPriceStore:
             if file is None:
                 continue
             try:
+                schema = pl.scan_parquet(file).collect_schema()
+                if "adjustFactor" not in schema.names():
+                    continue
                 lf = pl.scan_parquet(file).select(["code", "adjustFactor", "date"])
                 lfs.append(lf)
             except Exception:
