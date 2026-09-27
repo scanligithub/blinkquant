@@ -36,6 +36,7 @@ def _build_frames():
         "low": [r[5] for r in rows],
         "volume": [1_000_000.0] * len(rows),
         "amount": [10_000_000.0] * len(rows),
+        "adjustFactor": [1.0] * len(rows),
     }).sort(["code", "date"])
     return df
 
