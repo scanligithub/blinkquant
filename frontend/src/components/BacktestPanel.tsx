@@ -59,7 +59,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
   const [feeMode, setFeeMode] = useState<'historical' | 'fixed'>('historical');
   const [commissionRate, setCommissionRate] = useState('0.00025');
   const [commissionMin, setCommissionMin] = useState('5');
-  const [stampTaxRate, setStampTaxRate] = useState('0.001');
+  const [stampTaxRate, setStampTaxRate] = useState('0.0005');
   const [transferFeeRate, setTransferFeeRate] = useState('0.00001');
 
   const triggerLabel = (value: string) => ({
