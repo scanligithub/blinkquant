@@ -20,7 +20,7 @@ from core.raw_price_store import RawPriceStore
 from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator, top_n_equal_weight_allocator
 from core.fee_config import load_fee_schedule
 from core.strategy import StrategyDefinition, UniverseDefinition, SignalDefinition, PositionSizingDefinition, RebalanceDefinition
-from core.backtest_config import BacktestConfig
+from core.backtest_config import BacktestConfig, FeePolicy
 from core.universe import UniverseFilter
 from core.universe_resolver import UniverseResolver
 from core.corporate_actions import CorporateActionStore
@@ -225,7 +225,7 @@ def _build_backtest_request(req: BacktestRequest):
         min_listing_days=req.min_listing_days,
         exclude_st=req.exclude_st,
         historical_fees=req.historical_fees if req.fee_policy is None else None,
-        fee_policy=__import__("core.backtest_config", fromlist=["FeePolicy"]).FeePolicy.from_dict(req.fee_policy) if req.fee_policy is not None else None,
+        fee_policy=FeePolicy.from_dict(req.fee_policy) if req.fee_policy is not None else None,
     )
 
     universe_filter = None
