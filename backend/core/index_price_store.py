@@ -142,8 +142,12 @@ class IndexPriceStore:
         ordered = sorted(set(dates))
         start = ordered[0]
         end = ordered[-1]
-        # Include the preceding calendar window; index files are filtered by date.
-        window = self.load_close_window(index_id, start, end)
+        # Include a preceding calendar window so the first valuation date has
+        # a close-to-close return. Valuation dates are trading days, while the
+        # preceding observation may fall several calendar days earlier
+        # (weekend/holiday). Do not silently treat that first day's return as 0.
+        lookback_start = start - dt.timedelta(days=31)
+        window = self.load_close_window(index_id, lookback_start, end)
         window = window.with_columns(
             pl.col("close").pct_change().alias("benchmark_return")
         )
