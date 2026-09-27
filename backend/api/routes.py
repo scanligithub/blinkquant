@@ -273,6 +273,86 @@ def _build_backtest_request(req: BacktestRequest):
     )
     return engine, config, fee_schedule, universe_filter
 
+
+class BacktestStrategyTemplateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    config: dict
+
+def _template_user_id(x_user_id: Optional[str]) -> str:
+    uid = (x_user_id or "").strip()
+    if not uid or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uid):
+        raise HTTPException(status_code=400, detail="invalid user_id")
+    return uid
+
+def _validate_template_config(config: dict) -> dict:
+    required = ("strategy", "fee_policy", "benchmark", "min_listing_days", "exclude_st")
+    if not isinstance(config, dict) or any(k not in config for k in required):
+        raise HTTPException(status_code=400, detail="incomplete template config")
+    if not isinstance(config["strategy"], dict) or not isinstance(config["fee_policy"], dict) or not isinstance(config["benchmark"], dict):
+        raise HTTPException(status_code=400, detail="invalid template config")
+    if not isinstance(config["min_listing_days"], int) or config["min_listing_days"] < 0:
+        raise HTTPException(status_code=400, detail="invalid min_listing_days")
+    if not isinstance(config["exclude_st"], bool):
+        raise HTTPException(status_code=400, detail="invalid exclude_st")
+    return config
+
+@router.get("/backtest-strategy-templates")
+async def list_backtest_strategy_templates(x_user_id: Optional[str] = Header(None)):
+    from scheduler.db import fetch, json_loads
+    user_id = _template_user_id(x_user_id)
+    rows = await fetch("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 ORDER BY updated_at DESC", user_id)
+    for row in rows:
+        row["config"] = json_loads(row["config"])
+    return {"templates": rows}
+
+@router.post("/backtest-strategy-templates")
+async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest, x_user_id: Optional[str] = Header(None)):
+    from scheduler.db import execute, fetchrow, json_dumps, json_loads
+    user_id = _template_user_id(x_user_id)
+    name = req.name.strip()
+    if not name or len(name) > 100:
+        raise HTTPException(status_code=400, detail="invalid template name")
+    config = _validate_template_config(req.config)
+    try:
+        await execute("INSERT INTO backtest_strategy_templates (user_id,name,description,config) VALUES ($1,$2,$3,$4)", user_id, name, req.description, json_dumps(config))
+    except Exception as exc:
+        if "UNIQUE constraint failed" in str(exc):
+            raise HTTPException(status_code=409, detail="template name already exists")
+        raise
+    row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 AND name=$2", user_id, name)
+    row["config"] = json_loads(row["config"])
+    return {"template": row}
+
+@router.put("/backtest-strategy-templates")
+async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest, id: int, x_user_id: Optional[str] = Header(None)):
+    from scheduler.db import execute, fetchrow, json_dumps, json_loads
+    user_id = _template_user_id(x_user_id)
+    name = req.name.strip()
+    if not name or len(name) > 100:
+        raise HTTPException(status_code=400, detail="invalid template name")
+    config = _validate_template_config(req.config)
+    try:
+        result = await execute("UPDATE backtest_strategy_templates SET name=$1,description=$2,config=$3,updated_at=datetime('now') WHERE id=$4 AND user_id=$5", name, req.description, json_dumps(config), id, user_id)
+    except Exception as exc:
+        if "UNIQUE constraint failed" in str(exc):
+            raise HTTPException(status_code=409, detail="template name already exists")
+        raise
+    if result.startswith("0 row"):
+        raise HTTPException(status_code=404, detail="template not found")
+    row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
+    row["config"] = json_loads(row["config"])
+    return {"template": row}
+
+@router.delete("/backtest-strategy-templates")
+async def delete_backtest_strategy_template(id: int, x_user_id: Optional[str] = Header(None)):
+    from scheduler.db import execute
+    user_id = _template_user_id(x_user_id)
+    result = await execute("DELETE FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
+    if result.startswith("0 row"):
+        raise HTTPException(status_code=404, detail="template not found")
+    return {"success": True}
+
 @router.post("/backtest")
 async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
     if data_manager.df_daily is None:
