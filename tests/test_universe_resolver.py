@@ -53,8 +53,18 @@ def test_exact_end_date_is_not_a_member():
     assert r.contains("000300", "sh.600003", dt.date(2022, 12, 31))
 
 
-def test_unknown_index_returns_empty():
-    assert resolver().members("999999", dt.date(2022, 1, 3)) == []
+def test_unknown_index_fails_with_available_indexes():
+    with pytest.raises(ValueError, match="unknown index_id") as exc:
+        resolver().members("999999", dt.date(2022, 1, 3))
+    assert "000300" in str(exc.value)
+
+
+def test_index_aliases_resolve_to_canonical_id():
+    r = resolver()
+    expected = r.members("000300", dt.date(2022, 1, 3))
+    assert r.members("CSI300", dt.date(2022, 1, 3)) == expected
+    assert r.members("HS300", dt.date(2022, 1, 3)) == expected
+    assert r.members("沪深300", dt.date(2022, 1, 3)) == expected
 
 
 def test_available_indexes():
