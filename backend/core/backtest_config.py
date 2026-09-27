@@ -11,7 +11,7 @@ from .strategy import StrategyDefinition
 
 @dataclass(frozen=True)
 class FeePolicy:
-    """Public fee-selection contract."""
+    """Public fee-selection contract: historical schedule or fixed research rates."""
     mode: Literal["historical", "fixed"] = "historical"
     commission_rate: float = 0.00025
     commission_min: float = 5.0
