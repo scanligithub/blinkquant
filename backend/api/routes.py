@@ -360,6 +360,7 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
         }
         
         backtest_engine, config, fee_schedule, universe_filter = _build_backtest_request(req)
+        _backtest_jobs[job_id]["backtest_config"] = config.to_dict()
         logger.info(
             "Backtest production strategy: universe=%s, rebalance=%s, sizing=%s",
             config.strategy.universe.type,
