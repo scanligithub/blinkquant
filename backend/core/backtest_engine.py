@@ -701,34 +701,64 @@ class BacktestEngine:
     def _generate_event_intents(
         self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict
     ) -> list:
-        """Generate explicit Entry/Exit orders without implicit clearing."""
+        """Generate deterministic Entry/Exit orders for event-driven strategies.
+
+        Entry sizing uses only capital that is actually free for this event cycle:
+        current cash plus the market value of valid, executable exits. Existing
+        positions that are being retained are not counted again, preventing a
+        new Entry batch from implicitly targeting more than 100% gross exposure.
+
+        ExecutionEngine still owns fees, lot-size rounding, cash constraints and
+        sell-first/buy-second execution. This planner deliberately does not
+        estimate those costs.
+        """
         intents = []
         entries = sorted(set(entry_codes))
         exits = sorted(set(exit_codes))
-        if entries:
-            weight = 1.0 / len(entries)
-            total_equity = self.portfolio.cash + sum(
-                p.market_value for p in self.portfolio.positions.values()
-            )
-            for code in entries:
-                if code in self.portfolio.positions:
-                    continue
-                price = execution_prices.get(code, {}).get("open", 0)
-                if price <= 0 or total_equity <= 0:
-                    continue
-                qty = int((total_equity * weight) / price)
-                if qty > 0:
-                    intents.append(OrderIntent(
-                        code=code, side="BUY", target_qty=qty, target_weight=weight
-                    ))
+
+        # First describe exits. ExecutionEngine executes all SELL intents before BUYs.
+        exit_value = 0.0
         for code in exits:
             pos = self.portfolio.positions.get(code)
             price = execution_prices.get(code, {}).get("open", 0)
             if pos is None or pos.available_qty <= 0 or price <= 0:
                 continue
+            exit_value += pos.available_qty * price
             intents.append(OrderIntent(
-                code=code, side="SELL", target_qty=pos.available_qty, target_weight=0.0
+                code=code,
+                side="SELL",
+                target_qty=pos.available_qty,
+                target_weight=0.0,
             ))
+
+        total_equity = self.portfolio.cash + sum(
+            p.market_value for p in self.portfolio.positions.values()
+        )
+        if total_equity <= 0:
+            return intents
+
+        # Only cash plus this cycle's valid exits is available for new entries.
+        available_for_entries = self.portfolio.cash + exit_value
+        new_entries = [
+            code for code in entries
+            if code not in self.portfolio.positions
+            and execution_prices.get(code, {}).get("open", 0) > 0
+        ]
+        if not new_entries or available_for_entries <= 0:
+            return intents
+
+        allocation = available_for_entries / len(new_entries)
+        weight = allocation / total_equity
+        for code in new_entries:
+            price = execution_prices[code]["open"]
+            qty = int(allocation / price)
+            if qty > 0:
+                intents.append(OrderIntent(
+                    code=code,
+                    side="BUY",
+                    target_qty=qty,
+                    target_weight=weight,
+                ))
         return intents
 
     def _generate_intents(self, target_weights: dict[str, float], execution_prices: dict) -> list:
@@ -861,7 +891,7 @@ class BacktestEngine:
                 new_intents = self._generate_intents(weights, new_prices)
             else:
                 new_intents = self._generate_event_intents(
-                    result.entry_codes, result.exit_codes, new_prices
+                    result.target_codes, result.exit_codes, new_prices
                 )
             diag["intents_total"] += len(new_intents)
             if strategy.mode == "target_portfolio" and weights:
