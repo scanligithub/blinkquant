@@ -37,7 +37,7 @@ jobs:
         run: |
           cd backend
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pandas
           
       - name: Run golden tests
         env:
