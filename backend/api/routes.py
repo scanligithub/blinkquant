@@ -305,7 +305,12 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
             "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
             "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
-            "metrics": result.metrics,
+            "metrics": {
+                **(result.metrics if isinstance(result.metrics, dict) else {}),
+                **_benchmark_metrics_from_payload(
+                    config, result, _build_benchmark_payload(config, result)
+                ),
+            },
             "execution_diagnostics": result.execution_diagnostics or {},
             "benchmark": _build_benchmark_payload(config, result),
         }
@@ -507,6 +512,9 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
         _backtest_artifacts[job_id] = artifacts
 
         summary = _build_summary_from_result(config, result)
+        benchmark_metrics = _benchmark_metrics_from_payload(
+            config, result, summary.get("benchmark")
+        )
         valuation_end_date = None
         if not result.equity_curve.is_empty():
             valuation_end_date = result.equity_curve["date"].max().isoformat()
@@ -523,7 +531,10 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
                 "signal_end_date": config.end_signal_date.isoformat(),
                 "valuation_end_date": valuation_end_date,
                 "initial_cash": config.initial_cash,
-                "metrics": result.metrics,
+                "metrics": {
+                    **(result.metrics if isinstance(result.metrics, dict) else {}),
+                    **benchmark_metrics,
+                },
             },
             "artifacts": {k: True for k in artifacts},
         }
