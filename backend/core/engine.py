@@ -252,6 +252,12 @@ class SelectionEngine:
         timeframe = 'W' if has_mtf else 'D'
 
         try:
+            # QFQ backtests evaluate against a freshly loaded local DataFrame.
+            # Do not let indicator columns mounted on data_manager.df_daily leak into
+            # this frame: cross_* evaluates current and previous dates independently,
+            # so a stale MA_CLOSE_* reference would fail on the fresh QFQ frame.
+            if qfq_data_provider is not None and latest_adj is not None:
+                blink_parser.mount_enabled = False
             expr = blink_parser.parse_expression(formula, timeframe)
             blink_parser.mount_enabled = True
 
