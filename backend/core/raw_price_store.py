@@ -109,11 +109,8 @@ class RawPriceStore:
         schema = lf.collect_schema()
         if schema.get("date") == pl.Utf8:
             lf = lf.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
-        # 未复权测试/轻量数据集可能没有 adjustFactor。此时按“raw 即 1.0”处理，
-        # 保持 QFQ 路径可用，同时不改变真实 stockA 数据的复权语义。
-        if for_qfq and "adjustFactor" not in schema.names():
-            lf = lf.with_columns(pl.lit(1.0).cast(pl.Float32).alias("adjustFactor"))
-            schema = lf.collect_schema()
+        # QFQ 是个股数据契约：stockA 个股 parquet 必须提供 adjustFactor。
+        # 不在生产读取层静默注入 1.0；缺字段应由数据契约/测试夹具明确暴露。
         cols = [c for c in (_QFQ_COLS if for_qfq else _CANONICAL_COLS) if c in schema.names()]
         return lf.select(cols)
 
@@ -211,14 +208,10 @@ class RawPriceStore:
                 lf = pl.scan_parquet(file)
                 schema = lf.collect_schema()
                 if "adjustFactor" not in schema.names():
-                    # 轻量/未复权测试数据：raw 价格等价于 adjustFactor=1。
-                    # 保留 code/date 并注入 1.0，使 QFQ provider 的 latest_adj
-                    # 仍能覆盖这些代码，而不是得到空 latest_adj。
-                    lf = lf.select(["code", "date"]).with_columns(
-                        pl.lit(1.0).cast(pl.Float32).alias("adjustFactor")
-                    )
-                else:
-                    lf = lf.select(["code", "adjustFactor", "date"])
+                    # adjustFactor 是个股 raw 数据契约的一部分；指数/不完整 fixture
+                    # 不应在生产层伪造复权因子。
+                    continue
+                lf = lf.select(["code", "adjustFactor", "date"])
                 lfs.append(lf)
             except Exception:
                 continue
@@ -311,7 +304,19 @@ class RawPriceStore:
             file = self.backend.resolve_year_file(year)
             if file is None:
                 continue
-            lf = pl.scan_parquet(file).select(
+            # 基础测试夹具只要求 OHLCV；真实 HF 个股数据提供 isST/pctChg。
+            # 缺失时使用“非 ST + 无有效涨跌幅变化”的中性值，仅影响涨跌停计算，
+            # 不改变真实数据路径。
+            lf = pl.scan_parquet(file)
+            schema = lf.collect_schema()
+            missing = []
+            if "isST" not in schema.names():
+                missing.append(pl.lit(0).cast(pl.Int8).alias("isST"))
+            if "pctChg" not in schema.names():
+                missing.append(pl.lit(None).cast(pl.Float64).alias("pctChg"))
+            if missing:
+                lf = lf.with_columns(missing)
+            lf = lf.select(
                 ["date", "code", "close", "high", "low", "volume", "amount", "isST", "pctChg"]
             )
             # 归一化 date 列
@@ -423,7 +428,19 @@ class RawPriceStore:
             file = self.backend.resolve_year_file(year)
             if file is None:
                 continue
-            lf = pl.scan_parquet(file).select(
+            # 基础测试夹具只要求 OHLCV；真实 HF 个股数据提供 isST/pctChg。
+            # 缺失时使用“非 ST + 无有效涨跌幅变化”的中性值，仅影响涨跌停计算，
+            # 不改变真实数据路径。
+            lf = pl.scan_parquet(file)
+            schema = lf.collect_schema()
+            missing = []
+            if "isST" not in schema.names():
+                missing.append(pl.lit(0).cast(pl.Int8).alias("isST"))
+            if "pctChg" not in schema.names():
+                missing.append(pl.lit(None).cast(pl.Float64).alias("pctChg"))
+            if missing:
+                lf = lf.with_columns(missing)
+            lf = lf.select(
                 ["date", "code", "close", "high", "low", "volume", "amount", "isST", "pctChg"]
             )
             # 归一化 date 列
@@ -541,7 +558,19 @@ class RawPriceStore:
             file = self.backend.resolve_year_file(year)
             if file is None:
                 continue
-            lf = pl.scan_parquet(file).select(
+            # 基础测试夹具只要求 OHLCV；真实 HF 个股数据提供 isST/pctChg。
+            # 缺失时使用“非 ST + 无有效涨跌幅变化”的中性值，仅影响涨跌停计算，
+            # 不改变真实数据路径。
+            lf = pl.scan_parquet(file)
+            schema = lf.collect_schema()
+            missing = []
+            if "isST" not in schema.names():
+                missing.append(pl.lit(0).cast(pl.Int8).alias("isST"))
+            if "pctChg" not in schema.names():
+                missing.append(pl.lit(None).cast(pl.Float64).alias("pctChg"))
+            if missing:
+                lf = lf.with_columns(missing)
+            lf = lf.select(
                 ["date", "code", "close", "high", "low", "volume", "amount", "isST", "pctChg"]
             )
             # 归一化 date 列
