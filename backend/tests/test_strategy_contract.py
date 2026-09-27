@@ -62,7 +62,7 @@ class TestSignalContract:
             SignalDefinition(condition="CLOSE > 10", trigger="cross")  # type: ignore[arg-type]
 
     def test_unknown_timeframe_rejected(self):
-        with pytest.raises(ValueError, match="unsupported timeframe"):
+        with pytest.raises(ValueError, match="unsupported signal timeframe"):
             SignalDefinition(condition="CLOSE > 10", timeframe="H")
 
 
