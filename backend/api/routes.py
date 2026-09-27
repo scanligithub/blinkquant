@@ -50,8 +50,10 @@ class BacktestRequest(BaseModel):
     end_signal_date: datetime.date
     initial_cash: float = 1_000_000
     strategy: Optional[dict] = None
-    top_n: int = 20
-    rebalance_freq: str = "daily"
+    # Legacy flat fields. New clients should put these in strategy.sizing/rebalance.
+    # None lets us distinguish an omitted legacy field from an explicit conflicting value.
+    top_n: Optional[int] = None
+    rebalance_freq: Optional[str] = None
     universe_type: str = "all_a"
     index_id: Optional[str] = None
     min_listing_days: int = 0
@@ -166,26 +168,50 @@ def _load_production_corporate_action_store() -> Optional[CorporateActionStore]:
         return None
 
 
-def _build_backtest_request(req: BacktestRequest):
-    """Normalize the API request into one immutable BacktestConfig."""
+def _normalize_strategy_request(req: BacktestRequest) -> StrategyDefinition:
+    """Build the single canonical StrategyDefinition used by BacktestConfig.
+
+    New requests use strategy.sizing/rebalance as the source of truth. Legacy flat
+    top_n/rebalance_freq fields remain accepted only for backward compatibility;
+    when both forms are present they must agree, avoiding ambiguous task payloads.
+    """
     if req.strategy is not None:
         strategy = StrategyDefinition.from_dict(req.strategy)
-    else:
-        if not req.formula:
-            raise ValueError("formula is required when strategy is not provided")
-        if req.universe_type not in ("all_a", "index"):
-            raise ValueError("universe_type must be all_a or index")
-        if req.universe_type == "index" and not req.index_id:
-            raise ValueError("index_id is required for index universe")
-        if req.top_n <= 0:
-            raise ValueError("top_n must be > 0")
-        strategy = StrategyDefinition(
-            universe=UniverseDefinition(type=req.universe_type, index_id=req.index_id),
-            entry=SignalDefinition(condition=req.formula, timeframe="D"),
-            sizing=PositionSizingDefinition(method="top_n_equal_weight", max_positions=req.top_n),
-            rebalance=RebalanceDefinition(frequency=req.rebalance_freq),
-            mode="target_portfolio",
-        )
+        if req.top_n is not None and strategy.sizing.method == "top_n_equal_weight":
+            if req.top_n != strategy.sizing.max_positions:
+                raise ValueError(
+                    "top_n conflicts with strategy.sizing.max_positions; use strategy.sizing.max_positions"
+                )
+        if req.rebalance_freq is not None and req.rebalance_freq != strategy.rebalance.frequency:
+            raise ValueError(
+                "rebalance_freq conflicts with strategy.rebalance.frequency; use strategy.rebalance.frequency"
+            )
+        return strategy
+
+    if not req.formula:
+        raise ValueError("formula is required when strategy is not provided")
+    if req.universe_type not in ("all_a", "index"):
+        raise ValueError("universe_type must be all_a or index")
+    if req.universe_type == "index" and not req.index_id:
+        raise ValueError("index_id is required for index universe")
+
+    top_n = 20 if req.top_n is None else req.top_n
+    rebalance_freq = "daily" if req.rebalance_freq is None else req.rebalance_freq
+    if top_n <= 0:
+        raise ValueError("top_n must be > 0")
+    strategy = StrategyDefinition(
+        universe=UniverseDefinition(type=req.universe_type, index_id=req.index_id),
+        entry=SignalDefinition(condition=req.formula, timeframe="D"),
+        sizing=PositionSizingDefinition(method="top_n_equal_weight", max_positions=top_n),
+        rebalance=RebalanceDefinition(frequency=rebalance_freq),
+        mode="target_portfolio",
+    )
+    return strategy
+
+
+def _build_backtest_request(req: BacktestRequest):
+    """Normalize the API request into one immutable BacktestConfig."""
+    strategy = _normalize_strategy_request(req)
 
     config = BacktestConfig(
         start_date=req.start_date,
