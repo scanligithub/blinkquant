@@ -155,27 +155,54 @@ def _calmar_ratio(annualized_return: float, max_drawdown: float) -> float:
     return annualized_return / abs(max_drawdown)
 
 
-def compute_benchmark_metrics(portfolio_returns: list[float],
-                               benchmark_returns: list[float]) -> dict:
+def compute_benchmark_metrics(
+    portfolio_returns: list[float],
+    benchmark_returns: list[float],
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = TRADING_DAYS,
+) -> dict:
+    """Compute CAPM alpha/beta and active-risk metrics from aligned daily returns.
+
+    Inputs must represent the same valuation dates in the same order. Alpha is
+    annualized CAPM Jensen alpha with a constant daily risk-free rate. Tracking
+    error is annualized active-return volatility and information ratio is mean
+    active return divided by tracking error.
+    """
     import numpy as np
-    if not portfolio_returns or not benchmark_returns:
-        return {"alpha": 0, "beta": 0, "tracking_error": 0, "information_ratio": 0}
+
     n = min(len(portfolio_returns), len(benchmark_returns))
-    p = np.array(portfolio_returns[:n])
-    b = np.array(benchmark_returns[:n])
-    cov_pb = np.cov(p, b)[0][1]
-    var_b = np.var(b, ddof=1)
-    beta = cov_pb / var_b if var_b > 0 else 0.0
-    alpha_daily = np.mean(p) - beta * np.mean(b)
-    alpha = alpha_daily * 252
+    if n < 2:
+        return {"alpha": 0.0, "beta": 0.0, "tracking_error": 0.0, "information_ratio": 0.0}
+
+    p = np.asarray(portfolio_returns[:n], dtype=float)
+    b = np.asarray(benchmark_returns[:n], dtype=float)
+    if not np.isfinite(p).all() or not np.isfinite(b).all():
+        raise ValueError("benchmark metrics contain non-finite returns")
+
+    rf_daily = float(risk_free_rate) / periods_per_year
+    p_excess = p - rf_daily
+    b_excess = b - rf_daily
+
+    var_b = float(np.var(b_excess, ddof=1))
+    cov_pb = float(np.cov(p_excess, b_excess, ddof=1)[0, 1])
+    beta = cov_pb / var_b if var_b > _EPS else 0.0
+
+    alpha_daily = float(np.mean(p_excess) - beta * np.mean(b_excess))
+    alpha = alpha_daily * periods_per_year
+
     active = p - b
-    tracking_error = float(np.std(active, ddof=1)) * (252 ** 0.5)
-    ir = (alpha / tracking_error) if tracking_error > 0 else 0.0
+    tracking_error = float(np.std(active, ddof=1)) * (periods_per_year ** 0.5)
+    mean_active_annualized = float(np.mean(active)) * periods_per_year
+    information_ratio = (
+        mean_active_annualized / tracking_error
+        if tracking_error > _EPS else 0.0
+    )
+
     return {
         "alpha": float(alpha),
         "beta": float(beta),
         "tracking_error": float(tracking_error),
-        "information_ratio": float(ir),
+        "information_ratio": float(information_ratio),
     }
 
 
