@@ -238,6 +238,11 @@ def _build_backtest_request(req: BacktestRequest):
         resolver = UniverseResolver.from_huggingface(repo_id=data_manager.repo_id, token=os.getenv("HF_TOKEN"))
         resolver.resolve_index_id(strategy.universe.index_id)
 
+    if config.benchmark.enabled:
+        raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
+        benchmark_store = IndexPriceStore(data_root=raw_data_root) if raw_data_root else IndexPriceStore(hf_repo_id=data_manager.repo_id)
+        benchmark_store.load_close_window(config.benchmark.index_id, config.start_date, config.end_signal_date)
+
     fee_schedule = None
     fee_config = config.fee_policy.fixed_fee_config()
     if config.fee_policy.mode == "historical":
@@ -301,6 +306,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
             "metrics": result.metrics,
             "execution_diagnostics": result.execution_diagnostics or {},
+            "benchmark": _build_benchmark_payload(config, result),
         }
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -365,6 +371,7 @@ def _build_summary_from_result(config: BacktestConfig, result) -> dict:
         "initial_cash": config.initial_cash,
         "rej_counters": {str(k): int(v) for k, v in (result.execution_diagnostics or {}).get("rej_counters", {}).items()},
         "partial_fill_count": int((result.execution_diagnostics or {}).get("partial_fill_count") or 0),
+        "benchmark": benchmark_payload,
     }
 
 from datetime import datetime, timezone
