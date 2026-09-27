@@ -109,4 +109,98 @@ jobs:
           max_gross=gross["gross_exposure"].max()
           assert max_gross<=1.000001,f"gross exposure exceeded 100%: {max_gross}"
           print(f"PRODUCTION E2E OK: equity_points={eq.height}, position_rows={pos.height}, max_gross_exposure={max_gross:.6f}")
+
+      - name: Submit 2024 event-driven MA cross backtest
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          cat > /tmp/event_request.json <<'JSON'
+          {
+            "start_date": "2024-01-02",
+            "end_signal_date": "2024-12-30",
+            "initial_cash": 1000000,
+            "strategy": {
+              "name": "p2-b-ma-cross-event-driven-top20",
+              "universe": {"type": "all_a"},
+              "entry": {
+                "condition": "MA(CLOSE,5) > MA(CLOSE,60)",
+                "trigger": "cross_above",
+                "timeframe": "D"
+              },
+              "exit": {
+                "condition": "MA(CLOSE,5) < MA(CLOSE,20)",
+                "trigger": "cross_below",
+                "timeframe": "D"
+              },
+              "sizing": {
+                "method": "top_n_equal_weight",
+                "max_positions": 20
+              },
+              "rebalance": {"frequency": "weekly"},
+              "mode": "event_driven"
+            }
+          }
+          JSON
+          response=$(curl -fsS --max-time 30 -H 'Content-Type: application/json' --data-binary @/tmp/event_request.json "$NODE1/api/v1/backtest/async")
+          echo "$response" | tee /tmp/event_submit.json
+          echo "$response" | python -c 'import json,sys; print(json.load(sys.stdin)["job_id"])' > /tmp/event_job_id
+
+      - name: Poll event-driven backtest
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          job_id=$(cat /tmp/event_job_id)
+          for i in $(seq 1 180); do
+            body=$(curl -fsS --max-time 20 "$NODE1/api/v1/backtest/async/$job_id")
+            echo "$body" > /tmp/event_result.json
+            status=$(echo "$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+            echo "event-poll=$i status=$status"
+            if [ "$status" = "done" ]; then cat /tmp/event_result.json; exit 0; fi
+            if [ "$status" = "failed" ] || [ "$status" = "cancelled" ]; then cat /tmp/event_result.json; exit 1; fi
+            sleep 10
+          done
+          cat /tmp/event_result.json
+          exit 1
+
+      - name: Validate event-driven Entry Exit semantics
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          r=json.load(open("/tmp/event_result.json"))
+          assert r["status"]=="done",r
+          s=r["summary"]
+          assert s["n_trades"]>0,s
+          assert s["n_positions"]>0,s
+          assert s["final_equity"] is not None and s["final_equity"]>0,s
+          cfg=r.get("backtest_config") or {}
+          strategy=cfg.get("strategy") or {}
+          assert strategy.get("mode")=="event_driven",strategy
+          assert (strategy.get("entry") or {}).get("trigger")=="cross_above",strategy
+          assert (strategy.get("exit") or {}).get("trigger")=="cross_below",strategy
+          assert (strategy.get("sizing") or {}).get("max_positions")==20,strategy
+          assert (strategy.get("rebalance") or {}).get("frequency")=="weekly",strategy
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          print("EVENT-DRIVEN CONFIG OK")
+          PY
+          job_id=$(cat /tmp/event_job_id)
+          curl -fsS --max-time 60 "$NODE1/api/v1/backtest/async/$job_id/artifact/trades" -o /tmp/event_trades.parquet
+          python - <<'PY'
+          import polars as pl
+          trades=pl.read_parquet("/tmp/event_trades.parquet")
+          assert trades.height>0
+          assert trades.select(pl.col("side").unique()).height >= 2, trades
+          assert trades.filter(pl.col("side")=="BUY").height>0, trades
+          assert trades.filter(pl.col("side")=="SELL").height>0, trades
+          bad=trades.filter(pl.col("execution_date") <= pl.col("signal_date"))
+          assert bad.height==0, bad
+          buys=trades.filter(pl.col("side")=="BUY")
+          if buys.height:
+              assert (buys["qty"] % 100 == 0).all(), buys
+          print(f"EVENT-DRIVEN E2E OK: trades={trades.height}, buys={buys.height}, sells={trades.filter(pl.col('side')=='SELL').height}")
+          PY
           PY
