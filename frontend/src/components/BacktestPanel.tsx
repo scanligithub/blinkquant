@@ -7,8 +7,6 @@ export interface BacktestParams {
   start_date: string;
   end_signal_date: string;
   initial_cash: number;
-  top_n: number;
-  rebalance_freq: 'daily' | 'weekly';
   universe_type: 'all_a' | 'index';
   index_id?: string;
   min_listing_days: number;
@@ -76,8 +74,6 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
       start_date: startDate,
       end_signal_date: endDate,
       initial_cash: parseFloat(cash),
-      top_n: maxPositions,
-      rebalance_freq: rebalanceFreq,
       universe_type: universeType,
       index_id: universeType === 'index' ? (indexId.trim() || '000300') : undefined,
       min_listing_days: Math.max(0, parseInt(minListingDays, 10) || 0),
