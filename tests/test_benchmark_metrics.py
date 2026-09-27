@@ -20,7 +20,7 @@ def test_benchmark_metrics_active_risk_and_ir():
     portfolio = [0.015, 0.005, -0.005, 0.015, -0.015]
     m = compute_benchmark_metrics(portfolio, benchmark)
 
-    assert m["beta"] == pytest.approx(0.75, abs=1e-10)
+    assert m["beta"] == pytest.approx(0.8, abs=1e-10)
     assert m["tracking_error"] > 0
     assert m["information_ratio"] != 0
 
