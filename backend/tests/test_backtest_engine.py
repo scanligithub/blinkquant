@@ -269,6 +269,7 @@ def test_run_applies_initial_positions():
                 "low": [r[5] for r in rows],
                 "volume": [1000000.0] * len(rows),
                 "amount": [10000000.0] * len(rows),
+                "adjustFactor": [1.0] * len(rows),
             }).sort(["code", "date"])
             # 内存表与 raw store 必须覆盖同一股票集：
             # 否则 get_limit_flags 会把缺行情的持仓股判为停牌（fail-closed），SELL 被拒
