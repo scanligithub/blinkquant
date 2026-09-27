@@ -410,8 +410,16 @@ class SelectionEngine:
                     logger.warning(f"Sector join failed: {e}")
 
         try:
-            # 解析与计算
-            expr = blink_parser.parse_expression(formula, timeframe)
+            # QFQ 回测使用新加载的局部 DataFrame；解析指标时必须禁止复用
+            # data_manager 上一次挂载的 MA_* 列，否则 cross_* 会把陈旧列名带入
+            # 当前 QFQ DataFrame。解析完成后恢复 parser 的原始状态。
+            _prev_mount_enabled = blink_parser.mount_enabled
+            if qfq_data_provider is not None and latest_adj is not None:
+                blink_parser.mount_enabled = False
+            try:
+                expr = blink_parser.parse_expression(formula, timeframe)
+            finally:
+                blink_parser.mount_enabled = _prev_mount_enabled
 
             # 目标交易日校验
             eligible = df.filter(pl.col("date") <= target_date)
