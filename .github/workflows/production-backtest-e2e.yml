@@ -177,7 +177,7 @@ jobs:
           assert s["n_trades"]>0,s
           assert s["n_positions"]>0,s
           assert s["final_equity"] is not None and s["final_equity"]>0,s
-          cfg=r.get("backtest_config") or {}
+          cfg=(r.get("meta") or {}).get("backtest_config") or {}
           strategy=cfg.get("strategy") or {}
           assert strategy.get("mode")=="event_driven",strategy
           assert (strategy.get("entry") or {}).get("trigger")=="cross_above",strategy
