@@ -73,10 +73,11 @@ class SelectionEngine:
                             base_expr = data_manager.INDICATOR_MAP[func_name](
                                 blink_parser.fields[field_name], p_val
                             )
-                            # 校验：先在当前表上试算一行，若全 null 则不挂载（避免快速路径返回全 null）
-                            test_val = df.select(base_expr.head(1)).item()
-                            if test_val is None:
-                                logger.warning(f"Hot-JIT skip {col_name} on {attr_name}: test eval returned None")
+                            # 校验：MA 等滚动指标在 warm-up 区间的首行天然为 null。
+                            # 只有整列都为 null 才说明当前表无法产生有效指标。
+                            test_df = df.select(base_expr.alias("__hotjit_probe")).drop_nulls()
+                            if test_df.is_empty():
+                                logger.warning(f"Hot-JIT skip {col_name} on {attr_name}: test eval all null")
                                 continue
                             expr = base_expr.alias(col_name)
                             new_exprs.append(expr)
