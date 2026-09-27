@@ -104,6 +104,12 @@ def build_result_summary(data: dict) -> dict:
     if final is None:
         final = data.get("final_equity") or m.get("final_equity")
 
+    diag = data.get("execution_diagnostics") or {}
+    rej = diag.get("rej_counters") or data.get("rej_counters") or {}
+    partial_fill_count = diag.get("partial_fill_count")
+    if partial_fill_count is None:
+        partial_fill_count = data.get("partial_fill_count")
+
     return {
         "final_equity": final,
         "total_return": m.get("total_return"),
@@ -121,6 +127,8 @@ def build_result_summary(data: dict) -> dict:
         "n_positions": n_positions,
         "n_equity_points": n_equity,
         "initial_cash": data.get("initial_cash"),
+        "rej_counters": {str(k): int(v) for k, v in rej.items()},
+        "partial_fill_count": int(partial_fill_count or 0),
     }
 
 
