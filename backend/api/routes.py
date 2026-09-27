@@ -59,6 +59,8 @@ class BacktestRequest(BaseModel):
     min_listing_days: int = 0
     exclude_st: bool = False
     historical_fees: bool = True
+    # Preferred fee contract; legacy historical_fees remains supported.
+    fee_policy: Optional[dict] = None
 
 
 class BenchmarkRequest(BaseModel):
@@ -220,7 +222,8 @@ def _build_backtest_request(req: BacktestRequest):
         strategy=strategy,
         min_listing_days=req.min_listing_days,
         exclude_st=req.exclude_st,
-        historical_fees=req.historical_fees,
+        historical_fees=req.historical_fees if req.fee_policy is None else None,
+        fee_policy=__import__("core.backtest_config", fromlist=["FeePolicy"]).FeePolicy.from_dict(req.fee_policy) if req.fee_policy is not None else None,
     )
 
     universe_filter = None
@@ -233,7 +236,8 @@ def _build_backtest_request(req: BacktestRequest):
         resolver.resolve_index_id(strategy.universe.index_id)
 
     fee_schedule = None
-    if config.historical_fees:
+    fee_config = config.fee_policy.fixed_fee_config()
+    if config.fee_policy.mode == "historical":
         fee_schedule_path = os.path.join(os.path.dirname(__file__), "..", "config", "fee_schedule.yaml")
         if not os.path.exists(fee_schedule_path):
             fee_schedule_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "fee_schedule.yaml")
@@ -251,7 +255,7 @@ def _build_backtest_request(req: BacktestRequest):
         calendar=calendar,
         selection_engine=selection_engine,
         raw_price_store=raw_price_store,
-        fee_config=FeeConfig(),
+        fee_config=fee_config,
         execution_config=strategy.execution,
         allocator=top_n_equal_weight_allocator(max_positions),
         universe_resolver=resolver,
