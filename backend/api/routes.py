@@ -317,6 +317,8 @@ def _build_summary_from_result(req, result) -> dict:
         "n_positions": result.positions_daily.height if result.positions_daily is not None else 0,
         "n_equity_points": ec.height,
         "initial_cash": req.initial_cash,
+        "rej_counters": {str(k): int(v) for k, v in (result.execution_diagnostics or {}).get("rej_counters", {}).items()},
+        "partial_fill_count": int((result.execution_diagnostics or {}).get("partial_fill_count") or 0),
     }
 
 from datetime import datetime, timezone
