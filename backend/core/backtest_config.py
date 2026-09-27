@@ -58,6 +58,39 @@ class FeePolicy:
 
 
 @dataclass(frozen=True)
+class BenchmarkConfig:
+    """Public benchmark contract for backtest comparison."""
+    enabled: bool = False
+    type: Literal["index"] = "index"
+    index_id: str = "000300"
+
+    def __post_init__(self) -> None:
+        if self.type != "index":
+            raise ValueError("benchmark.type must be index")
+        if self.enabled and not str(self.index_id).strip():
+            raise ValueError("benchmark.index_id is required when enabled")
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "BenchmarkConfig":
+        if data is None:
+            return cls()
+        if not isinstance(data, dict):
+            raise TypeError("benchmark must be a dict")
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            type=str(data.get("type", "index")),
+            index_id=str(data.get("index_id", "000300")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "type": self.type,
+            "index_id": self.index_id,
+        }
+
+
+@dataclass(frozen=True)
 class BacktestConfig:
     """Complete configuration required to reproduce one backtest run."""
     start_date: datetime.date
@@ -68,6 +101,7 @@ class BacktestConfig:
     exclude_st: bool = False
     historical_fees: bool | None = None
     fee_policy: FeePolicy | None = None
+    benchmark: BenchmarkConfig | None = None
 
     def __post_init__(self) -> None:
         if self.start_date > self.end_signal_date:
@@ -78,6 +112,12 @@ class BacktestConfig:
             raise ValueError("min_listing_days must be >= 0")
         if not isinstance(self.strategy, StrategyDefinition):
             raise TypeError("strategy must be a StrategyDefinition")
+        benchmark = self.benchmark
+        if benchmark is None:
+            benchmark = BenchmarkConfig()
+        elif not isinstance(benchmark, BenchmarkConfig):
+            raise TypeError("benchmark must be a BenchmarkConfig")
+        object.__setattr__(self, "benchmark", benchmark)
         policy = self.fee_policy
         if policy is None:
             policy = FeePolicy(mode="historical" if self.historical_fees is not False else "fixed")
@@ -96,6 +136,7 @@ class BacktestConfig:
         data["end_signal_date"] = self.end_signal_date.isoformat()
         data["fee_policy"] = self.fee_policy.to_dict()
         data["historical_fees"] = self.historical_fees
+        data["benchmark"] = self.benchmark.to_dict()
         return data
 
     @classmethod
@@ -106,6 +147,8 @@ class BacktestConfig:
         if not isinstance(strategy_data, dict):
             raise ValueError("backtest_config.strategy is required")
         raw_policy = data.get("fee_policy")
+        raw_benchmark = data.get("benchmark")
+        benchmark = BenchmarkConfig.from_dict(raw_benchmark) if raw_benchmark is not None else BenchmarkConfig()
         policy = FeePolicy.from_dict(raw_policy) if raw_policy is not None else FeePolicy(mode="historical" if bool(data.get("historical_fees", True)) else "fixed")
         return cls(
             start_date=datetime.date.fromisoformat(str(data["start_date"])),
@@ -115,7 +158,8 @@ class BacktestConfig:
             min_listing_days=int(data.get("min_listing_days", 0)),
             exclude_st=bool(data.get("exclude_st", False)),
             fee_policy=policy,
+            benchmark=benchmark,
         )
 
 
-__all__ = ["BacktestConfig", "FeePolicy"]
+__all__ = ["BacktestConfig", "FeePolicy", "BenchmarkConfig"]
