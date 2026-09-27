@@ -12,6 +12,13 @@ export interface BacktestParams {
   min_listing_days: number;
   exclude_st: boolean;
   historical_fees: boolean;
+  fee_policy: {
+    mode: 'historical' | 'fixed';
+    commission_rate?: number;
+    commission_min?: number;
+    stamp_tax_rate?: number;
+    transfer_fee_rate?: number;
+  };
   strategy: {
     universe: { type: 'all_a' | 'index'; index_id?: string };
     entry: { condition: string; trigger: 'condition' | 'cross_above' | 'cross_below'; timeframe: string };
@@ -49,6 +56,11 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
   const [cash, setCash] = useState('10000000');
   const [minListingDays, setMinListingDays] = useState('0');
   const [excludeSt, setExcludeSt] = useState(false);
+  const [feeMode, setFeeMode] = useState<'historical' | 'fixed'>('historical');
+  const [commissionRate, setCommissionRate] = useState('0.00025');
+  const [commissionMin, setCommissionMin] = useState('5');
+  const [stampTaxRate, setStampTaxRate] = useState('0.001');
+  const [transferFeeRate, setTransferFeeRate] = useState('0.00001');
 
   const triggerLabel = (value: string) => ({
     condition: '条件成立',
@@ -93,7 +105,16 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
       index_id: universeType === 'index' ? (indexId.trim() || '000300') : undefined,
       min_listing_days: Math.max(0, parseInt(minListingDays, 10) || 0),
       exclude_st: excludeSt,
-      historical_fees: true,
+      historical_fees: feeMode === 'historical',
+      fee_policy: {
+        mode: feeMode,
+        ...(feeMode === 'fixed' ? {
+          commission_rate: parseFloat(commissionRate),
+          commission_min: parseFloat(commissionMin),
+          stamp_tax_rate: parseFloat(stampTaxRate),
+          transfer_fee_rate: parseFloat(transferFeeRate),
+        } : {}),
+      },
       strategy,
     });
   };
@@ -250,6 +271,35 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
           排除 ST
         </label>
       </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-500 mb-1">费率方案</label>
+        <select value={feeMode} onChange={(e) => setFeeMode(e.target.value as typeof feeMode)} className={selectClass}>
+          <option value="historical">历史真实费率</option>
+          <option value="fixed">固定研究费率</option>
+        </select>
+      </div>
+
+      {feeMode === 'fixed' && (
+        <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">佣金率</label>
+            <input type="number" min="0" step="0.00001" value={commissionRate} onChange={(e) => setCommissionRate(e.target.value)} className={selectClass} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">最低佣金</label>
+            <input type="number" min="0" step="0.01" value={commissionMin} onChange={(e) => setCommissionMin(e.target.value)} className={selectClass} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">卖出印花税率</label>
+            <input type="number" min="0" step="0.0001" value={stampTaxRate} onChange={(e) => setStampTaxRate(e.target.value)} className={selectClass} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">过户费率</label>
+            <input type="number" min="0" step="0.000001" value={transferFeeRate} onChange={(e) => setTransferFeeRate(e.target.value)} className={selectClass} />
+          </div>
+        </div>
+      )}
 
       <button
         type="submit"
