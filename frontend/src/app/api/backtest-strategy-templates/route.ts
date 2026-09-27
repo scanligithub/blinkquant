@@ -18,10 +18,7 @@ function normalize(body: any) {
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
-  const result = await sql.query(
-    'SELECT id, name, description, config, created_at, updated_at FROM backtest_strategy_templates WHERE user_id = $1 ORDER BY updated_at DESC',
-    [auth.user.userId]
-  );
+  const result = await sql`SELECT id, name, description, config, created_at, updated_at FROM backtest_strategy_templates WHERE user_id = ${auth.user.userId} ORDER BY updated_at DESC`;
   return NextResponse.json({ templates: result.rows });
 }
 
@@ -58,10 +55,7 @@ export async function PUT(req: NextRequest) {
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: '无效的模板 ID' }, { status: 400 });
   if (!name || !config) return NextResponse.json({ error: '无效的模板数据' }, { status: 400 });
   try {
-    const result = await sql.query(
-      'UPDATE backtest_strategy_templates SET name=$1, description=$2, config=$3::jsonb, updated_at=NOW() WHERE id=$4 AND user_id=$5 RETURNING id, name, description, config, created_at, updated_at',
-      [name, description, JSON.stringify(config), id, auth.user.userId]
-    );
+    const result = await sql`UPDATE backtest_strategy_templates SET name=${name}, description=${description}, config=${JSON.stringify(config)}::jsonb, updated_at=NOW() WHERE id=${id} AND user_id=${auth.user.userId} RETURNING id, name, description, config, created_at, updated_at`;
     if (!result.rows.length) return NextResponse.json({ error: '模板不存在' }, { status: 404 });
     return NextResponse.json({ template: result.rows[0] });
   } catch (error: any) {
@@ -75,7 +69,7 @@ export async function DELETE(req: NextRequest) {
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
   const id = Number(req.nextUrl.searchParams.get('id'));
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: '无效的模板 ID' }, { status: 400 });
-  const result = await sql.query('DELETE FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2', [id, auth.user.userId]);
+  const result = await sql`DELETE FROM backtest_strategy_templates WHERE id=${id} AND user_id=${auth.user.userId}`;
   if (!result.rowCount) return NextResponse.json({ error: '模板不存在' }, { status: 404 });
   return NextResponse.json({ success: true });
 }
