@@ -199,46 +199,27 @@ def _build_backtest_request(req: BacktestRequest):
 
     universe_filter = None
     if config.min_listing_days > 0 or config.exclude_st:
-        universe_filter = UniverseFilter(
-            min_listing_days=config.min_listing_days,
-            exclude_st=config.exclude_st,
-        )
+        universe_filter = UniverseFilter(min_listing_days=config.min_listing_days, exclude_st=config.exclude_st)
 
     resolver = None
     if strategy.universe.type == "index":
-        resolver = UniverseResolver.from_huggingface(
-            repo_id=data_manager.repo_id,
-            token=os.getenv("HF_TOKEN"),
-        )
+        resolver = UniverseResolver.from_huggingface(repo_id=data_manager.repo_id, token=os.getenv("HF_TOKEN"))
         resolver.resolve_index_id(strategy.universe.index_id)
 
     fee_schedule = None
     if config.historical_fees:
-        fee_schedule_path = os.path.join(
-            os.path.dirname(__file__), "..", "config", "fee_schedule.yaml"
-        )
+        fee_schedule_path = os.path.join(os.path.dirname(__file__), "..", "config", "fee_schedule.yaml")
         if not os.path.exists(fee_schedule_path):
-            fee_schedule_path = os.path.join(
-                os.path.dirname(__file__), "..", "..", "config", "fee_schedule.yaml"
-            )
+            fee_schedule_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "fee_schedule.yaml")
         fee_schedule = load_fee_schedule(fee_schedule_path)
 
     calendar = TradingCalendar()
-    trade_dates = (
-        data_manager.df_daily
-        .select(pl.col("date")).unique().sort("date").to_series().to_list()
-    )
+    trade_dates = data_manager.df_daily.select(pl.col("date")).unique().sort("date").to_series().to_list()
     calendar.set_trade_dates(trade_dates)
 
     raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
-    raw_price_store = (
-        RawPriceStore(data_root=raw_data_root)
-        if raw_data_root
-        else RawPriceStore(hf_repo_id=data_manager.repo_id)
-    )
-
+    raw_price_store = RawPriceStore(data_root=raw_data_root) if raw_data_root else RawPriceStore(hf_repo_id=data_manager.repo_id)
     corporate_action_store = _load_production_corporate_action_store()
-
     max_positions = strategy.sizing.max_positions or 20
     engine = BacktestEngine(
         calendar=calendar,
@@ -252,4 +233,620 @@ def _build_backtest_request(req: BacktestRequest):
         corporate_action_store=corporate_action_store,
     )
     return engine, config, fee_schedule, universe_filter
-}
+
+@router.post("/backtest")
+async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
+    if data_manager.df_daily is None:
+        raise HTTPException(status_code=503, detail="Nodes are loading data...")
+
+    try:
+        backtest_engine, config, fee_schedule, universe_filter = _build_backtest_request(req)
+        result = await __import__("asyncio").to_thread(
+            backtest_engine.run,
+            strategy=strategy,
+            start_date=req.start_date,
+            end_signal_date=req.end_signal_date,
+            initial_cash=req.initial_cash,
+            fee_schedule=fee_schedule,
+            universe_filter=universe_filter,
+        )
+
+        valuation_end_date = None
+        if not result.equity_curve.is_empty():
+            valuation_end_date = result.equity_curve["date"].max().isoformat()
+
+        return {
+            "formula": strategy.entry.condition,
+            "strategy": strategy.to_dict(),
+            "start_date": req.start_date.isoformat(),
+            "signal_end_date": req.end_signal_date.isoformat(),
+            "valuation_end_date": valuation_end_date,
+            "initial_cash": config.initial_cash,
+            "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
+            "trades": result.trades.to_dicts() if not result.trades.is_empty() else [],
+            "positions_daily": result.positions_daily.to_dicts() if not result.positions_daily.is_empty() else [],
+            "metrics": result.metrics,
+            "execution_diagnostics": result.execution_diagnostics or {},
+        }
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("backtest failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Async backtest endpoints
+_backtest_jobs: dict[str, dict] = {}
+_backtest_artifacts: dict[str, dict[str, bytes]] = {}
+_backtest_cancel_events: dict[str, threading.Event] = {}
+
+def _df_to_parquet_bytes(df: pl.DataFrame, level: int = 6) -> bytes:
+    buf = io.BytesIO()
+    df.write_parquet(buf, compression="zstd", compression_level=level)
+    return buf.getvalue()
+
+def _build_summary_from_result(config: BacktestConfig, result) -> dict:
+    ec = result.equity_curve
+    final = float(ec["equity"][-1]) if not ec.is_empty() else None
+    m = result.metrics if isinstance(result.metrics, dict) else {}
+    return {
+        "final_equity": final,
+        "total_return": m.get("total_return"),
+        "max_drawdown": m.get("max_drawdown"),
+        "cagr": m.get("cagr", m.get("annualized_return")),
+        "sharpe": m.get("sharpe"),
+        "sortino": m.get("sortino"),
+        "calmar": m.get("calmar"),
+        "drawdown_duration": m.get("drawdown_duration"),
+        "turnover": m.get("turnover"),
+        "total_fees": m.get("total_fees"),
+        "buy_count": m.get("buy_count"),
+        "sell_count": m.get("sell_count"),
+        "n_trades": result.trades.height if result.trades is not None else m.get("trade_count"),
+        "n_positions": result.positions_daily.height if result.positions_daily is not None else 0,
+        "n_equity_points": ec.height,
+        "initial_cash": config.initial_cash,
+        "rej_counters": {str(k): int(v) for k, v in (result.execution_diagnostics or {}).get("rej_counters", {}).items()},
+        "partial_fill_count": int((result.execution_diagnostics or {}).get("partial_fill_count") or 0),
+    }
+
+from datetime import datetime, timezone
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _set_job_progress(job_id: str, progress: dict) -> None:
+    """Thread-safe: only updates progress field on running/queued job."""
+    job = _backtest_jobs.get(job_id)
+    if not job or job.get("status") not in ("running", "queued"):
+        return
+    job["progress"] = {
+        **progress,
+        "updated_at": _utc_now_iso(),
+    }
+
+async def _run_backtest_async(job_id: str, req: BacktestRequest):
+    # 每个异步回测在提交时都会创建对应的取消 Event。
+    # 必须在 worker 协程内部取得它，供线程中的 BacktestEngine 进行协作式取消检查。
+    cancel_event = _backtest_cancel_events.get(job_id)
+    if cancel_event is None:
+        # 防御性兜底：正常路径不会走这里，但避免取消状态检查再次触发 NameError。
+        cancel_event = threading.Event()
+        _backtest_cancel_events[job_id] = cancel_event
+
+    try:
+        if data_manager.df_daily is None:
+            _backtest_jobs[job_id] = {"status": "failed", "error": "Nodes are loading data..."}
+            return
+
+        # 检查是否已被取消。queued 状态下收到取消请求时，不能把 cancelling
+        # 覆盖成 running；必须在进入耗时计算前直接结束。
+        job = _backtest_jobs.get(job_id)
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
+            _backtest_jobs[job_id] = {"status": "cancelled", "error": "cancelled before compute"}
+            return
+
+        # 标记任务开始执行
+        _backtest_jobs[job_id] = {
+            "status": "running",
+            "progress": {
+                "pct": 0.0,
+                "done_days": 0,
+                "total_days": 0,
+                "current_date": None,
+                "stage": "loading_data",
+                "updated_at": _utc_now_iso(),
+            },
+        }
+        
+        backtest_engine, strategy, fee_schedule, universe_filter = _build_backtest_request(req)
+        logger.info(
+            "Backtest production strategy: universe=%s, rebalance=%s, sizing=%s",
+            strategy.universe.type,
+            strategy.rebalance.frequency,
+            strategy.sizing.method,
+        )
+
+        # 再次检查取消状态（在耗时操作前）
+        job = _backtest_jobs.get(job_id)
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
+            _backtest_jobs[job_id] = {"status": "cancelled", "error": "cancelled before compute"}
+            return
+
+        # 在线程池中运行同步回测，避免阻塞事件循环
+        import asyncio
+        def _on_progress(p: dict) -> None:
+            _set_job_progress(job_id, p)
+        result = await asyncio.to_thread(
+            backtest_engine.run,
+            strategy=strategy,
+            start_date=req.start_date,
+            end_signal_date=req.end_signal_date,
+            initial_cash=req.initial_cash,
+            fee_schedule=fee_schedule,
+            universe_filter=universe_filter,
+            on_progress=_on_progress,
+            cancel_check=cancel_event.is_set,
+        )
+
+        job = _backtest_jobs.get(job_id)
+        if cancel_event.is_set() or (job and job.get("status") in ("cancelled", "cancelling")):
+            return
+
+        _set_job_progress(job_id, {
+            "pct": 99.0,
+            "stage": "writing_result",
+        })
+
+        artifacts = {}
+        if not result.trades.is_empty():
+            artifacts["trades"] = _df_to_parquet_bytes(result.trades)
+        if not result.positions_daily.is_empty():
+            artifacts["positions_daily"] = _df_to_parquet_bytes(result.positions_daily)
+        if not result.equity_curve.is_empty():
+            artifacts["equity_curve"] = _df_to_parquet_bytes(result.equity_curve)
+        _backtest_artifacts[job_id] = artifacts
+
+        summary = _build_summary_from_result(config, result)
+        valuation_end_date = None
+        if not result.equity_curve.is_empty():
+            valuation_end_date = result.equity_curve["date"].max().isoformat()
+
+        _backtest_jobs[job_id] = {
+            "status": "done",
+            "progress": {"pct": 100.0, "stage": "done", "updated_at": _utc_now_iso()},
+            "summary": summary,
+            "meta": {
+                "formula": strategy.entry.condition,
+                "strategy": strategy.to_dict(),
+                "start_date": req.start_date.isoformat(),
+                "signal_end_date": req.end_signal_date.isoformat(),
+                "valuation_end_date": valuation_end_date,
+                "initial_cash": config.initial_cash,
+                "metrics": result.metrics,
+            },
+            "artifacts": {k: True for k in artifacts},
+        }
+    except BacktestCancelled as e:
+        _backtest_artifacts.pop(job_id, None)
+        _backtest_jobs[job_id] = {"status": "cancelled", "error": str(e)}
+    except Exception as e:
+        _backtest_artifacts.pop(job_id, None)
+        job = _backtest_jobs.get(job_id)
+        if not (job and job.get("status") in ("cancelled", "cancelling")):
+            logger.exception("backtest job %s failed", job_id)
+            _backtest_jobs[job_id] = {"status": "failed", "error": str(e)}
+    finally:
+        _backtest_cancel_events.pop(job_id, None)
+
+
+@router.post("/backtest/async")
+async def run_backtest_async(req: BacktestRequest, background_tasks: BackgroundTasks):
+    if data_manager.df_daily is None:
+        raise HTTPException(status_code=503, detail="Nodes are loading data...")
+
+    job_id = str(uuid.uuid4())
+    _backtest_cancel_events[job_id] = threading.Event()
+    _backtest_jobs[job_id] = {"status": "queued"}
+    background_tasks.add_task(_run_backtest_async, job_id, req)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/backtest/async/{job_id}")
+async def get_backtest_async(job_id: str):
+    job = _backtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.get("/backtest/async/{job_id}/artifact/{name}")
+async def get_backtest_artifact(job_id: str, name: str):
+    if name not in ("equity_curve", "trades", "positions_daily"):
+        raise HTTPException(400, "invalid artifact name")
+    job = _backtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "done":
+        raise HTTPException(409, "artifacts only available when done")
+    blob = (_backtest_artifacts.get(job_id) or {}).get(name)
+    if not blob:
+        raise HTTPException(404, "artifact not found")
+    return Response(
+        content=blob,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}.parquet"'},
+    )
+
+
+@router.post("/backtest/cancel")
+async def cancel_backtest(req: CancelBacktestRequest):
+    job = _backtest_jobs.get(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job.get("status") in ("done", "failed", "cancelled"):
+        return {"ok": True, "status": job.get("status"), "message": "Job already finished"}
+    
+    cancel_event = _backtest_cancel_events.get(req.job_id)
+    if cancel_event is None:
+        cancel_event = threading.Event()
+        _backtest_cancel_events[req.job_id] = cancel_event
+    cancel_event.set()
+
+    # Keep the job observable as cancelling until the worker thread exits.
+    job["status"] = "cancelling"
+    job["error"] = req.reason
+    return {"ok": True, "status": "cancelling", "message": "cancellation requested"}
+
+
+@router.get("/kline")
+def get_kline(code: str, timeframe: str = "D"):
+    df = data_manager.df_daily
+    if timeframe == "W": df = data_manager.df_weekly
+    elif timeframe == "M": df = data_manager.df_monthly
+
+    if df is None: raise HTTPException(status_code=503, detail="Data not ready")
+    
+    # 过滤并排序
+    stock_df = df.filter(pl.col("code") == code).sort("date")
+
+    # 动态选择存在的列，防止请求周/月线时崩溃
+    target_cols = ["date", "code", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ", "isST", "adjustFactor", "net_amount", "main_net", "super_net", "large_net", "medium_net", "small_net", "total_shares", "float_shares", "total_mv", "float_mv", "product_ratios", "forecast_type", "forecast_yoy", "is_forecast_good", "is_forecast_bad"]
+    available_cols = [col for col in target_cols if col in stock_df.columns]
+    stock_df = stock_df.select(available_cols)
+
+
+    if len(stock_df) == 0:
+        raise HTTPException(status_code=404, detail="Stock not found")
+
+    # 将 Polars DataFrame 写入内存中的 Parquet 文件，并使用 ZSTD 压缩
+    buffer = io.BytesIO()
+    stock_df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0) # 将文件指针移到开头
+    
+    # 以二进制响应的形式返回 Parquet 数据
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
+
+@router.get("/sector-kline")
+def get_sector_kline(code: str, timeframe: str = "D"):
+    if timeframe == "W":
+        df = getattr(data_manager, "df_sector_weekly", None)
+    elif timeframe == "M":
+        df = getattr(data_manager, "df_sector_monthly", None)
+    else:
+        df = data_manager.df_sector_daily
+
+    if df is None:
+        raise HTTPException(status_code=503, detail="Data not ready")
+
+    sector_df = df.filter(pl.col("code") == code).sort("date")
+    if len(sector_df) == 0:
+        raise HTTPException(status_code=404, detail="Sector not found")
+
+    target_cols = ["date", "code", "name", "type", "open", "high", "low", "close", "volume", "amount"]
+    available_cols = [col for col in target_cols if col in sector_df.columns]
+    sector_df = sector_df.select(available_cols)
+
+    buffer = io.BytesIO()
+    sector_df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0)
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream")
+
+def _get_pinyin_initials(text: str) -> str:
+    """获取中文文本的拼音首字母，并转换为小写"""
+    if not text:
+        return ""
+    
+    # 检查是否包含中文字符
+    if not any('\u4e00' <= char <= '\u9fff' for char in text):
+        return text.lower() # 如果没有中文，直接返回小写
+
+    # full模式返回所有拼音，然后取首字母并拼接
+    pinyin_list = pinyin(text, style=Style.FIRST_LETTER)
+    initials = ''.join([item[0] for item in pinyin_list])
+    # 只保留字母字符，移除所有非字母字符（如空格、括号、数字等）
+    return ''.join(c for c in initials.lower() if c.isalpha())
+
+@router.get("/search")
+def search_stocks(q: str):
+    if not q:
+        return []
+
+    q_lower = q.lower()
+    q_pinyin_initials = _get_pinyin_initials(q)
+    logger.info(f"Search query: {q}, q_lower: {q_lower}, q_pinyin_initials: {q_pinyin_initials}")
+
+    results = []
+    
+    for code, name in data_manager.code_to_name.items():
+        name_lower = name.lower()
+        name_pinyin_initials = _get_pinyin_initials(name)
+        logger.debug(f"Checking stock: code={code}, name={name}, name_lower={name_lower}, name_pinyin_initials={name_pinyin_initials}")
+
+        if (q_lower in code.lower() or
+            q_lower in name_lower or
+            q_pinyin_initials and q_pinyin_initials in name_pinyin_initials):
+            results.append({"code": code, "name": name})
+        if len(results) >= 10: # Limit to 10 results
+            break
+            
+    return results
+
+@router.get("/stock-list")
+def get_stock_list():
+    """返回所有股票代码与名称的映射，仅用于前端缓存"""
+    # 调试：打印前10条数据
+    sample = list(data_manager.code_to_name.items())[:10]
+    logger.info(f"Stock list sample: {sample}")
+    
+    # 过滤掉空名称的股票
+    filtered = [{"code": code, "name": name}
+                for code, name in data_manager.code_to_name.items()
+                if name and name.strip()]
+    
+    logger.info(f"Total stocks: {len(data_manager.code_to_name)}, Filtered: {len(filtered)}")
+    return filtered
+
+@router.get("/stock-sectors")
+def get_stock_sectors(code: str):
+    """返回股票所属的全部板块（行业+概念+地域）"""
+    sectors = data_manager.stock_sectors.get(code, [])
+    return {
+        "code": code,
+        "sectors": [
+            {"code": sc, "name": name, "type": typ}
+            for sc, name, typ in sectors
+        ],
+    }
+
+@router.get("/nl-meta")
+def get_nl_meta():
+    """自然语言选股元数据：字段/指标/单位/示例（公开只读）"""
+    return build_nl_meta()
+
+@router.get("/status")
+def get_node_status():
+    """
+    节点观测指标（容器视角，HF Spaces 下不代表真实配额）。
+    磁盘优先看业务目录（RESULT_DIR / 调度库所在盘），避免根分区虚高。
+    """
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    vm = psutil.virtual_memory()
+
+    disk_path = _resolve_disk_monitor_path()
+    try:
+        du = psutil.disk_usage(disk_path)
+        disk_ok = True
+        disk_err = None
+    except Exception as e:
+        du = None
+        disk_ok = False
+        disk_err = str(e)
+
+    process_uss_gb = None
+    try:
+        full = process.memory_full_info()
+        process_uss_gb = round(full.uss / (1024**3), 2)
+    except Exception:
+        pass
+
+    return {
+        "node": os.getenv("NODE_INDEX"),
+        "status": "healthy" if data_manager.df_daily is not None else "loading",
+        "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0,
+
+        # 进程内存
+        "process_memory_gb": round(mem_info.rss / (1024**3), 2),
+        "process_uss_gb": process_uss_gb,
+
+        # 系统内存（容器视角）
+        "system_memory_total_gb": round(vm.total / (1024**3), 2),
+        "system_memory_available_gb": round(vm.available / (1024**3), 2),
+        "system_memory_free_gb": round(vm.available / (1024**3), 2),
+        "system_memory_percent": round(vm.percent, 1),
+
+        # 业务磁盘
+        "disk_path": disk_path,
+        "disk_total_gb": round(du.total / (1024**3), 2) if disk_ok else None,
+        "disk_free_gb": round(du.free / (1024**3), 2) if disk_ok else None,
+        "disk_percent": round(du.percent, 1) if disk_ok else None,
+        "disk_ok": disk_ok,
+        "disk_error": disk_err,
+
+        "note": "container-observed; disk is RESULT_DIR/scheduler path, not host quota",
+    }
+
+
+def _resolve_disk_monitor_path() -> str:
+    candidates = []
+    result_dir = os.getenv("RESULT_DIR")
+    if not result_dir:
+        try:
+            from scheduler.config import RESULT_DIR as _RD
+            result_dir = _RD
+        except Exception:
+            result_dir = None
+    if result_dir:
+        candidates.append(result_dir)
+
+    sched_db = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
+    candidates.append(os.path.dirname(os.path.abspath(sched_db)) or "/")
+    candidates.append(os.getcwd())
+
+    for p in candidates:
+        if not p:
+            continue
+        path = os.path.abspath(p)
+        check = path
+        while check and not os.path.exists(check):
+            parent = os.path.dirname(check)
+            if parent == check:
+                break
+            check = parent
+        if check and os.path.exists(check):
+            return check
+    return "/"
+
+@router.get("/health")
+def health_check():
+    # 只要 Uvicorn 跑起来就回 200，防止 HF 杀掉进程
+    # 增加 build_id 返回以进行高可用的版本比对，防止滚动更新假阳性
+    from main import scheduler_running
+    b_id = getattr(data_manager, "build_id", "unknown")
+    if data_manager.df_daily is not None:
+        return {"status": "healthy", "build_id": b_id, "scheduler": scheduler_running}
+    return {"status": "initializing", "build_id": b_id, "scheduler": scheduler_running}
+
+@router.post("/benchmark")
+async def run_benchmark(req: BenchmarkRequest):
+    """Gate 3B: HF Space benchmark validation (lazy path)."""
+    import datetime
+    import time
+    import polars as pl
+    from core.raw_price_store import RawPriceStore
+    from core.engine import selection_engine as _sel
+    from core.backtest_engine import BacktestEngine, TradingCalendar
+    from core.backtest_types import FeeConfig, MVP_EXECUTION_CONFIG, top_n_equal_weight_allocator
+    from core.fee_config import load_fee_schedule
+
+    BENCHMARKS = {
+        "B1": (datetime.date(2024, 1, 2), datetime.date(2024, 3, 29)),
+        "B2": (datetime.date(2024, 1, 2), datetime.date(2024, 12, 30)),
+        "B3": (datetime.date(2019, 1, 2), datetime.date(2024, 12, 30)),
+        "B4": (datetime.date(2010, 1, 4), datetime.date(2024, 12, 30)),
+    }
+
+    if req.benchmark not in BENCHMARKS:
+        raise HTTPException(status_code=400, detail=f"Unknown benchmark: {req.benchmark}. Use B1-B4.")
+
+    start_date, end_date = BENCHMARKS[req.benchmark]
+    formula = "CLOSE > MA(CLOSE, 20)"
+
+    # Load data
+    raw_store = RawPriceStore(hf_repo_id=data_manager.repo_id)
+    latest_adj = raw_store.load_latest_adjust_factors()
+    trade_dates = raw_store.get_trading_dates(start_date, datetime.date(2025, 1, 10))
+    cal = TradingCalendar()
+    cal.set_trade_dates(trade_dates)
+
+    # Build engine
+    _sel._set_cache.clear()
+    allocator = top_n_equal_weight_allocator(20)
+    fee_schedule_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'fee_schedule.yaml')
+    if not os.path.exists(fee_schedule_path):
+        fee_schedule_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'fee_schedule.yaml')
+    fee_schedule = load_fee_schedule(fee_schedule_path)
+
+    engine = BacktestEngine(
+        calendar=cal, selection_engine=_sel,
+        raw_price_store=raw_store, fee_config=FeeConfig(),
+        execution_config=MVP_EXECUTION_CONFIG, allocator=allocator,
+    )
+    engine._latest_adj = latest_adj
+
+    # Run
+    t0 = time.time()
+    result = engine.run(
+        formula=formula, start_date=start_date, end_signal_date=end_date,
+        initial_cash=10_000_000, rebalance_freq="weekly",
+        top_n=20, fee_schedule=fee_schedule,
+    )
+    bt_time = time.time() - t0
+
+    diag = result.execution_diagnostics or {}
+    return {
+        "benchmark": req.benchmark,
+        "period": f"{start_date}..{end_date}",
+        "trades": result.trades.height,
+        "final_equity": result.equity_curve['equity'].tail(1).item(),
+        "backtest_time_sec": round(bt_time, 1),
+        "has_negative_cash": diag.get('has_negative_cash', False),
+        "accounting_violations": diag.get('accounting_invariant_violations', 0),
+        "rejections": sum(diag.get('rej_counters', {}).values()),
+    }
+
+
+# 心跳接收端点（供算力节点上报状态）
+from fastapi import Header
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+
+class HeartbeatPayload(BaseModel):
+    node_id: str
+    status: str
+    task_id: Optional[int] = None
+    load: float = 0.0
+    metrics: dict = {}
+    generation: Optional[int] = None
+
+@router.post("/internal/heartbeat")
+async def receive_heartbeat(
+    payload: HeartbeatPayload,
+    authorization: Optional[str] = Header(None),
+):
+    # 简单的 token 验证
+    expected_token = "internal-secret-change-me"
+    if authorization != f"Bearer {expected_token}":
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    now = datetime.utcnow()
+    # 只更新运行时状态，不覆盖 endpoint/name/weight/generation 等静态字段
+    
+    if data_manager.postgres_url:
+        try:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(data_manager.postgres_url)
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE cluster_nodes
+                SET status = %s,
+                    current_task_id = %s,
+                    task_type = %s,
+                    heartbeat_at = now(),
+                    last_error = %s,
+                    updated_at = now()
+                WHERE node_id = %s
+            """, (
+                payload.status,
+                payload.task_id,
+                "backtest" if payload.task_id else None,
+                None,
+                payload.node_id,
+            ))
+            conn.commit()
+            
+            # 记录心跳历史
+            cur.execute("""
+                INSERT INTO node_heartbeats (node_id, status, task_id, load, metrics, reported_at)
+                VALUES (%s, %s, %s, %s, %s, now())
+            """, (payload.node_id, payload.status, payload.task_id, payload.load, psycopg2.extras.Json(payload.metrics)))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Heartbeat error: {e}")
+     
+    return {"ok": True}
