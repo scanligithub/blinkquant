@@ -99,6 +99,7 @@ def test_event_driven_does_not_sell_when_entry_disappears():
         target_weights={},
         entry_codes=[],
         exit_codes=[],
+        target_codes=[],
     )
     diag = {"intents_total": 0, "target_gross_by_date": {}}
     _, _, intents, _ = engine._phase_post_close_signal(
