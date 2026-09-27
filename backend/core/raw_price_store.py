@@ -208,10 +208,17 @@ class RawPriceStore:
             if file is None:
                 continue
             try:
-                schema = pl.scan_parquet(file).collect_schema()
+                lf = pl.scan_parquet(file)
+                schema = lf.collect_schema()
                 if "adjustFactor" not in schema.names():
-                    continue
-                lf = pl.scan_parquet(file).select(["code", "adjustFactor", "date"])
+                    # 轻量/未复权测试数据：raw 价格等价于 adjustFactor=1。
+                    # 保留 code/date 并注入 1.0，使 QFQ provider 的 latest_adj
+                    # 仍能覆盖这些代码，而不是得到空 latest_adj。
+                    lf = lf.select(["code", "date"]).with_columns(
+                        pl.lit(1.0).cast(pl.Float32).alias("adjustFactor")
+                    )
+                else:
+                    lf = lf.select(["code", "adjustFactor", "date"])
                 lfs.append(lf)
             except Exception:
                 continue
