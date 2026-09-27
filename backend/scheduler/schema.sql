@@ -53,6 +53,19 @@ CREATE INDEX IF NOT EXISTS idx_tq_assigned_status
 CREATE INDEX IF NOT EXISTS idx_tq_generation
     ON task_queue (generation);
 
+CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    config          TEXT NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_bst_user_updated
+    ON backtest_strategy_templates (user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS node_heartbeats (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id       TEXT,
