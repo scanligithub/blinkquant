@@ -142,6 +142,8 @@ def persist(task_id: int, data: dict, result_dir: str, *, user_id: str) -> tuple
         "task_id": task_id,
         "user_id": str(user_id),
         "formula": data.get("formula"),
+        "strategy": data.get("strategy"),
+        "backtest_config": data.get("backtest_config"),
         "start_date": data.get("start_date"),
         "signal_end_date": data.get("signal_end_date"),
         "valuation_end_date": data.get("valuation_end_date"),
