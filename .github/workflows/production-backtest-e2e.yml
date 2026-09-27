@@ -1,0 +1,110 @@
+name: Production Backtest E2E
+
+on:
+  workflow_run:
+    workflows: ["Deploy Backend to HF Spaces"]
+    types: [completed]
+
+concurrency:
+  group: production-backtest-e2e
+  cancel-in-progress: true
+
+jobs:
+  production-e2e:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Node1 to become ready
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+            echo "$body"
+            if echo "$body" | grep -q '"status":"healthy"'; then exit 0; fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Submit 2024 target-portfolio backtest
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          cat > /tmp/request.json <<'JSON'
+          {
+            "start_date": "2024-01-02",
+            "end_signal_date": "2024-12-30",
+            "initial_cash": 1000000,
+            "strategy": {
+              "name": "p5-2-close-ma20-weekly-top100",
+              "universe": {"type": "all_a"},
+              "entry": {
+                "condition": "CLOSE > MA(CLOSE,20)",
+                "trigger": "condition",
+                "timeframe": "D"
+              },
+              "sizing": {
+                "method": "top_n_equal_weight",
+                "max_positions": 100
+              },
+              "rebalance": {"frequency": "weekly"},
+              "mode": "target_portfolio"
+            }
+          }
+          JSON
+          response=$(curl -fsS --max-time 30 -H 'Content-Type: application/json' --data-binary @/tmp/request.json "$NODE1/api/v1/backtest/async")
+          echo "$response" | tee /tmp/submit.json
+          echo "$response" | python -c 'import json,sys; print(json.load(sys.stdin)["job_id"])' > /tmp/job_id
+
+      - name: Poll production backtest
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          job_id=$(cat /tmp/job_id)
+          for i in $(seq 1 180); do
+            body=$(curl -fsS --max-time 20 "$NODE1/api/v1/backtest/async/$job_id")
+            echo "$body" > /tmp/result.json
+            status=$(echo "$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+            echo "poll=$i status=$status"
+            if [ "$status" = "done" ]; then cat /tmp/result.json; exit 0; fi
+            if [ "$status" = "failed" ] || [ "$status" = "cancelled" ]; then cat /tmp/result.json; exit 1; fi
+            sleep 10
+          done
+          cat /tmp/result.json
+          exit 1
+
+      - name: Validate production result and exposure
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet polars
+          job_id=$(cat /tmp/job_id)
+          python - <<'PY'
+          import json
+          r=json.load(open("/tmp/result.json"))
+          assert r["status"]=="done",r
+          s=r["summary"]
+          assert s["n_trades"]>0,s
+          assert s["n_positions"]>0,s
+          assert s["n_equity_points"]>0,s
+          assert s["final_equity"] is not None and s["final_equity"]>0,s
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+          curl -fsS --max-time 60 "$NODE1/api/v1/backtest/async/$job_id/artifact/equity_curve" -o /tmp/equity_curve.parquet
+          curl -fsS --max-time 60 "$NODE1/api/v1/backtest/async/$job_id/artifact/positions_daily" -o /tmp/positions_daily.parquet
+          python - <<'PY'
+          import polars as pl
+          eq=pl.read_parquet("/tmp/equity_curve.parquet")
+          pos=pl.read_parquet("/tmp/positions_daily.parquet")
+          assert eq.height>0 and pos.height>0
+          gross=(pos.group_by("date").agg(pl.col("market_value").sum().alias("gross_value"))
+                 .join(eq.select(["date","equity"]),on="date",how="inner")
+                 .with_columns((pl.col("gross_value")/pl.col("equity")).alias("gross_exposure")))
+          max_gross=gross["gross_exposure"].max()
+          assert max_gross<=1.000001,f"gross exposure exceeded 100%: {max_gross}"
+          print(f"PRODUCTION E2E OK: equity_points={eq.height}, position_rows={pos.height}, max_gross_exposure={max_gross:.6f}")
+          PY
