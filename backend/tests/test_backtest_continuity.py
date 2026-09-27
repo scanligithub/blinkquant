@@ -31,6 +31,7 @@ def _fixture(days):
         "open": [r[2] for r in rows], "close": [r[3] for r in rows],
         "high": [r[4] for r in rows], "low": [r[5] for r in rows],
         "volume": [1e6] * len(rows), "amount": [1e7] * len(rows),
+        "adjustFactor": [1.0] * len(rows),
     }).sort(["code", "date"])
 
 
