@@ -61,6 +61,8 @@ class BacktestRequest(BaseModel):
     historical_fees: bool = True
     # Preferred fee contract; legacy historical_fees remains supported.
     fee_policy: Optional[dict] = None
+    # Preferred fee contract; legacy historical_fees remains supported.
+    fee_policy: Optional[dict] = None
 
 
 class BenchmarkRequest(BaseModel):
