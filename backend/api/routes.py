@@ -20,7 +20,8 @@ from core.raw_price_store import RawPriceStore
 from core.backtest_types import FeeConfig, ExecutionConfig, MVP_EXECUTION_CONFIG, equal_weight_allocator, top_n_equal_weight_allocator
 from core.fee_config import load_fee_schedule
 from core.strategy import StrategyDefinition, UniverseDefinition, SignalDefinition, PositionSizingDefinition, RebalanceDefinition
-from core.backtest_config import BacktestConfig, FeePolicy
+from core.backtest_config import BacktestConfig, FeePolicy, BenchmarkConfig
+from core.index_price_store import IndexPriceStore
 from core.universe import UniverseFilter
 from core.universe_resolver import UniverseResolver
 from core.corporate_actions import CorporateActionStore
@@ -61,8 +62,7 @@ class BacktestRequest(BaseModel):
     historical_fees: bool = True
     # Preferred fee contract; legacy historical_fees remains supported.
     fee_policy: Optional[dict] = None
-    # Preferred fee contract; legacy historical_fees remains supported.
-    fee_policy: Optional[dict] = None
+    benchmark: Optional[dict] = None
 
 
 class BenchmarkRequest(BaseModel):
@@ -226,6 +226,7 @@ def _build_backtest_request(req: BacktestRequest):
         exclude_st=req.exclude_st,
         historical_fees=req.historical_fees if req.fee_policy is None else None,
         fee_policy=FeePolicy.from_dict(req.fee_policy) if req.fee_policy is not None else None,
+        benchmark=BenchmarkConfig.from_dict(req.benchmark) if req.benchmark is not None else BenchmarkConfig(),
     )
 
     universe_filter = None
@@ -317,8 +318,32 @@ def _df_to_parquet_bytes(df: pl.DataFrame, level: int = 6) -> bytes:
     df.write_parquet(buf, compression="zstd", compression_level=level)
     return buf.getvalue()
 
+def _build_benchmark_payload(config: BacktestConfig, result) -> Optional[dict]:
+    """Build a real index benchmark series aligned to valuation dates."""
+    benchmark = config.benchmark
+    if benchmark is None or not benchmark.enabled:
+        return None
+    raw_data_root = os.getenv("RAW_PRICE_DATA_ROOT")
+    store = (
+        IndexPriceStore(data_root=raw_data_root)
+        if raw_data_root
+        else IndexPriceStore(hf_repo_id=data_manager.repo_id)
+    )
+    dates = result.equity_curve["date"].to_list() if not result.equity_curve.is_empty() else []
+    series, cumulative = store.load_returns(benchmark.index_id, dates)
+    canonical = store.canonical_index_id(benchmark.index_id)
+    return {
+        "enabled": True,
+        "type": benchmark.type,
+        "index_id": canonical,
+        "cumulative_return": cumulative,
+        "series": series.to_dicts(),
+    }
+
+
 def _build_summary_from_result(config: BacktestConfig, result) -> dict:
     ec = result.equity_curve
+    benchmark_payload = _build_benchmark_payload(config, result)
     final = float(ec["equity"][-1]) if not ec.is_empty() else None
     m = result.metrics if isinstance(result.metrics, dict) else {}
     return {
