@@ -238,3 +238,83 @@ def test_p4_1_weekly_pit_top20_schedules_next_open():
     assert all(intent.side == "BUY" for intent in intents)
     assert {intent.code for intent in intents} == set(members[:20])
     assert diag["target_gross_by_date"][execution_date] == pytest.approx(1.0)
+
+
+def test_event_driven_entry_uses_only_free_capital_when_holding_is_retained():
+    from core.portfolio import Position
+
+    engine = _engine()
+    engine.portfolio.cash = 60_000.0
+    engine.portfolio.positions = {
+        "AAA": Position(
+            code="AAA",
+            total_qty=4000,
+            available_qty=4000,
+            frozen_qty=0,
+            avg_cost=10.0,
+            market_value=40_000.0,
+        )
+    }
+
+    intents = engine._generate_event_intents(
+        ["BBB"],
+        [],
+        {"BBB": {"open": 20.0, "close": 20.0}},
+    )
+
+    assert [(i.code, i.side, i.target_qty) for i in intents] == [
+        ("BBB", "BUY", 3000)
+    ]
+    assert intents[0].target_weight == pytest.approx(0.6)
+
+
+def test_event_driven_multiple_entries_split_free_capital_deterministically():
+    engine = _engine()
+    engine.portfolio.cash = 100_000.0
+
+    intents = engine._generate_event_intents(
+        ["CCC", "BBB"],
+        [],
+        {
+            "BBB": {"open": 20.0, "close": 20.0},
+            "CCC": {"open": 10.0, "close": 10.0},
+        },
+    )
+
+    assert [(i.code, i.side, i.target_qty) for i in intents] == [
+        ("BBB", "BUY", 2500),
+        ("CCC", "BUY", 5000),
+    ]
+    assert all(i.target_weight == pytest.approx(0.5) for i in intents)
+
+
+def test_event_driven_exit_proceeds_can_fund_same_cycle_entry():
+    from core.portfolio import Position
+
+    engine = _engine()
+    engine.portfolio.cash = 0.0
+    engine.portfolio.positions = {
+        "AAA": Position(
+            code="AAA",
+            total_qty=4000,
+            available_qty=4000,
+            frozen_qty=0,
+            avg_cost=10.0,
+            market_value=40_000.0,
+        )
+    }
+
+    intents = engine._generate_event_intents(
+        ["BBB"],
+        ["AAA"],
+        {
+            "AAA": {"open": 10.0, "close": 10.0},
+            "BBB": {"open": 20.0, "close": 20.0},
+        },
+    )
+
+    assert [(i.code, i.side, i.target_qty) for i in intents] == [
+        ("AAA", "SELL", 4000),
+        ("BBB", "BUY", 2000),
+    ]
+    assert intents[1].target_weight == pytest.approx(1.0)
