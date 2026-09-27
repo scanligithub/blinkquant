@@ -149,9 +149,18 @@ class TestProductionBacktestRequestContract:
             start_date=datetime.date(2024, 1, 2),
             end_signal_date=datetime.date(2024, 12, 30),
         )
-        assert req.top_n == 20
-        assert req.rebalance_freq == "daily"
-        assert req.universe_type == "all_a"
+        # Flat legacy fields are optional on the request model; defaults are
+        # applied during normalization into the canonical StrategyDefinition.
+        assert req.top_n is None
+        assert req.rebalance_freq is None
+
+        from api.routes import _normalize_strategy_request
+
+        strategy = _normalize_strategy_request(req)
+        assert strategy.sizing.method == "top_n_equal_weight"
+        assert strategy.sizing.max_positions == 20
+        assert strategy.rebalance.frequency == "daily"
+        assert strategy.universe.type == "all_a"
         assert req.historical_fees is True
 
     def test_strategy_request_round_trips_universe_rebalance_and_sizing(self):
