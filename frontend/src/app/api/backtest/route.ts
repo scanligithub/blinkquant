@@ -4,11 +4,7 @@ import { requireAuth } from '@/lib/auth';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const NODES = [
-  'https://scanli-blinkquant-node1.hf.space',
-  'https://scanli-blinkquant-node2.hf.space',
-  'https://scanli-blinkquant-node3.hf.space',
-];
+const BACKTEST_NODE = 'https://scanli-blinkquant-node1.hf.space';
 
 export async function POST(req: NextRequest) {
   const authErr = await requireAuth(req);
@@ -17,33 +13,22 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.text();
+  const res = await fetch(`${BACKTEST_NODE}/api/v1/backtest/async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await res.text();
 
-  // 并行请求所有节点，取最快的成功响应
-  const results = await Promise.allSettled(
-    NODES.map((node) =>
-      fetch(`${node}/api/v1/backtest/async`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal: AbortSignal.timeout(15000),
-      }).then(async (res) => {
-        const text = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-        return JSON.parse(text);
-      })
-    )
-  );
-
-  const success = results.find((r) => r.status === 'fulfilled');
-  if (success && success.status === 'fulfilled') {
-    return NextResponse.json(success.value);
+  if (!res.ok) {
+    console.error('[backtest-async] Node1 failed:', text.slice(0, 500));
+    return NextResponse.json(
+      { error: 'Backtest node failed', detail: text.slice(0, 500) },
+      { status: 502 }
+    );
   }
-
-  const errors = results.map((r, i) =>
-    r.status === 'rejected' ? `${NODES[i]}: ${r.reason?.message || r.reason}` : 'ok'
-  );
-  console.error('[backtest-async] All nodes failed:', errors);
-  return NextResponse.json({ error: 'All nodes failed' }, { status: 502 });
+  return NextResponse.json(JSON.parse(text));
 }
 
 export async function GET(req: NextRequest) {
@@ -57,25 +42,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing jobId' }, { status: 400 });
   }
 
-  // 并行轮询所有节点，取最快的成功响应
-  const results = await Promise.allSettled(
-    NODES.map((node) =>
-      fetch(`${node}/api/v1/backtest/async/${jobId}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(10000),
-      }).then(async (res) => {
-        const text = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-        return JSON.parse(text);
-      })
-    )
-  );
+  const res = await fetch(`${BACKTEST_NODE}/api/v1/backtest/async/${jobId}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  const text = await res.text();
 
-  const success = results.find((r) => r.status === 'fulfilled');
-  if (success && success.status === 'fulfilled') {
-    return NextResponse.json(success.value);
+  if (!res.ok) {
+    return NextResponse.json(
+      { error: 'Backtest node failed', detail: text.slice(0, 500) },
+      { status: res.status }
+    );
   }
-
-  return NextResponse.json({ error: 'All nodes failed' }, { status: 502 });
+  return NextResponse.json(JSON.parse(text));
 }
