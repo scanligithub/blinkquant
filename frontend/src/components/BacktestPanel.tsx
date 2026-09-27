@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import BacktestStrategyTemplates, { type BacktestTemplateConfig } from './BacktestStrategyTemplates';
 
 export interface BacktestParams {
   formula: string;
@@ -64,6 +65,66 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
   const [commissionMin, setCommissionMin] = useState('5');
   const [stampTaxRate, setStampTaxRate] = useState('0.0005');
   const [transferFeeRate, setTransferFeeRate] = useState('0.00001');
+
+  const templateConfig: BacktestTemplateConfig = {
+    strategy: {
+      universe: universeType === 'index'
+        ? { type: 'index', index_id: indexId.trim() || '000300' }
+        : { type: 'all_a' },
+      entry: { condition: formula.trim(), trigger: entryTrigger, timeframe: entryTimeframe },
+      ...(exitFormula.trim() ? {
+        exit: { condition: exitFormula.trim(), trigger: exitTrigger, timeframe: exitTimeframe },
+      } : {}),
+      sizing: sizingMethod === 'equal_weight'
+        ? { method: 'equal_weight' }
+        : { method: 'top_n_equal_weight', max_positions: Math.max(1, parseInt(topN, 10) || 20) },
+      rebalance: { frequency: rebalanceFreq },
+      mode,
+    },
+    fee_policy: {
+      mode: feeMode,
+      ...(feeMode === 'fixed' ? {
+        commission_rate: parseFloat(commissionRate),
+        commission_min: parseFloat(commissionMin),
+        stamp_tax_rate: parseFloat(stampTaxRate),
+        transfer_fee_rate: parseFloat(transferFeeRate),
+      } : {}),
+    },
+    benchmark: { enabled: benchmarkEnabled, type: 'index', index_id: benchmarkIndex.trim() || '000300' },
+    min_listing_days: Math.max(0, parseInt(minListingDays, 10) || 0),
+    exclude_st: excludeSt,
+  };
+
+  const applyTemplate = (config: BacktestTemplateConfig) => {
+    const s = config.strategy || {};
+    const u = s.universe || {};
+    const entry = s.entry || {};
+    const exit = s.exit || {};
+    const sizing = s.sizing || {};
+    const fee = config.fee_policy || {};
+    const benchmark = config.benchmark || {};
+    setUniverseType(u.type === 'index' ? 'index' : 'all_a');
+    setIndexId(String(u.index_id || '000300'));
+    setFormula(String(entry.condition || ''));
+    setEntryTrigger(entry.trigger || 'condition');
+    setEntryTimeframe(entry.timeframe === 'W' || entry.timeframe === 'M' ? entry.timeframe : 'D');
+    setExitFormula(String(exit.condition || ''));
+    setExitTrigger(exit.trigger || 'condition');
+    setExitTimeframe(exit.timeframe === 'W' || exit.timeframe === 'M' ? exit.timeframe : 'D');
+    setSizingMethod(sizing.method === 'equal_weight' ? 'equal_weight' : 'top_n_equal_weight');
+    setTopN(String(sizing.max_positions || 20));
+    setRebalanceFreq(s.rebalance?.frequency === 'weekly' ? 'weekly' : 'daily');
+    setMode(s.mode === 'event_driven' ? 'event_driven' : 'target_portfolio');
+    setFeeMode(fee.mode === 'fixed' ? 'fixed' : 'historical');
+    setCommissionRate(String(fee.commission_rate ?? '0.00025'));
+    setCommissionMin(String(fee.commission_min ?? '5'));
+    setStampTaxRate(String(fee.stamp_tax_rate ?? '0.0005'));
+    setTransferFeeRate(String(fee.transfer_fee_rate ?? '0.00001'));
+    setBenchmarkEnabled(benchmark.enabled !== false);
+    setBenchmarkIndex(String(benchmark.index_id || '000300'));
+    setMinListingDays(String(config.min_listing_days || 0));
+    setExcludeSt(!!config.exclude_st);
+  };
 
   const triggerLabel = (value: string) => ({
     condition: '条件成立',
@@ -323,6 +384,8 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
           </div>
         </div>
       )}
+
+      <BacktestStrategyTemplates currentConfig={templateConfig} onLoad={applyTemplate} />
 
       <button
         type="submit"
