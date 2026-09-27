@@ -44,6 +44,7 @@ jobs:
             "start_date": "2024-01-02",
             "end_signal_date": "2024-12-30",
             "initial_cash": 1000000,
+            "benchmark": {"enabled": true, "type": "index", "index_id": "000300"},
             "strategy": {
               "name": "p5-2-close-ma20-weekly-top100",
               "universe": {"type": "all_a"},
@@ -99,6 +100,13 @@ jobs:
           assert s["n_positions"]>0,s
           assert s["n_equity_points"]>0,s
           assert s["final_equity"] is not None and s["final_equity"]>0,s
+          b=s.get("benchmark") or {}
+          assert b.get("enabled") is True,b
+          assert b.get("index_id")=="000300",b
+          assert len(b.get("series") or []) == s["n_equity_points"], (len(b.get("series") or []), s["n_equity_points"])
+          assert b.get("cumulative_return") is not None,b
+          print(json.dumps(b,ensure_ascii=False,indent=2))
+          print("BENCHMARK E2E OK")
           print(json.dumps(s,ensure_ascii=False,indent=2))
           PY
           curl -fsS --max-time 60 "$NODE1/api/v1/backtest/async/$job_id/artifact/equity_curve" -o /tmp/equity_curve.parquet
