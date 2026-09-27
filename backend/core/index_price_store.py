@@ -110,7 +110,9 @@ class IndexPriceStore:
             )
         if not frames:
             raise ValueError(f"benchmark index data not found: {canonical}")
-        df = pl.concat(frames, how="vertical").sort("date").unique("date", keep="last").collect()
+        df = pl.concat(frames, how="vertical").sort("date").unique("date", keep="last")
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
         if df.is_empty():
             raise ValueError(f"benchmark index {canonical} has no data in {start}..{end}")
         return df.collect()
