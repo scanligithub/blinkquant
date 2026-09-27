@@ -25,6 +25,13 @@ import polars as pl
 
 REQUIRED_COLUMNS = ["index_id", "stock_id", "start_date", "end_date"]
 
+# User-facing aliases -> canonical index IDs used by stockA membership data.
+INDEX_ALIASES = {
+    "CSI300": "000300",
+    "HS300": "000300",
+    "沪深300": "000300",
+}
+
 
 class UniverseDataError(ValueError):
     """PIT Universe 数据结构或区间关系不合法。"""
@@ -153,6 +160,25 @@ class UniverseResolver:
 
         return ordered
 
+    def resolve_index_id(self, index_id: str) -> str:
+        """Normalize and validate a user-provided index ID."""
+        normalized = str(index_id).strip()
+        if not normalized:
+            raise ValueError("index_id must not be empty")
+        canonical = INDEX_ALIASES.get(normalized.upper(), normalized)
+        available = self.available_indexes()
+        if canonical not in available:
+            aliases = sorted(
+                alias for alias, target in INDEX_ALIASES.items()
+                if target in available
+            )
+            raise ValueError(
+                f"unknown index_id {normalized!r}; "
+                f"available_indexes={available}; "
+                f"supported_aliases={aliases}"
+            )
+        return canonical
+
     def members(
         self,
         index_id: str,
@@ -167,9 +193,7 @@ class UniverseResolver:
         if not isinstance(as_of_date, dt.date):
             raise TypeError("as_of_date must be datetime.date")
 
-        index_id = str(index_id).strip()
-        if not index_id:
-            raise ValueError("index_id must not be empty")
+        index_id = self.resolve_index_id(index_id)
 
         day = dt.date(as_of_date.year, as_of_date.month, as_of_date.day)
 
@@ -199,7 +223,7 @@ class UniverseResolver:
         if not isinstance(as_of_date, dt.date):
             raise TypeError("as_of_date must be datetime.date")
 
-        index_id = str(index_id).strip()
+        index_id = self.resolve_index_id(index_id)
         stock_id = str(stock_id).strip()
         day = dt.date(as_of_date.year, as_of_date.month, as_of_date.day)
 
