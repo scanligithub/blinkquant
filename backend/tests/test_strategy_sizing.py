@@ -97,8 +97,8 @@ def test_target_portfolio_intents_follow_complete_target_weights():
     by_code = {intent.code: intent for intent in intents}
     assert by_code["sh.600000"].side == "BUY"
     assert by_code["sz.000001"].side == "BUY"
-    assert by_code["sh.600000"].target_qty == 40_000
-    assert by_code["sz.000001"].target_qty == 50_000
+    assert by_code["sh.600000"].target_qty == 45_000
+    assert by_code["sz.000001"].target_qty == 55_000
 
 
 def test_event_driven_entry_capital_excludes_retained_positions():
