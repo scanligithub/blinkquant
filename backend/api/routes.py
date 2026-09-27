@@ -22,6 +22,7 @@ from core.fee_config import load_fee_schedule
 from core.strategy import StrategyDefinition, UniverseDefinition, SignalDefinition, PositionSizingDefinition, RebalanceDefinition
 from core.backtest_config import BacktestConfig, FeePolicy, BenchmarkConfig
 from core.index_price_store import IndexPriceStore
+from core.metrics import compute_benchmark_metrics
 from core.universe import UniverseFilter
 from core.universe_resolver import UniverseResolver
 from core.corporate_actions import CorporateActionStore
@@ -324,6 +325,38 @@ def _df_to_parquet_bytes(df: pl.DataFrame, level: int = 6) -> bytes:
     df.write_parquet(buf, compression="zstd", compression_level=level)
     return buf.getvalue()
 
+def _benchmark_metrics_from_payload(config: BacktestConfig, result, benchmark_payload: Optional[dict]) -> dict:
+    if not benchmark_payload:
+        return {}
+    ec = result.equity_curve
+    if ec.is_empty():
+        return {}
+    equities = [float(v) for v in ec["equity"].to_list()]
+    portfolio_returns = []
+    previous = float(config.initial_cash)
+    for equity in equities:
+        if previous > 0:
+            portfolio_returns.append(equity / previous - 1.0)
+        else:
+            portfolio_returns.append(0.0)
+        previous = equity
+    benchmark_returns = [
+        float(row["benchmark_return"])
+        for row in benchmark_payload.get("series", [])
+    ]
+    if len(portfolio_returns) != len(benchmark_returns):
+        raise ValueError(
+            "benchmark and portfolio return series length mismatch"
+        )
+    metrics = compute_benchmark_metrics(portfolio_returns, benchmark_returns)
+    return {
+        "benchmark_alpha": metrics["alpha"],
+        "benchmark_beta": metrics["beta"],
+        "benchmark_tracking_error": metrics["tracking_error"],
+        "benchmark_information_ratio": metrics["information_ratio"],
+    }
+
+
 def _build_benchmark_payload(config: BacktestConfig, result) -> Optional[dict]:
     """Build a real index benchmark series aligned to valuation dates."""
     benchmark = config.benchmark
@@ -350,8 +383,9 @@ def _build_benchmark_payload(config: BacktestConfig, result) -> Optional[dict]:
 def _build_summary_from_result(config: BacktestConfig, result) -> dict:
     ec = result.equity_curve
     benchmark_payload = _build_benchmark_payload(config, result)
+    benchmark_metrics = _benchmark_metrics_from_payload(config, result, benchmark_payload)
     final = float(ec["equity"][-1]) if not ec.is_empty() else None
-    m = result.metrics if isinstance(result.metrics, dict) else {}
+    m = {**(result.metrics if isinstance(result.metrics, dict) else {}), **benchmark_metrics}
     return {
         "final_equity": final,
         "total_return": m.get("total_return"),
