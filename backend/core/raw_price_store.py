@@ -109,6 +109,11 @@ class RawPriceStore:
         schema = lf.collect_schema()
         if schema.get("date") == pl.Utf8:
             lf = lf.with_columns(pl.col("date").str.to_date("%Y-%m-%d", strict=False))
+        # 未复权测试/轻量数据集可能没有 adjustFactor。此时按“raw 即 1.0”处理，
+        # 保持 QFQ 路径可用，同时不改变真实 stockA 数据的复权语义。
+        if for_qfq and "adjustFactor" not in schema.names():
+            lf = lf.with_columns(pl.lit(1.0).cast(pl.Float32).alias("adjustFactor"))
+            schema = lf.collect_schema()
         cols = [c for c in (_QFQ_COLS if for_qfq else _CANONICAL_COLS) if c in schema.names()]
         return lf.select(cols)
 
