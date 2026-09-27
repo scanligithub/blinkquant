@@ -12,6 +12,7 @@ export interface BacktestParams {
   min_listing_days: number;
   exclude_st: boolean;
   historical_fees: boolean;
+  benchmark: { enabled: boolean; type: 'index'; index_id: string };
   fee_policy: {
     mode: 'historical' | 'fixed';
     commission_rate?: number;
@@ -56,6 +57,8 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
   const [cash, setCash] = useState('10000000');
   const [minListingDays, setMinListingDays] = useState('0');
   const [excludeSt, setExcludeSt] = useState(false);
+  const [benchmarkEnabled, setBenchmarkEnabled] = useState(true);
+  const [benchmarkIndex, setBenchmarkIndex] = useState('000300');
   const [feeMode, setFeeMode] = useState<'historical' | 'fixed'>('historical');
   const [commissionRate, setCommissionRate] = useState('0.00025');
   const [commissionMin, setCommissionMin] = useState('5');
@@ -106,6 +109,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
       min_listing_days: Math.max(0, parseInt(minListingDays, 10) || 0),
       exclude_st: excludeSt,
       historical_fees: feeMode === 'historical',
+      benchmark: { enabled: benchmarkEnabled, type: 'index', index_id: benchmarkIndex.trim() || '000300' },
       fee_policy: {
         mode: feeMode,
         ...(feeMode === 'fixed' ? {
@@ -271,6 +275,25 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
           排除 ST
         </label>
       </div>
+
+      <div>
+        <label className="flex items-center gap-2 text-xs text-gray-600">
+          <input type="checkbox" checked={benchmarkEnabled} onChange={(e) => setBenchmarkEnabled(e.target.checked)} />
+          启用基准指数
+        </label>
+      </div>
+
+      {benchmarkEnabled && (
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">基准指数</label>
+          <input
+            value={benchmarkIndex}
+            onChange={(e) => setBenchmarkIndex(e.target.value)}
+            placeholder="例如 000300（沪深300）"
+            className={inputClass}
+          />
+        </div>
+      )}
 
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-1">费率方案</label>
