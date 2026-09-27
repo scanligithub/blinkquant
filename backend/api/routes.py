@@ -243,10 +243,10 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
         backtest_engine, config, fee_schedule, universe_filter = _build_backtest_request(req)
         result = await __import__("asyncio").to_thread(
             backtest_engine.run,
-            strategy=strategy,
-            start_date=req.start_date,
-            end_signal_date=req.end_signal_date,
-            initial_cash=req.initial_cash,
+            strategy=config.strategy,
+            start_date=config.start_date,
+            end_signal_date=config.end_signal_date,
+            initial_cash=config.initial_cash,
             fee_schedule=fee_schedule,
             universe_filter=universe_filter,
         )
@@ -256,10 +256,11 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             valuation_end_date = result.equity_curve["date"].max().isoformat()
 
         return {
-            "formula": strategy.entry.condition,
-            "strategy": strategy.to_dict(),
-            "start_date": req.start_date.isoformat(),
-            "signal_end_date": req.end_signal_date.isoformat(),
+            "formula": config.strategy.entry.condition,
+            "strategy": config.strategy.to_dict(),
+            "backtest_config": config.to_dict(),
+            "start_date": config.start_date.isoformat(),
+            "signal_end_date": config.end_signal_date.isoformat(),
             "valuation_end_date": valuation_end_date,
             "initial_cash": config.initial_cash,
             "equity_curve": result.equity_curve.to_dicts() if not result.equity_curve.is_empty() else [],
@@ -358,12 +359,12 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             },
         }
         
-        backtest_engine, strategy, fee_schedule, universe_filter = _build_backtest_request(req)
+        backtest_engine, config, fee_schedule, universe_filter = _build_backtest_request(req)
         logger.info(
             "Backtest production strategy: universe=%s, rebalance=%s, sizing=%s",
-            strategy.universe.type,
-            strategy.rebalance.frequency,
-            strategy.sizing.method,
+            config.strategy.universe.type,
+            config.strategy.rebalance.frequency,
+            config.strategy.sizing.method,
         )
 
         # 再次检查取消状态（在耗时操作前）
@@ -378,10 +379,10 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             _set_job_progress(job_id, p)
         result = await asyncio.to_thread(
             backtest_engine.run,
-            strategy=strategy,
-            start_date=req.start_date,
-            end_signal_date=req.end_signal_date,
-            initial_cash=req.initial_cash,
+            strategy=config.strategy,
+            start_date=config.start_date,
+            end_signal_date=config.end_signal_date,
+            initial_cash=config.initial_cash,
             fee_schedule=fee_schedule,
             universe_filter=universe_filter,
             on_progress=_on_progress,
@@ -416,10 +417,11 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             "progress": {"pct": 100.0, "stage": "done", "updated_at": _utc_now_iso()},
             "summary": summary,
             "meta": {
-                "formula": strategy.entry.condition,
-                "strategy": strategy.to_dict(),
-                "start_date": req.start_date.isoformat(),
-                "signal_end_date": req.end_signal_date.isoformat(),
+                "formula": config.strategy.entry.condition,
+                "strategy": config.strategy.to_dict(),
+                "backtest_config": config.to_dict(),
+                "start_date": config.start_date.isoformat(),
+                "signal_end_date": config.end_signal_date.isoformat(),
                 "valuation_end_date": valuation_end_date,
                 "initial_cash": config.initial_cash,
                 "metrics": result.metrics,
