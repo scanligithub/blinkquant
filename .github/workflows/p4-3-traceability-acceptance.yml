@@ -1,0 +1,328 @@
+name: P4.3 Strategy Result Traceability Acceptance
+
+on:
+  workflow_run:
+    workflows: ["Deploy Backend to HF Spaces"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: p4.3-traceability-acceptance
+  cancel-in-progress: true
+
+jobs:
+  traceability:
+    if: \${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      E2E_EMAIL: \${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: \${{ secrets.E2E_PASSWORD }}
+      WEB: https://blinkquant.de5.net
+      NODE1: https://scanli-blinkquant-node1.hf.space
+    steps:
+      - name: Wait for Node1
+        run: |
+          set -euo pipefail
+          healthy=0
+          for i in \$(seq 1 60); do
+            body=\$(curl -fsS --max-time 15 "\$NODE1/api/v1/health" || true)
+            echo "\$body"
+            if echo "\$body" | grep -q '"status":"healthy"'; then
+              healthy=\$((healthy+1))
+              if [ "\$healthy" -ge 3 ]; then exit 0; fi
+            else
+              healthy=0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Verify unauthenticated task submission is rejected
+        run: |
+          set -euo pipefail
+          status=\$(curl -sS --max-time 20 -o /tmp/unauth.out -w '%{http_code}' \\
+            -H 'Content-Type: application/json' \\
+            -d '{"task_type":"backtest","payload":{"start_date":"2024-01-02","end_signal_date":"2024-01-31","initial_cash":1000000,"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":2},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"}}}' \\
+            "\$WEB/api/v1/tasks")
+          cat /tmp/unauth.out
+          test "\$status" = "401"
+          echo "P4.3 UNAUTHENTICATED TASK SUBMISSION REJECTED"
+
+      - name: Authenticated template -> task -> result traceability
+        if: \${{ env.E2E_EMAIL != '' && env.E2E_PASSWORD != '' }}
+        run: |
+          set -euo pipefail
+          rm -f /tmp/cookies.txt
+
+          python - <<'PY' >/tmp/login.json
+          import json, os
+          print(json.dumps({
+              "email": os.environ["E2E_EMAIL"],
+              "password": os.environ["E2E_PASSWORD"],
+          }))
+          PY
+
+          curl -fsS --max-time 20 -c /tmp/cookies.txt \\
+            -H 'Content-Type: application/json' \\
+            --data-binary @/tmp/login.json "\$WEB/api/auth/login" >/tmp/login.out
+
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
+            "\$WEB/api/auth/session" >/tmp/session.json
+
+          python - <<'PY'
+          import json
+          s=json.load(open('/tmp/session.json'))
+          assert s.get("user") and s["user"].get("id"), s
+          print("AUTH SESSION OK")
+          PY
+
+          cat >/tmp/template.json <<'JSON'
+          {
+            "name": "P4.3 traceability acceptance",
+            "description": "P4.3 production task/result traceability",
+            "config": {
+              "strategy": {
+                "universe": {"type": "all_a"},
+                "entry": {
+                  "condition": "CLOSE > MA(CLOSE,20)",
+                  "trigger": "condition",
+                  "timeframe": "D"
+                },
+                "sizing": {
+                  "method": "top_n_equal_weight",
+                  "max_positions": 5
+                },
+                "rebalance": {"frequency": "weekly"},
+                "mode": "target_portfolio"
+              },
+              "fee_policy": {"mode": "historical"},
+              "benchmark": {"enabled": true, "type": "index", "index_id": "000300"},
+              "min_listing_days": 30,
+              "exclude_st": true
+            }
+          }
+          JSON
+
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
+            -H 'Content-Type: application/json' \\
+            --data-binary @/tmp/template.json \\
+            "\$WEB/api/backtest-strategy-templates" | tee /tmp/template-create.json
+
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/template-create.json'))["template"]
+          assert t["config"]["strategy"]["sizing"]["max_positions"] == 5, t
+          open('/tmp/template-id','w').write(str(t["id"]))
+          json.dump(t["config"], open('/tmp/template-config-v1.json','w'), ensure_ascii=False)
+          open('/tmp/template-updated-v1','w').write(t["updated_at"])
+          print("TEMPLATE CREATED", t["id"], t["updated_at"])
+          PY
+
+          create_task() {
+            local cfg_path="\$1"
+            local out="\$2"
+            local template_id="\$3"
+            python - "\$cfg_path" "\$template_id" <<'PY' > /tmp/task-request.json
+          import json, sys
+          cfg=json.load(open(sys.argv[1]))
+          req={
+            "task_type":"backtest",
+            "payload":{
+              "start_date":"2024-01-02",
+              "end_signal_date":"2024-03-29",
+              "initial_cash":1000000,
+              "strategy":cfg["strategy"],
+              "fee_policy":cfg["fee_policy"],
+              "benchmark":cfg["benchmark"],
+              "min_listing_days":cfg["min_listing_days"],
+              "exclude_st":cfg["exclude_st"],
+            },
+            "strategy_template_id":int(sys.argv[2]),
+          }
+          print(json.dumps(req, ensure_ascii=False))
+          PY
+            curl -fsS --max-time 30 -b /tmp/cookies.txt \\
+              -H 'Content-Type: application/json' \\
+              --data-binary @/tmp/task-request.json \\
+              "\$WEB/api/v1/tasks" | tee "\$out"
+          }
+
+          create_task /tmp/template-config-v1.json /tmp/task-v1.json "\$(cat /tmp/template-id)"
+
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/task-v1.json'))
+          assert d.get("task_id"), d
+          assert str(d.get("strategy_template_id")) == open('/tmp/template-id').read().strip(), d
+          assert d.get("strategy_template_name") == "P4.3 traceability acceptance", d
+          assert d.get("strategy_template_updated_at") == open('/tmp/template-updated-v1').read(), d
+          open('/tmp/task-v1-id','w').write(str(d["task_id"]))
+          PY
+
+          poll_task() {
+            local task_id="\$1"
+            local result_file="\$2"
+            for i in \$(seq 1 180); do
+              body=\$(curl -fsS --max-time 20 -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$task_id")
+              echo "\$body" > "\$result_file"
+              status=\$(echo "\$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+              echo "task=\$task_id poll=\$i status=\$status"
+              if [ "\$status" = "done" ]; then return 0; fi
+              if [ "\$status" = "failed" ] || [ "\$status" = "cancelled" ] || [ "\$status" = "preempted" ]; then
+                cat "\$result_file"
+                return 1
+              fi
+              sleep 10
+            done
+            cat "\$result_file"
+            return 1
+          }
+
+          poll_task "\$(cat /tmp/task-v1-id)" /tmp/task-v1-result.json
+
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/task-v1-result.json'))
+          assert t["status"]=="done", t
+          assert str(t["strategy_template_id"]) == open('/tmp/template-id').read().strip(), t
+          assert t["strategy_template_name"] == "P4.3 traceability acceptance", t
+          assert t["strategy_template_updated_at"] == open('/tmp/template-updated-v1').read(), t
+          assert (t.get("result_summary") or {}).get("n_trades", 0) > 0, t
+          json.dump({
+              "template_id":t["strategy_template_id"],
+              "template_name":t["strategy_template_name"],
+              "template_updated_at":t["strategy_template_updated_at"],
+          }, open('/tmp/task-v1-snapshot.json','w'))
+          PY
+
+          T1=\$(cat /tmp/task-v1-id)
+          curl -fsS --max-time 60 -b /tmp/cookies.txt \\
+            "\$WEB/api/v1/tasks/\$T1/artifact?name=equity_curve&fmt=legacy" \\
+            > /tmp/task-v1-legacy.json
+
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/task-v1-legacy.json'))
+          snap=json.load(open('/tmp/task-v1-snapshot.json'))
+          assert r["strategy_template_id"] == snap["template_id"], r
+          assert r["strategy_template_name"] == snap["template_name"], r
+          assert r["strategy_template_updated_at"] == snap["template_updated_at"], r
+          cfg=r.get("backtest_config") or {}
+          assert cfg.get("strategy",{}).get("sizing",{}).get("max_positions") == 5, cfg
+          print("RESULT META TRACEABILITY V1 OK")
+          PY
+
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/template.json'))
+          p["description"]="P4.3 traceability acceptance v2"
+          p["config"]["strategy"]["sizing"]["max_positions"]=6
+          open('/tmp/template-v2.json','w').write(json.dumps(p, ensure_ascii=False))
+          PY
+
+          TID=\$(cat /tmp/template-id)
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
+            -X PUT -H 'Content-Type: application/json' \\
+            --data-binary @/tmp/template-v2.json \\
+            "\$WEB/api/backtest-strategy-templates?id=\$TID" | tee /tmp/template-v2-result.json
+
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/template-v2-result.json'))["template"]
+          assert t["config"]["strategy"]["sizing"]["max_positions"] == 6, t
+          assert t["updated_at"] != open('/tmp/template-updated-v1').read(), t
+          json.dump(t["config"], open('/tmp/template-config-v2.json','w'), ensure_ascii=False)
+          open('/tmp/template-updated-v2','w').write(t["updated_at"])
+          print("TEMPLATE UPDATED V2", t["updated_at"])
+          PY
+
+          curl -fsS --max-time 20 -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$T1" > /tmp/task-v1-after-edit.json
+          python - <<'PY'
+          import json
+          old=json.load(open('/tmp/task-v1-after-edit.json'))
+          snap=json.load(open('/tmp/task-v1-snapshot.json'))
+          assert old["strategy_template_id"] == snap["template_id"], old
+          assert old["strategy_template_name"] == snap["template_name"], old
+          assert old["strategy_template_updated_at"] == snap["template_updated_at"], old
+          print("HISTORICAL TASK SNAPSHOT IMMUTABLE OK")
+          PY
+
+          create_task /tmp/template-config-v2.json /tmp/task-v2.json "\$TID"
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/task-v2.json'))
+          assert d.get("task_id"), d
+          assert str(d.get("strategy_template_id")) == open('/tmp/template-id').read().strip(), d
+          assert d.get("strategy_template_updated_at") == open('/tmp/template-updated-v2').read(), d
+          open('/tmp/task-v2-id','w').write(str(d["task_id"]))
+          PY
+          poll_task "\$(cat /tmp/task-v2-id)" /tmp/task-v2-result.json
+
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/task-v2-result.json'))
+          assert t["status"]=="done", t
+          assert str(t["strategy_template_id"]) == open('/tmp/template-id').read().strip(), t
+          assert t["strategy_template_updated_at"] == open('/tmp/template-updated-v2').read(), t
+          print("TASK TRACEABILITY V2 OK")
+          PY
+
+          python - <<'PY'
+          import json
+          cfg=json.load(open('/tmp/template-config-v1.json'))
+          req={
+            "task_type":"backtest",
+            "payload":{
+              "start_date":"2024-02-01",
+              "end_signal_date":"2024-02-29",
+              "initial_cash":500000,
+              "strategy":cfg["strategy"],
+              "fee_policy":cfg["fee_policy"],
+              "benchmark":cfg["benchmark"],
+              "min_listing_days":cfg["min_listing_days"],
+              "exclude_st":cfg["exclude_st"],
+            },
+            "strategy_template_id":int(open('/tmp/template-id').read()),
+          }
+          json.dump(req, open('/tmp/stale-task-request.json','w'), ensure_ascii=False)
+          PY
+
+          curl -fsS --max-time 30 -b /tmp/cookies.txt \\
+            -H 'Content-Type: application/json' \\
+            --data-binary @/tmp/stale-task-request.json \\
+            "\$WEB/api/v1/tasks" | tee /tmp/stale-task.json
+
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/stale-task.json'))
+          assert d.get("task_id"), d
+          assert d.get("strategy_template_id") is None, d
+          assert d.get("strategy_template_name") is None, d
+          assert d.get("strategy_template_updated_at") is None, d
+          open('/tmp/stale-task-id','w').write(str(d["task_id"]))
+          print("STALE TEMPLATE MISMATCH NOT ATTRIBUTED OK")
+          PY
+
+          poll_task "\$(cat /tmp/stale-task-id)" /tmp/stale-task-result.json
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/stale-task-result.json'))
+          assert t["status"]=="done", t
+          assert t.get("strategy_template_id") is None, t
+          assert t.get("strategy_template_name") is None, t
+          assert t.get("strategy_template_updated_at") is None, t
+          print("STALE CONFIG BACKTEST STILL RUNS WITHOUT FALSE ATTRIBUTION OK")
+          PY
+
+          for f in /tmp/task-v1-id /tmp/task-v2-id /tmp/stale-task-id; do
+            ID=\$(cat "\$f")
+            curl -fsS --max-time 30 -X DELETE -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$ID" >/dev/null
+          done
+          curl -fsS --max-time 20 -X DELETE -b /tmp/cookies.txt "\$WEB/api/backtest-strategy-templates?id=\$TID" >/dev/null
+          echo "P4.3 AUTHENTICATED TRACEABILITY E2E OK"
+
+      - name: Note authenticated E2E status
+        if: \${{ env.E2E_EMAIL == '' || env.E2E_PASSWORD == '' }}
+        run: |
+          echo "Authenticated P4.3 traceability E2E skipped: GitHub secrets E2E_EMAIL/E2E_PASSWORD are not configured."
+          echo "Unauthenticated task submission rejection and Node1 readiness remain mandatory."
