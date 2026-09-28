@@ -59,7 +59,7 @@ jobs:
           echo "P4.1 VERCEL UNAUTHENTICATED REJECTED"
 
       - name: Authenticated Vercel -> Node1 template E2E (optional)
-        if: ${{ secrets.E2E_EMAIL != '' && secrets.E2E_PASSWORD != '' }}
+        if: ${{ env.E2E_EMAIL != '' && env.E2E_PASSWORD != '' }}
         env:
           WEB: https://blinkquant.de5.net
           E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
@@ -107,7 +107,10 @@ jobs:
           echo "P4.1 AUTHENTICATED VERCEL -> NODE1 TEMPLATE E2E OK"
 
       - name: Note authenticated E2E status
-        if: ${{ secrets.E2E_EMAIL == '' || secrets.E2E_PASSWORD == '' }}
+        if: ${{ env.E2E_EMAIL == '' || env.E2E_PASSWORD == '' }}
+        env:
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: |
           echo "Authenticated production CRUD E2E skipped: GitHub secrets E2E_EMAIL/E2E_PASSWORD are not configured."
           echo "Security negative-path checks remain mandatory."
