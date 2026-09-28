@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS task_queue (
     strategy_template_id INTEGER,
     strategy_template_name TEXT,
     strategy_template_updated_at TEXT,
+    source_task_id   INTEGER,
     timeout_sec     INTEGER,          -- 动态墙钟上限（秒），NULL 用全局默认
     progress_pct    REAL,             -- 0~100，回测进度百分比
     progress_json   TEXT              -- 完整 progress JSON
@@ -55,6 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_tq_assigned_status
     ON task_queue (assigned_node, status);
 CREATE INDEX IF NOT EXISTS idx_tq_generation
     ON task_queue (generation);
+CREATE INDEX IF NOT EXISTS idx_tq_source_task
+    ON task_queue (source_task_id);
 
 CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
