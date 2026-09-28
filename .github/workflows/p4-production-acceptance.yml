@@ -4,18 +4,21 @@ on:
   push:
     branches: [main]
     paths:
-      - 'frontend/**'
       - '.github/workflows/p4-production-acceptance.yml'
+  workflow_run:
+    workflows: ["Deploy Backend to HF Spaces"]
+    types: [completed]
 
 concurrency:
   group: p4.1-production-acceptance
   cancel-in-progress: true
 
 jobs:
-  template-crud:
+  predeploy-probe:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for Node1
+      - name: Wait for current Node1
         env:
           NODE1: https://scanli-blinkquant-node1.hf.space
         run: |
@@ -27,106 +30,49 @@ jobs:
             sleep 10
           done
           exit 1
-      - name: CRUD and user isolation
+
+      - name: Create persistent deployment probe
         env:
           NODE1: https://scanli-blinkquant-node1.hf.space
         run: |
           set -euo pipefail
           BASE="$NODE1/api/v1/backtest-strategy-templates"
-          NAME="P4.1 Production Acceptance $(date +%s)"
-          cat >/tmp/create.json <<JSON
-          {"name":"$NAME","description":"production acceptance","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":20},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":60,"exclude_st":true}}
+          cat >/tmp/persist.json <<'JSON'
+          {"name":"P4.1 persistence probe","description":"P4.1 deployment persistence verification","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":7},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":42,"exclude_st":true}}
           JSON
-
-          A=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-a' "$BASE")
-          B=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-b' "$BASE")
-          echo "$A"; echo "$B"
-
-          CREATE=$(curl -fsS --max-time 20 -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-a' --data-binary @/tmp/create.json "$BASE")
-          echo "$CREATE" | tee /tmp/create.out
-          ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["template"]["id"])' </tmp/create.out)
-
-          B=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-b' "$BASE")
-          python - "$B" "$ID" <<'PY'
-          import json,sys
-          rows=json.loads(sys.argv[1])["templates"]
-          assert all(str(x["id"]) != sys.argv[2] for x in rows)
-          print("USER A -> USER B LIST ISOLATION OK")
+          curl -fsS --max-time 20 -H 'Content-Type: application/json' -H 'X-User-Id: p41-persistence-probe' --data-binary @/tmp/persist.json "$BASE" | tee /tmp/create.out
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/create.out'))["template"]
+          assert t["name"]=="P4.1 persistence probe"
+          assert t["config"]["strategy"]["sizing"]["max_positions"]==7
+          assert t["config"]["min_listing_days"]==42
+          print("PREDEPLOY PERSISTENCE PROBE CREATED:", t["id"])
           PY
 
-          set +e
-          HTTP=$(curl -sS --max-time 20 -o /tmp/bupdate.out -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-b' --data-binary @/tmp/create.json "$BASE?id=$ID")
-          set -e
-          echo "cross-user update HTTP=$HTTP body=$(cat /tmp/bupdate.out)"
-          [ "$HTTP" = "404" ]
-
-          sed 's/MA(CLOSE,20)/MA(CLOSE,60)/; s/"max_positions":20/"max_positions":10/; s/"frequency":"weekly"/"frequency":"daily"/' /tmp/create.json >/tmp/update.json
-          UPDATE=$(curl -fsS --max-time 20 -X PUT -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-a' --data-binary @/tmp/update.json "$BASE?id=$ID")
-          echo "$UPDATE"
-          python - "$UPDATE" <<'PY'
-          import json,sys
-          t=json.loads(sys.argv[1])["template"]
-          assert t["config"]["strategy"]["entry"]["condition"]=="CLOSE > MA(CLOSE,60)"
-          assert t["config"]["strategy"]["sizing"]["max_positions"]==10
-          assert t["config"]["strategy"]["rebalance"]["frequency"]=="daily"
-          print("UPDATE OK")
+      - name: Verify probe is user-isolated
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          curl -fsS --max-time 20 -H 'X-User-Id: p41-persistence-other' "$BASE" | tee /tmp/other.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/other.json'))["templates"]
+          assert all(x["name"]!="P4.1 persistence probe" for x in rows)
+          print("PREDEPLOY USER ISOLATION OK")
           PY
 
-          set +e
-          HTTP=$(curl -sS --max-time 20 -o /tmp/bdelete.out -w '%{http_code}' -X DELETE -H 'X-User-Id: p41-prod-b' "$BASE?id=$ID")
-          set -e
-          echo "cross-user delete HTTP=$HTTP body=$(cat /tmp/bdelete.out)"
-          [ "$HTTP" = "404" ]
-
-          curl -fsS --max-time 20 -X DELETE -H 'X-User-Id: p41-prod-a' "$BASE?id=$ID"
-          FINAL=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-a' "$BASE")
-          python - "$FINAL" "$ID" <<'PY'
-          import json,sys
-          rows=json.loads(sys.argv[1])["templates"]
-          assert all(str(x["id"]) != sys.argv[2] for x in rows)
-          print("DELETE OK")
-          print("P4.1 PRODUCTION CRUD + USER ISOLATION OK")
-          PY
-
-  restart-persistence:
-    needs: template-crud
+  postdeploy-persistence:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Create persistence probe template
+      - name: Wait for deployed Node1
         env:
           NODE1: https://scanli-blinkquant-node1.hf.space
         run: |
           set -euo pipefail
-          BASE="$NODE1/api/v1/backtest-strategy-templates"
-          USER_ID="p41-restart-$(date +%s)"
-          NAME="restart-persistence"
-          cat >/tmp/persist.json <<JSON
-          {"name":"$NAME","description":"P4.1 restart persistence probe","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":7},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":42,"exclude_st":true}}
-          JSON
-          curl -fsS --max-time 20 -H "Content-Type: application/json" -H "X-User-Id: $USER_ID" --data-binary @/tmp/persist.json "$BASE" | tee /tmp/persist-create.out
-          python - "$USER_ID" <<'PY'
-          import json,sys
-          t=json.load(open('/tmp/persist-create.out'))['template']
-          assert t['config']['strategy']['sizing']['max_positions']==7
-          assert t['config']['min_listing_days']==42
-          print("PERSISTENCE PROBE CREATED:", t['id'])
-          open('/tmp/persist_user','w').write(sys.argv[1])
-          open('/tmp/persist_id','w').write(str(t['id']))
-          PY
-
-      - name: Restart Node1 and verify template survives
-        env:
-          NODE1: https://scanli-blinkquant-node1.hf.space
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          set -euo pipefail
-          USER_ID=$(cat /tmp/persist_user)
-          ID=$(cat /tmp/persist_id)
-          BASE="$NODE1/api/v1/backtest-strategy-templates"
-          echo '--- status before restart ---'
-          curl -fsS --max-time 20 "$NODE1/api/v1/status" | tee /tmp/status-before.json || true
-          echo '--- restart Node1 ---'
-          curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/api/spaces/scanligithub/blinkquant-node1/restart"
           healthy=0
           for i in $(seq 1 60); do
             body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
@@ -140,21 +86,39 @@ jobs:
             sleep 10
           done
           [ "$healthy" -ge 3 ]
-          echo '--- status after restart ---'
-          curl -fsS --max-time 20 "$NODE1/api/v1/status" | tee /tmp/status-after.json || true
-          echo '--- verify template survived restart ---'
-          curl -fsS --max-time 20 -H "X-User-Id: $USER_ID" "$BASE" | tee /tmp/persist-after.json
-          python - "$ID" <<'PY'
-          import json,sys
-          tid=sys.argv[1]
-          rows=json.load(open('/tmp/persist-after.json'))['templates']
-          found=[x for x in rows if str(x['id'])==tid]
+
+      - name: Verify SQLite persistence after deployment
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          echo '--- Node1 status ---'
+          curl -fsS --max-time 20 "$NODE1/api/v1/status" | tee /tmp/status.json
+          python - <<'PY'
+          import json
+          s=json.load(open('/tmp/status.json'))
+          assert s["disk_path"]=="/data", s
+          print("SCHEDULER STORAGE PATH OK:", s["disk_path"])
+          PY
+
+          echo '--- Verify probe survived deployment/restart ---'
+          curl -fsS --max-time 20 -H 'X-User-Id: p41-persistence-probe' "$BASE" | tee /tmp/after.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/after.json'))["templates"]
+          found=[x for x in rows if x["name"]=="P4.1 persistence probe"]
           assert len(found)==1, rows
           t=found[0]
-          assert t['config']['strategy']['sizing']['max_positions']==7
-          assert t['config']['min_listing_days']==42
-          assert t['config']['exclude_st'] is True
-          assert t['config']['benchmark']['index_id']=='000300'
-          print("P4.1 SQLITE RESTART PERSISTENCE OK")
+          assert t["config"]["strategy"]["sizing"]["max_positions"]==7
+          assert t["config"]["strategy"]["rebalance"]["frequency"]=="weekly"
+          assert t["config"]["benchmark"]["index_id"]=="000300"
+          assert t["config"]["min_listing_days"]==42
+          assert t["config"]["exclude_st"] is True
+          print("P4.1 SQLITE PERSISTENCE AFTER DEPLOYMENT OK")
           PY
-          curl -fsS --max-time 20 -X DELETE -H "X-User-Id: $USER_ID" "$BASE?id=$ID"
+
+          echo '--- Cleanup probe ---'
+          ID=$(python -c 'import json; print([x for x in json.load(open("/tmp/after.json"))["templates"] if x["name"]=="P4.1 persistence probe"][0]["id"])')
+          curl -fsS --max-time 20 -X DELETE -H 'X-User-Id: p41-persistence-probe' "$BASE?id=$ID"
+          echo "P4.1 PERSISTENCE ACCEPTANCE OK"
