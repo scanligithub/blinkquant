@@ -81,6 +81,9 @@ interface TaskMeta {
   finished_at?: string | null;
   result_uri?: string | null;
   result_bytes?: number | null;
+  strategy_template_id?: number | null;
+  strategy_template_name?: string | null;
+  strategy_template_updated_at?: string | null;
 }
 
 function formatDuration(started?: string | null, finished?: string | null): string {
@@ -395,6 +398,9 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
             <div>
               {(() => {
                 const p = taskMeta?.payload;
+                const templateLabel = taskMeta?.strategy_template_name
+                  ? `${taskMeta.strategy_template_name} #${taskMeta.strategy_template_id ?? '—'}`
+                  : '无（自定义/配置不匹配）';
                 const formula = p?.formula ?? (isLegacy ? result!.formula : undefined);
                 const start = p?.start_date ?? (isLegacy ? result!.start_date : undefined);
                 const end =
@@ -412,6 +418,10 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
                   : '—';
                 return (
                   <>
+                    <ParamRow label="策略模板" value={templateLabel} />
+                    {taskMeta?.strategy_template_updated_at && (
+                      <ParamRow label="模板版本时间" value={taskMeta.strategy_template_updated_at} mono />
+                    )}
                     <ParamRow label="策略公式" value={formula || '—'} mono />
                     <ParamRow label="回测区间" value={period} />
                     <ParamRow
