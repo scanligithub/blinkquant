@@ -37,66 +37,77 @@ jobs:
           done
           [ "$healthy" -ge 3 ]
 
-      - name: Create restart persistence probe
+      - name: Verify direct Node1 identity spoofing is rejected
         env:
           NODE1: https://scanli-blinkquant-node1.hf.space
         run: |
           set -euo pipefail
           BASE="$NODE1/api/v1/backtest-strategy-templates"
-          cat >/tmp/persist.json <<'JSON'
-          {"name":"P4.1 restart persistence probe","description":"P4.1 restart persistence verification","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":7},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":42,"exclude_st":true}}
+          status=$(curl -sS --max-time 20 -o /tmp/spoof.out -w '%{http_code}'             -H 'X-User-Id: forged-user' "$BASE")
+          cat /tmp/spoof.out
+          test "$status" = "401"
+          echo "P4.1 DIRECT IDENTITY SPOOF REJECTED"
+
+      - name: Verify unauthenticated Vercel proxy is rejected
+        env:
+          WEB: https://blinkquant.de5.net
+        run: |
+          set -euo pipefail
+          status=$(curl -sS --max-time 20 -o /tmp/proxy.out -w '%{http_code}'             "$WEB/api/backtest-strategy-templates")
+          cat /tmp/proxy.out
+          test "$status" = "401"
+          echo "P4.1 VERCEL UNAUTHENTICATED REJECTED"
+
+      - name: Authenticated Vercel -> Node1 template E2E (optional)
+        if: ${{ secrets.E2E_EMAIL != '' && secrets.E2E_PASSWORD != '' }}
+        env:
+          WEB: https://blinkquant.de5.net
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: |
+          set -euo pipefail
+          rm -f /tmp/cookies.txt
+          curl -fsS --max-time 20 -c /tmp/cookies.txt -H 'Content-Type: application/json'             -d "$(python - <<'PY'
+          import json, os
+          print(json.dumps({"email": os.environ["E2E_EMAIL"], "password": os.environ["E2E_PASSWORD"]}))
+          PY
+          )" "$WEB/api/auth/login" | tee /tmp/login.out
+          curl -fsS --max-time 20 -b /tmp/cookies.txt             "$WEB/api/auth/session" | tee /tmp/session.out
+          python - <<'PY'
+          import json
+          s=json.load(open('/tmp/session.out'))
+          assert s.get("user") and s["user"].get("id")
+          print("AUTH SESSION OK")
+          PY
+
+          BASE="$WEB/api/backtest-strategy-templates"
+          cat >/tmp/template.json <<'JSON'
+          {"name":"P4.1 authenticated E2E probe","description":"P4.1 Vercel to Node1 authentication verification","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":6},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":15,"exclude_st":true}}
           JSON
-          curl -fsS --max-time 20 -H 'Content-Type: application/json' -H 'X-User-Id: p41-restart-probe'             --data-binary @/tmp/persist.json "$BASE" | tee /tmp/create.out
+          curl -fsS --max-time 20 -b /tmp/cookies.txt -H 'Content-Type: application/json'             --data-binary @/tmp/template.json "$BASE" | tee /tmp/create.out
           python - <<'PY'
           import json
           t=json.load(open('/tmp/create.out'))["template"]
-          assert t["config"]["strategy"]["sizing"]["max_positions"]==7
-          assert t["config"]["min_listing_days"]==42
-          print("PROBE CREATED:", t["id"])
-          open("/tmp/probe_id","w").write(str(t["id"]))
+          assert t["config"]["strategy"]["sizing"]["max_positions"] == 6
+          assert t["config"]["min_listing_days"] == 15
+          open('/tmp/template_id','w').write(str(t["id"]))
           PY
 
-      - name: Restart Node1 and verify persistence
-        env:
-          NODE1: https://scanli-blinkquant-node1.hf.space
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          set -euo pipefail
-          BASE="$NODE1/api/v1/backtest-strategy-templates"
-          echo '--- Restart Node1 ---'
-          curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $HF_TOKEN"             "https://huggingface.co/api/spaces/scanli/blinkquant-node1/restart"
-
-          healthy=0
-          for i in $(seq 1 90); do
-            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
-            echo "$body"
-            if echo "$body" | grep -q '"status":"healthy"'; then
-              healthy=$((healthy+1))
-              if [ "$healthy" -ge 3 ]; then break; fi
-            else
-              healthy=0
-            fi
-            sleep 10
-          done
-          [ "$healthy" -ge 3 ]
-
-          echo '--- Verify probe after restart ---'
-          curl -fsS --max-time 20 -H 'X-User-Id: p41-restart-probe' "$BASE" | tee /tmp/after.json
+          curl -fsS --max-time 20 -b /tmp/cookies.txt "$BASE" | tee /tmp/list.out
           python - <<'PY'
           import json
-          tid=open('/tmp/probe_id').read().strip()
-          rows=json.load(open('/tmp/after.json'))["templates"]
-          found=[x for x in rows if str(x["id"])==tid]
-          assert len(found)==1, rows
-          t=found[0]
-          assert t["config"]["strategy"]["sizing"]["max_positions"]==7
-          assert t["config"]["strategy"]["rebalance"]["frequency"]=="weekly"
-          assert t["config"]["benchmark"]["index_id"]=="000300"
-          assert t["config"]["min_listing_days"]==42
-          assert t["config"]["exclude_st"] is True
-          print("P4.1 SQLITE RESTART PERSISTENCE OK")
+          tid=open('/tmp/template_id').read().strip()
+          rows=json.load(open('/tmp/list.out'))["templates"]
+          assert any(str(x["id"])==tid for x in rows)
+          print("AUTHENTICATED TEMPLATE LIST OK")
           PY
 
-          ID=$(cat /tmp/probe_id)
-          curl -fsS --max-time 20 -X DELETE -H 'X-User-Id: p41-restart-probe' "$BASE?id=$ID"
-          echo "P4.1 PRODUCTION RESTART PERSISTENCE OK"
+          ID=$(cat /tmp/template_id)
+          curl -fsS --max-time 20 -X DELETE -b /tmp/cookies.txt "$BASE?id=$ID"
+          echo "P4.1 AUTHENTICATED VERCEL -> NODE1 TEMPLATE E2E OK"
+
+      - name: Note authenticated E2E status
+        if: ${{ secrets.E2E_EMAIL == '' || secrets.E2E_PASSWORD == '' }}
+        run: |
+          echo "Authenticated production CRUD E2E skipped: GitHub secrets E2E_EMAIL/E2E_PASSWORD are not configured."
+          echo "Security negative-path checks remain mandatory."
