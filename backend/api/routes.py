@@ -274,6 +274,21 @@ def _build_backtest_request(req: BacktestRequest):
     return engine, config, fee_schedule, universe_filter
 
 
+async def _checkpoint_template_mutation() -> None:
+    """Persist template mutations to the scheduler checkpoint before returning."""
+    try:
+        from scheduler.checkpoint import checkpoint_now
+        uploaded = await checkpoint_now(force=True)
+        if not uploaded:
+            raise RuntimeError("scheduler checkpoint was not uploaded")
+    except Exception as exc:
+        logger.exception("Failed to persist backtest strategy template mutation: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="template saved locally but durable checkpoint failed",
+        )
+
+
 class BacktestStrategyTemplateRequest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -321,6 +336,7 @@ async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest
             raise HTTPException(status_code=409, detail="template name already exists")
         raise
     row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 AND name=$2", user_id, name)
+    await _checkpoint_template_mutation()
     row["config"] = json_loads(row["config"])
     return {"template": row}
 
@@ -341,6 +357,7 @@ async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest
     if result.startswith("0 row"):
         raise HTTPException(status_code=404, detail="template not found")
     row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
+    await _checkpoint_template_mutation()
     row["config"] = json_loads(row["config"])
     return {"template": row}
 
@@ -351,6 +368,7 @@ async def delete_backtest_strategy_template(id: int, x_user_id: Optional[str] = 
     result = await execute("DELETE FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
     if result.startswith("0 row"):
         raise HTTPException(status_code=404, detail="template not found")
+    await _checkpoint_template_mutation()
     return {"success": True}
 
 @router.post("/backtest")
