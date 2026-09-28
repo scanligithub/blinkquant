@@ -20,10 +20,15 @@ async function forward(req: NextRequest, method: string) {
     if (id) url.searchParams.set('id', id);
   }
 
+  // Node1 re-validates the browser session through Vercel /api/auth/session.
+  // Do not pass a client-controlled user id; the authenticated identity must
+  // come from the same signed session cookie that requireAuth() accepted here.
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-User-Id': result.user.userId,
   };
+  const cookie = req.headers.get('cookie');
+  if (cookie) headers.Cookie = cookie;
+
   const response = await fetch(url, {
     method,
     headers,
