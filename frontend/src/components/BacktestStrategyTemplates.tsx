@@ -9,6 +9,7 @@ export interface BacktestTemplateConfig {
   exclude_st: boolean;
 }
 interface Template { id:number; name:string; description?:string|null; config:BacktestTemplateConfig; updated_at:string; }
+// P4.1: templates are persisted by Node1 Scheduler SQLite; Vercel only proxies authenticated requests.
 interface Props { currentConfig: BacktestTemplateConfig; onLoad:(config:BacktestTemplateConfig)=>void; }
 
 export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Props) {
