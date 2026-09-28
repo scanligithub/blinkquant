@@ -87,6 +87,7 @@ export default function Home() {
   const [sidebarTab, setSidebarTab] = useState<'results' | 'watchlist' | 'backtest'>('results');
   const [backtestResult, setBacktestResult] = useState<any>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestTemplateId, setBacktestTemplateId] = useState<number | null>(null);
   const backtestLoadingRef = useRef(false);
   const [strategyName, setStrategyName] = useState('');
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
@@ -449,7 +450,9 @@ const POLL_TIMEOUT = 60000;
     setBacktestResult(null);
     try {
       // 使用新的任务队列 API
-      const taskId = await submitTask('backtest', params);
+      const taskId = await submitTask('backtest', params, {
+        strategyTemplateId: backtestTemplateId,
+      });
       
       // 轮询任务状态
       const pollTaskStatus = async (taskId: number) => {
@@ -881,7 +884,12 @@ setDailyDataCache(dailyData);
                 </div>
               ) : sidebarTab === 'backtest' ? (
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
-                  <BacktestPanel initialFormula={formula} onRun={handleBacktest} loading={backtestLoading} />
+                  <BacktestPanel
+                    initialFormula={formula}
+                    onRun={handleBacktest}
+                    loading={backtestLoading}
+                    onTemplateSelected={setBacktestTemplateId}
+                  />
                   {backtestResult && (
                     <BacktestResults
                       result={backtestResult.legacy}
