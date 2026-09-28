@@ -190,7 +190,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || '删除失败');
       if (editingId === id) resetEditor();
-      selectTemplate((currentId => currentId === id ? null : currentId)(null));
+      if (selectedTemplateId === id) selectTemplate(null);
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -312,7 +312,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
               <button
                 type='button'
                 disabled={loading}
-                onClick={() => onLoad(t.config)}
+                onClick={() => { selectTemplate(null); onLoad(t.config); }}
                 className='px-2.5 py-1 text-[11px] text-blue-600 border border-blue-200 rounded disabled:opacity-50'
               >
                 使用
