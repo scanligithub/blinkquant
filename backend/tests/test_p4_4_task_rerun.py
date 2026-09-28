@@ -207,7 +207,8 @@ def test_existing_scheduler_db_migrates_source_task_id(tmp_path, monkeypatch):
                     task_type TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     priority INTEGER DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'pending'
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             await conn.commit()
