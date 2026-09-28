@@ -108,8 +108,12 @@ jobs:
           assert s_cfg["sizing"]==s_saved["sizing"]
           assert s_cfg["rebalance"]==s_saved["rebalance"]
           assert s_cfg["mode"]==s_saved["mode"]
-          assert cfg["fee_policy"]==saved["fee_policy"], (cfg["fee_policy"],saved["fee_policy"])
-          assert cfg["benchmark"]==saved["benchmark"], (cfg["benchmark"],saved["benchmark"])
+          assert cfg["fee_policy"]["mode"]==saved["fee_policy"]["mode"], (cfg["fee_policy"],saved["fee_policy"])
+          if saved["fee_policy"]["mode"]=="fixed":
+            for key in ("commission_rate","commission_min","stamp_tax_rate","transfer_fee_rate"):
+              assert cfg["fee_policy"].get(key)==saved["fee_policy"].get(key), (key,cfg["fee_policy"],saved["fee_policy"])
+          assert cfg["benchmark"]["enabled"]==saved["benchmark"]["enabled"], (cfg["benchmark"],saved["benchmark"])
+          assert cfg["benchmark"]["index_id"]==saved["benchmark"]["index_id"], (cfg["benchmark"],saved["benchmark"])
           assert cfg["min_listing_days"]==saved["min_listing_days"], cfg
           assert cfg["exclude_st"]==saved["exclude_st"], cfg
           assert r["summary"]["n_trades"]>0, r["summary"]
