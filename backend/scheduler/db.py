@@ -110,6 +110,7 @@ async def _migrate() -> None:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN strategy_template_updated_at TEXT")
     if "source_task_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN source_task_id INTEGER")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_tq_source_task ON task_queue (source_task_id)")
 
 
 async def close_pool() -> None:
