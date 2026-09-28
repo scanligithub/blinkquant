@@ -44,6 +44,11 @@ def test_rerun_creates_independent_task_with_same_payload_and_template(tmp_path,
                 "INSERT INTO backtest_strategy_templates (user_id,name,config) VALUES ($1,$2,$3)",
                 "u1", "tpl", json.dumps(cfg),
             )
+            current_template = await db.fetchrow(
+                "SELECT id,name,updated_at FROM backtest_strategy_templates WHERE id=1"
+            )
+            assert current_template is not None
+
             await db.execute(
                 "INSERT INTO task_queue "
                 "(user_id,task_type,payload,priority,status,strategy_template_id,"
@@ -57,17 +62,19 @@ def test_rerun_creates_independent_task_with_same_payload_and_template(tmp_path,
             assert result["status"] == "pending"
             assert result["strategy_template_id"] == 1
             assert result["strategy_template_name"] == "tpl"
+            assert result["strategy_template_updated_at"] == current_template["updated_at"]
 
-            old = await db.fetchrow("SELECT payload,status FROM task_queue WHERE id=1")
+            old = await db.fetchrow("SELECT payload,status,strategy_template_updated_at FROM task_queue WHERE id=1")
             new = await db.fetchrow(
                 "SELECT payload,status,source_task_id,strategy_template_id,strategy_template_updated_at "
                 "FROM task_queue WHERE id=2"
             )
             assert json.loads(new["payload"]) == json.loads(old["payload"])
             assert old["status"] == "done"
+            assert old["strategy_template_updated_at"] == "2026-09-28 05:00:00"
             assert new["source_task_id"] == 1
             assert new["strategy_template_id"] == 1
-            assert new["strategy_template_updated_at"] == "2026-09-28 05:00:00"
+            assert new["strategy_template_updated_at"] == current_template["updated_at"]
         finally:
             await db.close_pool()
 
