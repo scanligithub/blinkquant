@@ -137,13 +137,23 @@ export function useCluster() {
   const canRunBacktest = nodes.some(n => n.status === "idle");
   const idleNodeCount = nodes.filter(n => n.status === "idle").length;
 
-  const submitTask = useCallback(async (taskType: "selection" | "backtest", payload: any) => {
+  const submitTask = useCallback(async (
+    taskType: "selection" | "backtest",
+    payload: any,
+    options?: { strategyTemplateId?: number | null },
+  ) => {
     setLoading(true);
     try {
       const res = await fetch('/api/v1/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_type: taskType, payload }),
+        body: JSON.stringify({
+          task_type: taskType,
+          payload,
+          ...(options?.strategyTemplateId != null
+            ? { strategy_template_id: options.strategyTemplateId }
+            : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
