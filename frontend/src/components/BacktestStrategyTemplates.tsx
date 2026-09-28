@@ -19,6 +19,7 @@ interface Template {
 interface Props {
   currentConfig: BacktestTemplateConfig;
   onLoad: (config: BacktestTemplateConfig) => void;
+  onTemplateSelected?: (templateId: number | null) => void;
 }
 
 const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string; config: BacktestTemplateConfig }> = [
@@ -96,12 +97,13 @@ const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string;
   },
 ];
 
-export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Props) {
+export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTemplateSelected }: Props) {
   const [open, setOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -116,6 +118,11 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
   useEffect(() => {
     if (open) refresh().catch(e => setError(e.message));
   }, [open, refresh]);
+
+  const selectTemplate = (id: number | null) => {
+    setSelectedTemplateId(id);
+    onTemplateSelected?.(id);
+  };
 
   const resetEditor = () => {
     setName('');
@@ -145,7 +152,9 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || (editingId == null ? '保存失败' : '更新失败'));
+      const savedTemplateId = json?.template?.id;
       resetEditor();
+      if (typeof savedTemplateId === 'number') selectTemplate(savedTemplateId);
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -155,6 +164,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
   };
 
   const edit = (template: Template) => {
+    selectTemplate(template.id);
     setEditingId(template.id);
     setName(template.name);
     setDescription(template.description || '');
@@ -163,6 +173,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
   };
 
   const copy = (template: Template) => {
+    selectTemplate(null);
     setEditingId(null);
     setName(`${template.name} 副本`);
     setDescription(template.description || '');
@@ -179,6 +190,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || '删除失败');
       if (editingId === id) resetEditor();
+      selectTemplate((currentId => currentId === id ? null : currentId)(null));
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -255,7 +267,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
                 <button
                   type='button'
                   disabled={loading}
-                  onClick={() => onLoad(t.config)}
+                  onClick={() => { selectTemplate(t.id); onLoad(t.config); }}
                   className='px-2.5 py-1 text-[11px] text-white bg-blue-600 rounded disabled:opacity-50'
                 >
                   应用
