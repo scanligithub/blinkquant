@@ -17,7 +17,13 @@ HF_NODES = {
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
 # SQLite 调度库
-SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
+# Production scheduler DB lives on HF persistent storage. Treat the historical /tmp default
+# (including an old Space environment override) as a legacy value and migrate it to /data.
+_configured_scheduler_db_path = os.getenv("SCHEDULER_DB_PATH")
+if _configured_scheduler_db_path in (None, "", "/tmp/scheduler.db"):
+    SCHEDULER_DB_PATH = "/data/scheduler.db"
+else:
+    SCHEDULER_DB_PATH = _configured_scheduler_db_path
 SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
 SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
 CHECKPOINT_INTERVAL_SEC = int(os.getenv("CHECKPOINT_INTERVAL_SEC", "600"))
