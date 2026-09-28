@@ -19,6 +19,7 @@ from .config import (
 from .db import close_pool
 
 _last_uploaded_sha: Optional[str] = None
+_checkpoint_lock = asyncio.Lock()
 
 
 def _sha256_file(path: Path) -> str:
@@ -30,6 +31,11 @@ def _sha256_file(path: Path) -> str:
 
 
 async def _checkpoint_once(force: bool = False) -> bool:
+    async with _checkpoint_lock:
+        return await _checkpoint_once_unlocked(force=force)
+
+
+async def _checkpoint_once_unlocked(force: bool = False) -> bool:
     """
     执行一次 checkpoint：
     1. wal_checkpoint(TRUNCATE) 把 WAL 刷回主库
@@ -106,3 +112,7 @@ async def shutdown_checkpoint() -> None:
     """关机前最后一次 checkpoint（force=True）"""
     await _checkpoint_once(force=True)
     await close_pool()
+
+async def checkpoint_now(force: bool = True) -> bool:
+    """Force a scheduler SQLite checkpoint for user-visible durable mutations."""
+    return await _checkpoint_once(force=force)
