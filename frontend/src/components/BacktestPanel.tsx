@@ -35,12 +35,13 @@ interface BacktestPanelProps {
   initialFormula?: string;
   onRun: (params: BacktestParams) => void;
   loading: boolean;
+  onTemplateSelected?: (templateId: number | null) => void;
 }
 
 const TRIGGERS = ['condition', 'cross_above', 'cross_below'] as const;
 const TIMEFRAMES = ['D', 'W', 'M'] as const;
 
-export default function BacktestPanel({ initialFormula = '', onRun, loading }: BacktestPanelProps) {
+export default function BacktestPanel({ initialFormula = '', onRun, loading, onTemplateSelected }: BacktestPanelProps) {
   const [formula, setFormula] = useState(initialFormula);
   const [exitFormula, setExitFormula] = useState('');
   const [entryTrigger, setEntryTrigger] = useState<typeof TRIGGERS[number]>('condition');
@@ -385,7 +386,11 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading }: B
         </div>
       )}
 
-      <BacktestStrategyTemplates currentConfig={templateConfig} onLoad={applyTemplate} />
+      <BacktestStrategyTemplates
+        currentConfig={templateConfig}
+        onLoad={applyTemplate}
+        onTemplateSelected={onTemplateSelected}
+      />
 
       <button
         type="submit"
