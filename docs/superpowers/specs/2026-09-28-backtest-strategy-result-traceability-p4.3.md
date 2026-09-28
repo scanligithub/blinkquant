@@ -1,7 +1,7 @@
 # P4.3 — 回测策略与结果可追溯关联
 
 **Date:** 2026-09-28
-**Status:** Active
+**Status:** Completed
 **Depends on:** P4.1 / P4.2
 
 ## Goal
@@ -82,3 +82,10 @@ P4.3 不实现：
 - 参数优化；
 - 多组合批量回测；
 - 模板版本分支 / Git 式版本管理。
+
+## Production Acceptance
+
+- **Status:** PASS
+- **Environment:** https://blinkquant.de5.net/
+- **Verified:** template binding, immutable historical template snapshot, updated template version attribution, and stale/manual parameter modification without false attribution.
+- **Evidence:** user production acceptance on 2026-09-28 using template `P4.3-Test` (#9), tasks #6/#7/#8.
