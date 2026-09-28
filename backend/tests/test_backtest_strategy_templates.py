@@ -44,3 +44,62 @@ def test_backtest_strategy_template_persists_in_scheduler_sqlite(tmp_path, monke
             await db.close_pool()
 
     asyncio.run(_run())
+
+
+def test_template_auth_requires_session_cookie():
+    from fastapi import HTTPException
+    from api.routes import _template_user_id
+
+    async def _run():
+        try:
+            await _template_user_id(None)
+        except HTTPException as exc:
+            assert exc.status_code == 401
+        else:
+            raise AssertionError("missing session cookie must be rejected")
+
+    asyncio.run(_run())
+
+
+def test_template_auth_uses_vercel_session_user(monkeypatch):
+    from api import routes
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, payload):
+            import json
+            self._body = json.dumps(payload).encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request, timeout):
+        assert request.get_header("Cookie") == "valid-session"
+        assert timeout == 5
+        return FakeResponse({
+            "user": {
+                "id": "user-from-vercel",
+                "email": "user@example.com",
+                "role": "user",
+            }
+        })
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        routes,
+        "TEMPLATE_AUTH_SESSION_URL",
+        "https://blinkquant.de5.net/api/auth/session",
+    )
+
+    async def _run():
+        user_id = await routes._template_user_id("valid-session")
+        assert user_id == "user-from-vercel"
+
+    asyncio.run(_run())
