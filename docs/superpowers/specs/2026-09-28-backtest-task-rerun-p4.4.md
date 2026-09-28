@@ -1,7 +1,7 @@
 # P4.4 — 历史回测任务重跑与来源追踪
 
 **Date:** 2026-09-28  
-**Status:** Active  
+**Status:** Completed  
 **Depends on:** P4.3 模板来源追溯
 
 ## Goal
