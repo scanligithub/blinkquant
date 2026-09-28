@@ -67,6 +67,9 @@ export interface Task {
     final_equity?: number;
   } | null;
   result_uri?: string | null;
+  strategy_template_id?: number | null;
+  strategy_template_name?: string | null;
+  strategy_template_updated_at?: string | null;
   progress_pct?: number | null;
   progress?: {
     pct?: number;
