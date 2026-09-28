@@ -44,9 +44,9 @@ jobs:
       - name: Verify unauthenticated task submission is rejected
         run: |
           set -euo pipefail
-          status=$(curl -sS --max-time 20 -o /tmp/unauth.out -w '%{http_code}' \\
-            -H 'Content-Type: application/json' \\
-            -d '{"task_type":"backtest","payload":{"start_date":"2024-01-02","end_signal_date":"2024-01-31","initial_cash":1000000,"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":2},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"}}}' \\
+          status=$(curl -sS --max-time 20 -o /tmp/unauth.out -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"task_type":"backtest","payload":{"start_date":"2024-01-02","end_signal_date":"2024-01-31","initial_cash":1000000,"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":2},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"}}}' \
             "$WEB/api/v1/tasks")
           cat /tmp/unauth.out
           test "$status" = "401"
@@ -66,11 +66,11 @@ jobs:
           }))
           PY
 
-          curl -fsS --max-time 20 -c /tmp/cookies.txt \\
-            -H 'Content-Type: application/json' \\
+          curl -fsS --max-time 20 -c /tmp/cookies.txt \
+            -H 'Content-Type: application/json' \
             --data-binary @/tmp/login.json "$WEB/api/auth/login" >/tmp/login.out
 
-          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \
             "$WEB/api/auth/session" >/tmp/session.json
 
           python - <<'PY'
@@ -107,9 +107,9 @@ jobs:
           }
           JSON
 
-          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
-            -H 'Content-Type: application/json' \\
-            --data-binary @/tmp/template.json \\
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/template.json \
             "$WEB/api/backtest-strategy-templates" | tee /tmp/template-create.json
 
           python - <<'PY'
@@ -145,9 +145,9 @@ jobs:
           }
           print(json.dumps(req, ensure_ascii=False))
           PY
-            curl -fsS --max-time 30 -b /tmp/cookies.txt \\
-              -H 'Content-Type: application/json' \\
-              --data-binary @/tmp/task-request.json \\
+            curl -fsS --max-time 30 -b /tmp/cookies.txt \
+              -H 'Content-Type: application/json' \
+              --data-binary @/tmp/task-request.json \
               "$WEB/api/v1/tasks" | tee "$out"
           }
 
@@ -200,8 +200,8 @@ jobs:
           PY
 
           T1=$(cat /tmp/task-v1-id)
-          curl -fsS --max-time 60 -b /tmp/cookies.txt \\
-            "$WEB/api/v1/tasks/$T1/artifact?name=equity_curve&fmt=legacy" \\
+          curl -fsS --max-time 60 -b /tmp/cookies.txt \
+            "$WEB/api/v1/tasks/$T1/artifact?name=equity_curve&fmt=legacy" \
             > /tmp/task-v1-legacy.json
 
           python - <<'PY'
@@ -225,9 +225,9 @@ jobs:
           PY
 
           TID=$(cat /tmp/template-id)
-          curl -fsS --max-time 20 -b /tmp/cookies.txt \\
-            -X PUT -H 'Content-Type: application/json' \\
-            --data-binary @/tmp/template-v2.json \\
+          curl -fsS --max-time 20 -b /tmp/cookies.txt \
+            -X PUT -H 'Content-Type: application/json' \
+            --data-binary @/tmp/template-v2.json \
             "$WEB/api/backtest-strategy-templates?id=$TID" | tee /tmp/template-v2-result.json
 
           python - <<'PY'
@@ -291,9 +291,9 @@ jobs:
           json.dump(req, open('/tmp/stale-task-request.json','w'), ensure_ascii=False)
           PY
 
-          curl -fsS --max-time 30 -b /tmp/cookies.txt \\
-            -H 'Content-Type: application/json' \\
-            --data-binary @/tmp/stale-task-request.json \\
+          curl -fsS --max-time 30 -b /tmp/cookies.txt \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/stale-task-request.json \
             "$WEB/api/v1/tasks" | tee /tmp/stale-task.json
 
           python - <<'PY'
