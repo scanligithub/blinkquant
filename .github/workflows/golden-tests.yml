@@ -37,7 +37,7 @@ jobs:
         run: |
           cd backend
           pip install -r requirements.txt
-          pip install pytest pandas
+          pip install pytest pandas pytest-timeout
           
       - name: Run golden tests
         env:
@@ -67,7 +67,7 @@ jobs:
         run: |
           PYTHONPATH=. pytest backend/tests/test_backtest_progress.py backend/tests/test_dispatcher_cancellation.py -v
 
-      - name: Run all backend tests
+      - name: Run all backend tests (diagnostic timeout)
         run: |
           cd backend
-          PYTHONPATH=.. pytest tests/ -v --ignore=tests/test_golden_2024q1.py
+          PYTHONPATH=.. pytest tests/ -v --ignore=tests/test_golden_2024q1.py             --timeout=180 --timeout-method=thread --durations=30
