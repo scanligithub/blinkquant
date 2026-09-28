@@ -87,7 +87,7 @@ function DownloadMenu({ taskId }: { taskId: number }) {
 }
 
 export function TaskList({ isAdmin = false }: { isAdmin?: boolean }) {
-  const { myTasks, cancelTask, deleteTask } = useCluster();
+  const { myTasks, cancelTask, deleteTask, rerunTask } = useCluster();
 
   if (myTasks.length === 0) {
     return (
@@ -198,6 +198,24 @@ export function TaskList({ isAdmin = false }: { isAdmin?: boolean }) {
                     >
                       删除
                     </button>
+                    {task.task_type === "backtest" && task.source_task_id != null && (
+                      <span className="text-[10px] text-slate-400">重跑自 #{task.source_task_id}</span>
+                    )}
+                    {task.task_type === "backtest" && ["done", "failed", "cancelled", "preempted"].includes(task.status) && (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`按任务 #${task.id} 的原始参数重新运行？`)) return;
+                          try {
+                            await rerunTask(task.id);
+                          } catch (e: any) {
+                            alert('重跑失败: ' + (e?.message || '未知错误'));
+                          }
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        重跑
+                      </button>
+                    )}
                     {task.status === "done" && task.task_type === "backtest" && task.result_uri && (
                       <>
                         <button
