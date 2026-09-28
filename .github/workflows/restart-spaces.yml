@@ -12,19 +12,19 @@ jobs:
       - name: Restart Node 1
         run: |
           curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node1/restart"
+            "https://huggingface.co/api/spaces/scanli/blinkquant-node1/restart"
       
       - name: Restart Node 2
         run: |
           curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node2/restart"
+            "https://huggingface.co/api/spaces/scanli/blinkquant-node2/restart"
       
       - name: Restart Node 3
         run: |
           curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/scanligithub/blinkquant-node3/restart"
+            "https://huggingface.co/api/spaces/scanli/blinkquant-node3/restart"
       
       - name: Restart Scheduler
         run: |
           curl -X POST -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/scanligithub/blinkquant-scheduler/restart"
+            "https://huggingface.co/api/spaces/scanli/blinkquant-scheduler/restart"
