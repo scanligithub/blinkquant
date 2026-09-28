@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS task_queue (
     max_retries     INTEGER DEFAULT 2,
     preempted_by    INTEGER,
     generation      INTEGER NOT NULL DEFAULT 0,
+    strategy_template_id INTEGER,
+    strategy_template_name TEXT,
+    strategy_template_updated_at TEXT,
     timeout_sec     INTEGER,          -- 动态墙钟上限（秒），NULL 用全局默认
     progress_pct    REAL,             -- 0~100，回测进度百分比
     progress_json   TEXT              -- 完整 progress JSON
