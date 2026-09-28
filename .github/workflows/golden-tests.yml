@@ -24,6 +24,7 @@ concurrency:
 jobs:
   golden-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Fork PRs skip golden tests (no access to secrets)
       - uses: actions/checkout@v4
