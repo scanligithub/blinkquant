@@ -56,8 +56,6 @@ CREATE INDEX IF NOT EXISTS idx_tq_assigned_status
     ON task_queue (assigned_node, status);
 CREATE INDEX IF NOT EXISTS idx_tq_generation
     ON task_queue (generation);
-CREATE INDEX IF NOT EXISTS idx_tq_source_task
-    ON task_queue (source_task_id);
 
 CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
