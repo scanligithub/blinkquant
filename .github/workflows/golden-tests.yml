@@ -16,8 +16,9 @@ on:
       - 'tests/golden/**'
       - '.github/workflows/golden-tests.yml'
 
+# Serialize Golden runs for the same ref; a new main push cancels the previous push run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
