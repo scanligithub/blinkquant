@@ -70,6 +70,7 @@ export interface Task {
   strategy_template_id?: number | null;
   strategy_template_name?: string | null;
   strategy_template_updated_at?: string | null;
+  source_task_id?: number | null;
   progress_pct?: number | null;
   progress?: {
     pct?: number;
@@ -186,6 +187,13 @@ export function useCluster() {
     }
   }, []);
 
+  const rerunTask = useCallback(async (taskId: number) => {
+    const res = await fetch(`/api/v1/tasks/${taskId}/rerun`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data.task_id as number;
+  }, []);
+
   return {
     nodes: clusterState.nodes,
     queueStats: clusterState.queueStats,
@@ -198,5 +206,6 @@ export function useCluster() {
     submitTask,
     cancelTask,
     deleteTask,
+    rerunTask,
   };
 }
