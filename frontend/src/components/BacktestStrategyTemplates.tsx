@@ -64,3 +64,5 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
     </div>}
   </div>;
 }
+
+// P4.1 CI trigger: keep template UI changes independently build-validated.
