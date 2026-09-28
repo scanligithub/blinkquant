@@ -87,3 +87,74 @@ jobs:
           print("DELETE OK")
           print("P4.1 PRODUCTION CRUD + USER ISOLATION OK")
           PY
+
+  restart-persistence:
+    needs: template-crud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create persistence probe template
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          USER_ID="p41-restart-$(date +%s)"
+          NAME="restart-persistence"
+          cat >/tmp/persist.json <<JSON
+          {"name":"$NAME","description":"P4.1 restart persistence probe","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":7},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":42,"exclude_st":true}}
+          JSON
+          curl -fsS --max-time 20 -H "Content-Type: application/json" -H "X-User-Id: $USER_ID" --data-binary @/tmp/persist.json "$BASE" | tee /tmp/persist-create.out
+          python - "$USER_ID" <<'PY'
+          import json,sys
+          t=json.load(open('/tmp/persist-create.out'))['template']
+          assert t['config']['strategy']['sizing']['max_positions']==7
+          assert t['config']['min_listing_days']==42
+          print("PERSISTENCE PROBE CREATED:", t['id'])
+          open('/tmp/persist_user','w').write(sys.argv[1])
+          open('/tmp/persist_id','w').write(str(t['id']))
+          PY
+
+      - name: Restart Node1 and verify template survives
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          USER_ID=$(cat /tmp/persist_user)
+          ID=$(cat /tmp/persist_id)
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          echo '--- status before restart ---'
+          curl -fsS --max-time 20 "$NODE1/api/v1/status" | tee /tmp/status-before.json || true
+          echo '--- restart Node1 ---'
+          curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/api/spaces/scanligithub/blinkquant-node1/restart"
+          healthy=0
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+            echo "$body"
+            if echo "$body" | grep -q '"status":"healthy"'; then
+              healthy=$((healthy+1))
+              if [ "$healthy" -ge 3 ]; then break; fi
+            else
+              healthy=0
+            fi
+            sleep 10
+          done
+          [ "$healthy" -ge 3 ]
+          echo '--- status after restart ---'
+          curl -fsS --max-time 20 "$NODE1/api/v1/status" | tee /tmp/status-after.json || true
+          echo '--- verify template survived restart ---'
+          curl -fsS --max-time 20 -H "X-User-Id: $USER_ID" "$BASE" | tee /tmp/persist-after.json
+          python - "$ID" <<'PY'
+          import json,sys
+          tid=sys.argv[1]
+          rows=json.load(open('/tmp/persist-after.json'))['templates']
+          found=[x for x in rows if str(x['id'])==tid]
+          assert len(found)==1, rows
+          t=found[0]
+          assert t['config']['strategy']['sizing']['max_positions']==7
+          assert t['config']['min_listing_days']==42
+          assert t['config']['exclude_st'] is True
+          assert t['config']['benchmark']['index_id']=='000300'
+          print("P4.1 SQLITE RESTART PERSISTENCE OK")
+          PY
+          curl -fsS --max-time 20 -X DELETE -H "X-User-Id: $USER_ID" "$BASE?id=$ID"
