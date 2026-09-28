@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { task_type, payload, priority = 0 } = body;
+  const { task_type, payload, priority = 0, strategy_template_id } = body;
 
   if (!task_type || !payload) {
     return NextResponse.json({ error: 'task_type and payload are required' }, { status: 400 });
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
     task_type,
     payload,
     priority,
+    ...(strategy_template_id != null ? { strategy_template_id } : {}),
   };
 
   return forwardToNode1('/tasks', {
