@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from backend.api.routes import _canonical_json, _task_template_config
+from scheduler.routes import _canonical_json, _task_template_config
 
 
 def test_task_template_config_extracts_canonical_fields():
