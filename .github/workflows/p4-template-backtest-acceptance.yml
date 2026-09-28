@@ -72,7 +72,8 @@ jobs:
             "exclude_st":cfg["exclude_st"],
             "strategy":cfg["strategy"],
           }
-          json.dump(req,open("/tmp/backtest.json"),ensure_ascii=False)
+          with open("/tmp/backtest.json","w",encoding="utf-8") as f:
+            json.dump(req,f,ensure_ascii=False)
           PY
           response=$(curl -fsS --max-time 30 -H 'Content-Type: application/json' --data-binary @/tmp/backtest.json "$NODE1/api/v1/backtest/async")
           echo "$response" | tee /tmp/submit.json
