@@ -84,6 +84,7 @@ interface TaskMeta {
   strategy_template_id?: number | null;
   strategy_template_name?: string | null;
   strategy_template_updated_at?: string | null;
+  source_task_id?: number | null;
 }
 
 function formatDuration(started?: string | null, finished?: string | null): string {
@@ -419,6 +420,9 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
                 return (
                   <>
                     <ParamRow label="策略模板" value={templateLabel} />
+          {taskMeta?.source_task_id != null && (
+            <ParamRow label="来源任务" value={`#${taskMeta.source_task_id}`} />
+          )}
                     {taskMeta?.strategy_template_updated_at && (
                       <ParamRow label="模板版本时间" value={taskMeta.strategy_template_updated_at} mono />
                     )}
