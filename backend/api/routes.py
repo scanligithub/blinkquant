@@ -294,10 +294,52 @@ class BacktestStrategyTemplateRequest(BaseModel):
     description: Optional[str] = None
     config: dict
 
-def _template_user_id(x_user_id: Optional[str]) -> str:
-    uid = (x_user_id or "").strip()
-    if not uid or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uid):
-        raise HTTPException(status_code=400, detail="invalid user_id")
+TEMPLATE_AUTH_SESSION_URL = os.getenv(
+    "FRONTEND_AUTH_SESSION_URL",
+    "https://blinkquant.de5.net/api/auth/session",
+)
+
+
+async def _template_user_id(cookie_header: Optional[str]) -> str:
+    """Resolve the authenticated user by re-validating the Vercel session cookie.
+
+    Template CRUD is intentionally not authorized by a client-supplied X-User-Id.
+    Node1 asks the Vercel auth endpoint to validate the same signed session cookie
+    that the frontend proxy already accepted.
+    """
+    cookie = (cookie_header or "").strip()
+    if not cookie:
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    import asyncio
+    import json
+    from urllib.request import Request, urlopen
+
+    def _request_session() -> tuple[int, dict]:
+        req = Request(
+            TEMPLATE_AUTH_SESSION_URL,
+            headers={
+                "Accept": "application/json",
+                "Cookie": cookie,
+                "User-Agent": "BlinkQuant-Node1-TemplateAuth/1",
+            },
+            method="GET",
+        )
+        with urlopen(req, timeout=5) as response:
+            status = int(response.status)
+            payload = json.loads(response.read().decode("utf-8"))
+            return status, payload
+
+    try:
+        status, payload = await asyncio.to_thread(_request_session)
+    except Exception as exc:
+        logger.warning("Template auth callback failed: %s", exc)
+        raise HTTPException(status_code=503, detail="authentication service unavailable")
+
+    user = payload.get("user") if isinstance(payload, dict) else None
+    uid = user.get("id") if isinstance(user, dict) else None
+    if status != 200 or not isinstance(uid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uid):
+        raise HTTPException(status_code=401, detail="authentication required")
     return uid
 
 def _validate_template_config(config: dict) -> dict:
@@ -313,18 +355,18 @@ def _validate_template_config(config: dict) -> dict:
     return config
 
 @router.get("/backtest-strategy-templates")
-async def list_backtest_strategy_templates(x_user_id: Optional[str] = Header(None)):
+async def list_backtest_strategy_templates(cookie: Optional[str] = Header(None)):
     from scheduler.db import fetch, json_loads
-    user_id = _template_user_id(x_user_id)
+    user_id = await _template_user_id(cookie)
     rows = await fetch("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 ORDER BY updated_at DESC", user_id)
     for row in rows:
         row["config"] = json_loads(row["config"])
     return {"templates": rows}
 
 @router.post("/backtest-strategy-templates")
-async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest, x_user_id: Optional[str] = Header(None)):
+async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest, cookie: Optional[str] = Header(None)):
     from scheduler.db import execute, fetchrow, json_dumps, json_loads
-    user_id = _template_user_id(x_user_id)
+    user_id = await _template_user_id(cookie)
     name = req.name.strip()
     if not name or len(name) > 100:
         raise HTTPException(status_code=400, detail="invalid template name")
@@ -341,9 +383,9 @@ async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest
     return {"template": row}
 
 @router.put("/backtest-strategy-templates")
-async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest, id: int, x_user_id: Optional[str] = Header(None)):
+async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest, id: int, cookie: Optional[str] = Header(None)):
     from scheduler.db import execute, fetchrow, json_dumps, json_loads
-    user_id = _template_user_id(x_user_id)
+    user_id = await _template_user_id(cookie)
     name = req.name.strip()
     if not name or len(name) > 100:
         raise HTTPException(status_code=400, detail="invalid template name")
@@ -362,9 +404,9 @@ async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest
     return {"template": row}
 
 @router.delete("/backtest-strategy-templates")
-async def delete_backtest_strategy_template(id: int, x_user_id: Optional[str] = Header(None)):
+async def delete_backtest_strategy_template(id: int, cookie: Optional[str] = Header(None)):
     from scheduler.db import execute
-    user_id = _template_user_id(x_user_id)
+    user_id = await _template_user_id(cookie)
     result = await execute("DELETE FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
     if result.startswith("0 row"):
         raise HTTPException(status_code=404, detail="template not found")
