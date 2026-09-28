@@ -129,6 +129,11 @@ export function TaskList({ isAdmin = false }: { isAdmin?: boolean }) {
                   {task.status === "preempted" && (
                     <span className="ml-1 text-[10px] text-orange-600">(已自动重排队)</span>
                   )}
+                  {task.task_type === 'backtest' && task.strategy_template_name && (
+                    <div className="mt-1 text-[10px] text-blue-600">
+                      模板：{task.strategy_template_name} #{task.strategy_template_id ?? '—'}
+                    </div>
+                  )}
                   {task.status === "running" && (
                     <div className="mt-1 w-full max-w-xs">
                       <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
