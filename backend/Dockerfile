@@ -8,6 +8,7 @@ RUN useradd -m -u 1000 user
 ENV POLARS_MAX_THREADS=2 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    SCHEDULER_DB_PATH=/data/scheduler.db \
     PATH="/home/user/.local/bin:$PATH"
 
 # 安装系统级依赖库，防止 psycopg2 等 C 库报错
