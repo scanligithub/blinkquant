@@ -76,6 +76,13 @@ async def _checkpoint_once_unlocked(force: bool = False) -> bool:
         # 2) 上传 HF
         def _upload() -> None:
             api = HfApi(token=os.getenv("HF_TOKEN"))
+            # The checkpoint repository is part of the persistence contract. Create it
+            # idempotently so a fresh environment does not silently become non-durable.
+            api.create_repo(
+                repo_id=SCHEDULER_HF_REPO,
+                repo_type="dataset",
+                exist_ok=True,
+            )
             api.upload_file(
                 path_or_fileobj=str(snap_path),
                 path_in_repo=SCHEDULER_HF_FILE,
