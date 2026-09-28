@@ -1,6 +1,10 @@
 name: P4.3 Strategy Result Traceability Acceptance
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/p4-3-traceability-acceptance.yml'
   workflow_run:
     workflows: ["Deploy Backend to HF Spaces"]
     types: [completed]
@@ -12,11 +16,11 @@ concurrency:
 
 jobs:
   traceability:
-    if: \${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
-      E2E_EMAIL: \${{ secrets.E2E_EMAIL }}
-      E2E_PASSWORD: \${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
       WEB: https://blinkquant.de5.net
       NODE1: https://scanli-blinkquant-node1.hf.space
     steps:
@@ -24,12 +28,12 @@ jobs:
         run: |
           set -euo pipefail
           healthy=0
-          for i in \$(seq 1 60); do
-            body=\$(curl -fsS --max-time 15 "\$NODE1/api/v1/health" || true)
-            echo "\$body"
-            if echo "\$body" | grep -q '"status":"healthy"'; then
-              healthy=\$((healthy+1))
-              if [ "\$healthy" -ge 3 ]; then exit 0; fi
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+            echo "$body"
+            if echo "$body" | grep -q '"status":"healthy"'; then
+              healthy=$((healthy+1))
+              if [ "$healthy" -ge 3 ]; then exit 0; fi
             else
               healthy=0
             fi
@@ -40,16 +44,16 @@ jobs:
       - name: Verify unauthenticated task submission is rejected
         run: |
           set -euo pipefail
-          status=\$(curl -sS --max-time 20 -o /tmp/unauth.out -w '%{http_code}' \\
+          status=$(curl -sS --max-time 20 -o /tmp/unauth.out -w '%{http_code}' \\
             -H 'Content-Type: application/json' \\
             -d '{"task_type":"backtest","payload":{"start_date":"2024-01-02","end_signal_date":"2024-01-31","initial_cash":1000000,"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":2},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"}}}' \\
-            "\$WEB/api/v1/tasks")
+            "$WEB/api/v1/tasks")
           cat /tmp/unauth.out
-          test "\$status" = "401"
+          test "$status" = "401"
           echo "P4.3 UNAUTHENTICATED TASK SUBMISSION REJECTED"
 
       - name: Authenticated template -> task -> result traceability
-        if: \${{ env.E2E_EMAIL != '' && env.E2E_PASSWORD != '' }}
+        if: ${{ env.E2E_EMAIL != '' && env.E2E_PASSWORD != '' }}
         run: |
           set -euo pipefail
           rm -f /tmp/cookies.txt
@@ -64,10 +68,10 @@ jobs:
 
           curl -fsS --max-time 20 -c /tmp/cookies.txt \\
             -H 'Content-Type: application/json' \\
-            --data-binary @/tmp/login.json "\$WEB/api/auth/login" >/tmp/login.out
+            --data-binary @/tmp/login.json "$WEB/api/auth/login" >/tmp/login.out
 
           curl -fsS --max-time 20 -b /tmp/cookies.txt \\
-            "\$WEB/api/auth/session" >/tmp/session.json
+            "$WEB/api/auth/session" >/tmp/session.json
 
           python - <<'PY'
           import json
@@ -106,7 +110,7 @@ jobs:
           curl -fsS --max-time 20 -b /tmp/cookies.txt \\
             -H 'Content-Type: application/json' \\
             --data-binary @/tmp/template.json \\
-            "\$WEB/api/backtest-strategy-templates" | tee /tmp/template-create.json
+            "$WEB/api/backtest-strategy-templates" | tee /tmp/template-create.json
 
           python - <<'PY'
           import json
@@ -119,10 +123,10 @@ jobs:
           PY
 
           create_task() {
-            local cfg_path="\$1"
-            local out="\$2"
-            local template_id="\$3"
-            python - "\$cfg_path" "\$template_id" <<'PY' > /tmp/task-request.json
+            local cfg_path="$1"
+            local out="$2"
+            local template_id="$3"
+            python - "$cfg_path" "$template_id" <<'PY' > /tmp/task-request.json
           import json, sys
           cfg=json.load(open(sys.argv[1]))
           req={
@@ -144,10 +148,10 @@ jobs:
             curl -fsS --max-time 30 -b /tmp/cookies.txt \\
               -H 'Content-Type: application/json' \\
               --data-binary @/tmp/task-request.json \\
-              "\$WEB/api/v1/tasks" | tee "\$out"
+              "$WEB/api/v1/tasks" | tee "$out"
           }
 
-          create_task /tmp/template-config-v1.json /tmp/task-v1.json "\$(cat /tmp/template-id)"
+          create_task /tmp/template-config-v1.json /tmp/task-v1.json "$(cat /tmp/template-id)"
 
           python - <<'PY'
           import json
@@ -160,25 +164,25 @@ jobs:
           PY
 
           poll_task() {
-            local task_id="\$1"
-            local result_file="\$2"
-            for i in \$(seq 1 180); do
-              body=\$(curl -fsS --max-time 20 -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$task_id")
-              echo "\$body" > "\$result_file"
-              status=\$(echo "\$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
-              echo "task=\$task_id poll=\$i status=\$status"
-              if [ "\$status" = "done" ]; then return 0; fi
-              if [ "\$status" = "failed" ] || [ "\$status" = "cancelled" ] || [ "\$status" = "preempted" ]; then
-                cat "\$result_file"
+            local task_id="$1"
+            local result_file="$2"
+            for i in $(seq 1 180); do
+              body=$(curl -fsS --max-time 20 -b /tmp/cookies.txt "$WEB/api/v1/tasks/$task_id")
+              echo "$body" > "$result_file"
+              status=$(echo "$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+              echo "task=$task_id poll=$i status=$status"
+              if [ "$status" = "done" ]; then return 0; fi
+              if [ "$status" = "failed" ] || [ "$status" = "cancelled" ] || [ "$status" = "preempted" ]; then
+                cat "$result_file"
                 return 1
               fi
               sleep 10
             done
-            cat "\$result_file"
+            cat "$result_file"
             return 1
           }
 
-          poll_task "\$(cat /tmp/task-v1-id)" /tmp/task-v1-result.json
+          poll_task "$(cat /tmp/task-v1-id)" /tmp/task-v1-result.json
 
           python - <<'PY'
           import json
@@ -195,9 +199,9 @@ jobs:
           }, open('/tmp/task-v1-snapshot.json','w'))
           PY
 
-          T1=\$(cat /tmp/task-v1-id)
+          T1=$(cat /tmp/task-v1-id)
           curl -fsS --max-time 60 -b /tmp/cookies.txt \\
-            "\$WEB/api/v1/tasks/\$T1/artifact?name=equity_curve&fmt=legacy" \\
+            "$WEB/api/v1/tasks/$T1/artifact?name=equity_curve&fmt=legacy" \\
             > /tmp/task-v1-legacy.json
 
           python - <<'PY'
@@ -220,11 +224,11 @@ jobs:
           open('/tmp/template-v2.json','w').write(json.dumps(p, ensure_ascii=False))
           PY
 
-          TID=\$(cat /tmp/template-id)
+          TID=$(cat /tmp/template-id)
           curl -fsS --max-time 20 -b /tmp/cookies.txt \\
             -X PUT -H 'Content-Type: application/json' \\
             --data-binary @/tmp/template-v2.json \\
-            "\$WEB/api/backtest-strategy-templates?id=\$TID" | tee /tmp/template-v2-result.json
+            "$WEB/api/backtest-strategy-templates?id=$TID" | tee /tmp/template-v2-result.json
 
           python - <<'PY'
           import json
@@ -236,7 +240,7 @@ jobs:
           print("TEMPLATE UPDATED V2", t["updated_at"])
           PY
 
-          curl -fsS --max-time 20 -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$T1" > /tmp/task-v1-after-edit.json
+          curl -fsS --max-time 20 -b /tmp/cookies.txt "$WEB/api/v1/tasks/$T1" > /tmp/task-v1-after-edit.json
           python - <<'PY'
           import json
           old=json.load(open('/tmp/task-v1-after-edit.json'))
@@ -247,7 +251,7 @@ jobs:
           print("HISTORICAL TASK SNAPSHOT IMMUTABLE OK")
           PY
 
-          create_task /tmp/template-config-v2.json /tmp/task-v2.json "\$TID"
+          create_task /tmp/template-config-v2.json /tmp/task-v2.json "$TID"
           python - <<'PY'
           import json
           d=json.load(open('/tmp/task-v2.json'))
@@ -256,7 +260,7 @@ jobs:
           assert d.get("strategy_template_updated_at") == open('/tmp/template-updated-v2').read(), d
           open('/tmp/task-v2-id','w').write(str(d["task_id"]))
           PY
-          poll_task "\$(cat /tmp/task-v2-id)" /tmp/task-v2-result.json
+          poll_task "$(cat /tmp/task-v2-id)" /tmp/task-v2-result.json
 
           python - <<'PY'
           import json
@@ -290,7 +294,7 @@ jobs:
           curl -fsS --max-time 30 -b /tmp/cookies.txt \\
             -H 'Content-Type: application/json' \\
             --data-binary @/tmp/stale-task-request.json \\
-            "\$WEB/api/v1/tasks" | tee /tmp/stale-task.json
+            "$WEB/api/v1/tasks" | tee /tmp/stale-task.json
 
           python - <<'PY'
           import json
@@ -303,7 +307,7 @@ jobs:
           print("STALE TEMPLATE MISMATCH NOT ATTRIBUTED OK")
           PY
 
-          poll_task "\$(cat /tmp/stale-task-id)" /tmp/stale-task-result.json
+          poll_task "$(cat /tmp/stale-task-id)" /tmp/stale-task-result.json
           python - <<'PY'
           import json
           t=json.load(open('/tmp/stale-task-result.json'))
@@ -315,14 +319,14 @@ jobs:
           PY
 
           for f in /tmp/task-v1-id /tmp/task-v2-id /tmp/stale-task-id; do
-            ID=\$(cat "\$f")
-            curl -fsS --max-time 30 -X DELETE -b /tmp/cookies.txt "\$WEB/api/v1/tasks/\$ID" >/dev/null
+            ID=$(cat "$f")
+            curl -fsS --max-time 30 -X DELETE -b /tmp/cookies.txt "$WEB/api/v1/tasks/$ID" >/dev/null
           done
-          curl -fsS --max-time 20 -X DELETE -b /tmp/cookies.txt "\$WEB/api/backtest-strategy-templates?id=\$TID" >/dev/null
+          curl -fsS --max-time 20 -X DELETE -b /tmp/cookies.txt "$WEB/api/backtest-strategy-templates?id=$TID" >/dev/null
           echo "P4.3 AUTHENTICATED TRACEABILITY E2E OK"
 
       - name: Note authenticated E2E status
-        if: \${{ env.E2E_EMAIL == '' || env.E2E_PASSWORD == '' }}
+        if: ${{ env.E2E_EMAIL == '' || env.E2E_PASSWORD == '' }}
         run: |
           echo "Authenticated P4.3 traceability E2E skipped: GitHub secrets E2E_EMAIL/E2E_PASSWORD are not configured."
           echo "Unauthenticated task submission rejection and Node1 readiness remain mandatory."
