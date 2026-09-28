@@ -186,3 +186,35 @@ def test_rerun_rejects_nonterminal_cross_user_and_selection(tmp_path, monkeypatc
             await db.close_pool()
 
     asyncio.run(run())
+
+
+def test_existing_scheduler_db_migrates_source_task_id(tmp_path, monkeypatch):
+    async def run():
+        path = tmp_path / "scheduler.db"
+        import aiosqlite
+        async with aiosqlite.connect(path) as conn:
+            await conn.execute("""
+                CREATE TABLE task_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    priority INTEGER DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                )
+            """)
+            await conn.commit()
+
+        monkeypatch.setattr(db, "SCHEDULER_DB_PATH", str(path))
+        await db.close_pool()
+        await db.init_pool()
+        try:
+            cols = await db.fetch("PRAGMA table_info(task_queue)")
+            names = {row["name"] for row in cols}
+            assert "source_task_id" in names
+            indexes = await db.fetch("PRAGMA index_list(task_queue)")
+            assert any(row["name"] == "idx_tq_source_task" for row in indexes)
+        finally:
+            await db.close_pool()
+
+    asyncio.run(run())
