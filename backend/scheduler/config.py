@@ -17,6 +17,7 @@ HF_NODES = {
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
 # SQLite 调度库：Node1 本地 SQLite；通过 checkpoint 持久化到 HF Dataset
+# P4.1: strategy templates share the same scheduler SQLite and checkpoint lifecycle.
 SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
 SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
 SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
