@@ -1,0 +1,89 @@
+name: P4.1 Production Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/p4-production-acceptance.yml'
+
+concurrency:
+  group: p4.1-production-acceptance
+  cancel-in-progress: true
+
+jobs:
+  template-crud:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Node1
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+            echo "$body"
+            if echo "$body" | grep -q '"status":"healthy"'; then exit 0; fi
+            sleep 10
+          done
+          exit 1
+      - name: CRUD and user isolation
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          NAME="P4.1 Production Acceptance $(date +%s)"
+          cat >/tmp/create.json <<JSON
+          {"name":"$NAME","description":"production acceptance","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":20},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":60,"exclude_st":true}}
+          JSON
+
+          A=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-a' "$BASE")
+          B=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-b' "$BASE")
+          echo "$A"; echo "$B"
+
+          CREATE=$(curl -fsS --max-time 20 -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-a' --data-binary @/tmp/create.json "$BASE")
+          echo "$CREATE" | tee /tmp/create.out
+          ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["template"]["id"])' </tmp/create.out)
+
+          B=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-b' "$BASE")
+          python - "$B" "$ID" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1])["templates"]
+          assert all(str(x["id"]) != sys.argv[2] for x in rows)
+          print("USER A -> USER B LIST ISOLATION OK")
+          PY
+
+          set +e
+          HTTP=$(curl -sS --max-time 20 -o /tmp/bupdate.out -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-b' --data-binary @/tmp/create.json "$BASE?id=$ID")
+          set -e
+          echo "cross-user update HTTP=$HTTP body=$(cat /tmp/bupdate.out)"
+          [ "$HTTP" = "404" ]
+
+          sed 's/MA(CLOSE,20)/MA(CLOSE,60)/; s/"max_positions":20/"max_positions":10/; s/"frequency":"weekly"/"frequency":"daily"/' /tmp/create.json >/tmp/update.json
+          UPDATE=$(curl -fsS --max-time 20 -X PUT -H 'Content-Type: application/json' -H 'X-User-Id: p41-prod-a' --data-binary @/tmp/update.json "$BASE?id=$ID")
+          echo "$UPDATE"
+          python - "$UPDATE" <<'PY'
+          import json,sys
+          t=json.loads(sys.argv[1])["template"]
+          assert t["config"]["strategy"]["entry"]["condition"]=="CLOSE > MA(CLOSE,60)"
+          assert t["config"]["strategy"]["sizing"]["max_positions"]==10
+          assert t["config"]["strategy"]["rebalance"]["frequency"]=="daily"
+          print("UPDATE OK")
+          PY
+
+          set +e
+          HTTP=$(curl -sS --max-time 20 -o /tmp/bdelete.out -w '%{http_code}' -X DELETE -H 'X-User-Id: p41-prod-b' "$BASE?id=$ID")
+          set -e
+          echo "cross-user delete HTTP=$HTTP body=$(cat /tmp/bdelete.out)"
+          [ "$HTTP" = "404" ]
+
+          curl -fsS --max-time 20 -X DELETE -H 'X-User-Id: p41-prod-a' "$BASE?id=$ID"
+          FINAL=$(curl -fsS --max-time 20 -H 'X-User-Id: p41-prod-a' "$BASE")
+          python - "$FINAL" "$ID" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1])["templates"]
+          assert all(str(x["id"]) != sys.argv[2] for x in rows)
+          print("DELETE OK")
+          print("P4.1 PRODUCTION CRUD + USER ISOLATION OK")
+          PY
