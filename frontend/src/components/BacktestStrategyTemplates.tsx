@@ -21,6 +21,81 @@ interface Props {
   onLoad: (config: BacktestTemplateConfig) => void;
 }
 
+const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string; config: BacktestTemplateConfig }> = [
+  {
+    id: 'ma20-trend',
+    name: 'MA20 趋势',
+    description: '全 A · CLOSE > MA20 · 每日调仓 · Top-N 20',
+    config: {
+      strategy: {
+        universe: { type: 'all_a' },
+        entry: { condition: 'CLOSE > MA(CLOSE,20)', trigger: 'condition', timeframe: 'D' },
+        sizing: { method: 'top_n_equal_weight', max_positions: 20 },
+        rebalance: { frequency: 'daily' },
+        mode: 'target_portfolio',
+      },
+      fee_policy: { mode: 'historical' },
+      benchmark: { enabled: true, type: 'index', index_id: '000300' },
+      min_listing_days: 0,
+      exclude_st: false,
+    },
+  },
+  {
+    id: 'ma5-ma20-trend',
+    name: 'MA5/MA20 趋势',
+    description: '全 A · MA5 > MA20 · 每日调仓 · Top-N 20',
+    config: {
+      strategy: {
+        universe: { type: 'all_a' },
+        entry: { condition: 'MA(CLOSE,5) > MA(CLOSE,20)', trigger: 'condition', timeframe: 'D' },
+        sizing: { method: 'top_n_equal_weight', max_positions: 20 },
+        rebalance: { frequency: 'daily' },
+        mode: 'target_portfolio',
+      },
+      fee_policy: { mode: 'historical' },
+      benchmark: { enabled: true, type: 'index', index_id: '000300' },
+      min_listing_days: 0,
+      exclude_st: false,
+    },
+  },
+  {
+    id: 'ma5-ma60-trend',
+    name: 'MA5/MA60 趋势',
+    description: '全 A · MA5 > MA60 · 每周调仓 · Top-N 20',
+    config: {
+      strategy: {
+        universe: { type: 'all_a' },
+        entry: { condition: 'MA(CLOSE,5) > MA(CLOSE,60)', trigger: 'condition', timeframe: 'D' },
+        sizing: { method: 'top_n_equal_weight', max_positions: 20 },
+        rebalance: { frequency: 'weekly' },
+        mode: 'target_portfolio',
+      },
+      fee_policy: { mode: 'historical' },
+      benchmark: { enabled: true, type: 'index', index_id: '000300' },
+      min_listing_days: 30,
+      exclude_st: true,
+    },
+  },
+  {
+    id: 'csi300-weekly',
+    name: '沪深300 周调仓',
+    description: '000300 成分股 · CLOSE > MA20 · 每周调仓 · Top-N 20',
+    config: {
+      strategy: {
+        universe: { type: 'index', index_id: '000300' },
+        entry: { condition: 'CLOSE > MA(CLOSE,20)', trigger: 'condition', timeframe: 'D' },
+        sizing: { method: 'top_n_equal_weight', max_positions: 20 },
+        rebalance: { frequency: 'weekly' },
+        mode: 'target_portfolio',
+      },
+      fee_policy: { mode: 'historical' },
+      benchmark: { enabled: true, type: 'index', index_id: '000300' },
+      min_listing_days: 30,
+      exclude_st: true,
+    },
+  },
+];
+
 export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Props) {
   const [open, setOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -212,6 +287,29 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad }: Pro
               </div>
             </div>)}
           </div>}
+
+      <div className='pt-2 border-t border-slate-200 space-y-2'>
+        <div className='text-[11px] font-semibold text-slate-500'>内置策略模板</div>
+        <div className='space-y-2'>
+          {BUILT_IN_TEMPLATES.map(t => (
+            <div key={t.id} className='flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2'>
+              <div className='flex-1 min-w-0'>
+                <div className='text-xs font-semibold text-slate-700'>{t.name}</div>
+                <div className='text-[10px] text-slate-400 truncate'>{t.description}</div>
+              </div>
+              <button
+                type='button'
+                disabled={loading}
+                onClick={() => onLoad(t.config)}
+                className='px-2.5 py-1 text-[11px] text-blue-600 border border-blue-200 rounded disabled:opacity-50'
+              >
+                使用
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className='text-[10px] text-slate-400'>内置模板只读，不写入数据库；使用后可通过上方“保存”另存为你的模板。</div>
+      </div>
     </div>}
   </div>;
 }
