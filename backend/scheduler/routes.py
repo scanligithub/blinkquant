@@ -16,6 +16,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
     "assigned_node, cluster_job_id, error, result_summary, result_uri, result_bytes, "
+    "strategy_template_id, strategy_template_name, strategy_template_updated_at, "
     "progress_pct, progress_json, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
@@ -57,6 +58,7 @@ class TaskCreate(BaseModel):
     task_type: str  # "selection" | "backtest"
     payload: dict
     priority: int = 0
+    strategy_template_id: Optional[int] = None
 
 
 class TaskResponse(BaseModel):
@@ -72,6 +74,9 @@ class TaskResponse(BaseModel):
     result_summary: Optional[dict] = None
     result_uri: Optional[str] = None
     result_bytes: Optional[int] = None
+    strategy_template_id: Optional[int] = None
+    strategy_template_name: Optional[str] = None
+    strategy_template_updated_at: Optional[str] = None
     progress_pct: Optional[float] = None
     progress: Optional[dict] = None
     error: Optional[str]
@@ -129,6 +134,9 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         result_summary=result_summary,
         result_uri=row.get("result_uri"),
         result_bytes=row.get("result_bytes"),
+        strategy_template_id=row.get("strategy_template_id"),
+        strategy_template_name=row.get("strategy_template_name"),
+        strategy_template_updated_at=row.get("strategy_template_updated_at"),
         progress_pct=row.get("progress_pct"),
         progress=progress,
         error=row.get("error"),
@@ -145,6 +153,59 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
 
 
 # ──────────────────────────────────────────────
+# Strategy template binding
+# ──────────────────────────────────────────────
+
+def _task_template_config(payload: dict) -> dict | None:
+    if not isinstance(payload, dict) or not isinstance(payload.get("strategy"), dict):
+        return None
+    return {
+        "strategy": payload.get("strategy"),
+        "fee_policy": payload.get("fee_policy") or {"mode": "historical"},
+        "benchmark": payload.get("benchmark") or {"enabled": True, "type": "index", "index_id": "000300"},
+        "min_listing_days": payload.get("min_listing_days", 0),
+        "exclude_st": payload.get("exclude_st", False),
+    }
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str | None, str | None]:
+    """Validate optional template binding and return an immutable task-time snapshot."""
+    template_id = task.strategy_template_id
+    if template_id is None:
+        return None, None, None
+    if task.task_type != "backtest":
+        raise HTTPException(400, "strategy_template_id is only valid for backtest tasks")
+
+    candidate = _task_template_config(task.payload)
+    if candidate is None:
+        # Backward-compatible task payloads may not contain the canonical strategy.
+        return None, None, None
+
+    row = await fetchrow(
+        "SELECT id, name, updated_at, config FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
+        template_id, task.user_id,
+    )
+    if not row:
+        raise HTTPException(400, "strategy template not found for user")
+
+    try:
+        template_config = json.loads(row["config"])
+    except (TypeError, json.JSONDecodeError):
+        raise HTTPException(500, "stored strategy template config is invalid")
+
+    if _canonical_json(candidate) != _canonical_json(template_config):
+        # Do not reject the backtest: the user may have edited the panel after selecting
+        # a template. Simply avoid a false historical attribution.
+        return None, None, None
+
+    return int(row["id"]), str(row["name"]), row["updated_at"]
+
+
+# ──────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────
 
@@ -152,14 +213,28 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
 async def create_task(task: TaskCreate) -> dict:
     """创建任务，返回 task_id"""
     from .config import compute_task_timeout_sec
+    template_id, template_name, template_updated_at = await _resolve_strategy_template(task)
     timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
     async with acquire() as conn:
         row = await conn.fetchrow("""
-            INSERT INTO task_queue (user_id, task_type, payload, priority, status, timeout_sec)
-            VALUES (?, ?, ?, ?, 'pending', ?)
-            RETURNING id, status, created_at
-        """, task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec)
-    return {"task_id": row["id"], "status": row["status"], "created_at": row["created_at"]}
+            INSERT INTO task_queue (
+                user_id, task_type, payload, priority, status, timeout_sec,
+                strategy_template_id, strategy_template_name, strategy_template_updated_at
+            )
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            RETURNING id, status, created_at, strategy_template_id,
+                      strategy_template_name, strategy_template_updated_at
+        """,
+        task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec,
+        template_id, template_name, template_updated_at)
+    return {
+        "task_id": row["id"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "strategy_template_id": row["strategy_template_id"],
+        "strategy_template_name": row["strategy_template_name"],
+        "strategy_template_updated_at": row["strategy_template_updated_at"],
+    }
 
 
 @router.get("/tasks", dependencies=[Depends(verify_internal_token)])
