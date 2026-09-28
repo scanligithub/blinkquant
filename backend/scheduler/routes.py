@@ -16,7 +16,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
     "assigned_node, cluster_job_id, error, result_summary, result_uri, result_bytes, "
-    "strategy_template_id, strategy_template_name, strategy_template_updated_at, "
+    "strategy_template_id, strategy_template_name, strategy_template_updated_at, source_task_id, "
     "progress_pct, progress_json, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
@@ -77,6 +77,7 @@ class TaskResponse(BaseModel):
     strategy_template_id: Optional[int] = None
     strategy_template_name: Optional[str] = None
     strategy_template_updated_at: Optional[str] = None
+    source_task_id: Optional[int] = None
     progress_pct: Optional[float] = None
     progress: Optional[dict] = None
     error: Optional[str]
@@ -137,6 +138,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         strategy_template_id=row.get("strategy_template_id"),
         strategy_template_name=row.get("strategy_template_name"),
         strategy_template_updated_at=row.get("strategy_template_updated_at"),
+        source_task_id=row.get("source_task_id"),
         progress_pct=row.get("progress_pct"),
         progress=progress,
         error=row.get("error"),
@@ -272,6 +274,82 @@ async def get_task(
         raise HTTPException(404, "Task not found")
     _assert_task_access(row, user_id, role)
     return _row_to_task(row)
+
+
+
+@router.post("/tasks/{task_id}/rerun", dependencies=[Depends(verify_internal_token)])
+async def rerun_task(
+    task_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> dict:
+    """从历史 terminal backtest task 精确创建一个新的 pending task。"""
+    from .config import compute_task_timeout_sec
+
+    row = await fetchrow(
+        "SELECT id, user_id, task_type, payload, priority, status, "
+        "strategy_template_id FROM task_queue WHERE id = ?",
+        task_id,
+    )
+    if not row:
+        raise HTTPException(404, "Task not found")
+    _assert_task_access(row, user_id, role)
+
+    if row["task_type"] != "backtest":
+        raise HTTPException(400, "Only backtest tasks can be rerun")
+    if row["status"] not in ("done", "failed", "cancelled", "preempted"):
+        raise HTTPException(409, f"Task is not terminal: {row['status']}")
+
+    try:
+        payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+    except (TypeError, json.JSONDecodeError):
+        raise HTTPException(500, "Stored task payload is invalid")
+    if not isinstance(payload, dict):
+        raise HTTPException(500, "Stored task payload is invalid")
+
+    candidate_template_id = row.get("strategy_template_id")
+    if candidate_template_id is not None:
+        current = await fetchrow(
+            "SELECT id FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
+            candidate_template_id, row["user_id"],
+        )
+        if not current:
+            candidate_template_id = None
+
+    task = TaskCreate(
+        user_id=str(row["user_id"]),
+        task_type="backtest",
+        payload=payload,
+        priority=int(row.get("priority") or 0),
+        strategy_template_id=candidate_template_id,
+    )
+    template_id, template_name, template_updated_at = await _resolve_strategy_template(task)
+    timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
+
+    async with acquire() as conn:
+        new_row = await conn.fetchrow("""
+            INSERT INTO task_queue (
+                user_id, task_type, payload, priority, status, timeout_sec,
+                strategy_template_id, strategy_template_name, strategy_template_updated_at,
+                source_task_id
+            )
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            RETURNING id, status, created_at, strategy_template_id,
+                      strategy_template_name, strategy_template_updated_at,
+                      source_task_id
+        """,
+        task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec,
+        template_id, template_name, template_updated_at, task_id)
+
+    return {
+        "task_id": new_row["id"],
+        "status": new_row["status"],
+        "created_at": new_row["created_at"],
+        "strategy_template_id": new_row["strategy_template_id"],
+        "strategy_template_name": new_row["strategy_template_name"],
+        "strategy_template_updated_at": new_row["strategy_template_updated_at"],
+        "source_task_id": new_row["source_task_id"],
+    }
 
 
 @router.get("/tasks/{task_id}/artifact", dependencies=[Depends(verify_internal_token)])
