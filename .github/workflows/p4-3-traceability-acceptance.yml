@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   traceability:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
