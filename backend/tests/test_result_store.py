@@ -63,6 +63,16 @@ def test_persist_includes_template_metadata():
         assert meta["strategy_template_updated_at"] == "2026-09-28 08:00:00"
 
 
+def test_persist_includes_source_task_metadata():
+    data = _make_sample_data()
+    data.update({"source_task_id": 41})
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _, uri, _ = persist(42, data, tmpdir, user_id="test-user")
+        with open(os.path.join(tmpdir, uri, "meta.json")) as f:
+            meta = json.load(f)
+        assert meta["source_task_id"] == 41
+
+
 def test_persist_creates_files():
     data = _make_sample_data()
     with tempfile.TemporaryDirectory() as tmpdir:
