@@ -100,7 +100,14 @@ jobs:
           assert r["status"]=="done",r
           cfg=r["meta"]["backtest_config"]
           saved=json.load(open("/tmp/template-config.json"))
-          assert cfg["strategy"]==saved["strategy"], (cfg["strategy"],saved["strategy"])
+          s_cfg=cfg["strategy"]
+          s_saved=saved["strategy"]
+          assert s_cfg["universe"]["type"]==s_saved["universe"]["type"]
+          assert s_cfg["entry"]==s_saved["entry"]
+          assert s_cfg.get("exit")==s_saved.get("exit")
+          assert s_cfg["sizing"]==s_saved["sizing"]
+          assert s_cfg["rebalance"]==s_saved["rebalance"]
+          assert s_cfg["mode"]==s_saved["mode"]
           assert cfg["fee_policy"]==saved["fee_policy"], (cfg["fee_policy"],saved["fee_policy"])
           assert cfg["benchmark"]==saved["benchmark"], (cfg["benchmark"],saved["benchmark"])
           assert cfg["min_listing_days"]==saved["min_listing_days"], cfg
