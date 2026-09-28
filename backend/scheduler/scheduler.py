@@ -683,7 +683,7 @@ class ClusterScheduler:
 
         trow = await fetchrow(
             "SELECT user_id, strategy_template_id, strategy_template_name, "
-            "strategy_template_updated_at, source_task_id FROM task_queue WHERE id = ?"
+            "strategy_template_updated_at, source_task_id FROM task_queue WHERE id = ?",
             task_id,
         )
         user_id = trow["user_id"] if trow else None
@@ -696,14 +696,12 @@ class ClusterScheduler:
         if data and "summary" in data and "meta" in data:
             summary = data["summary"]
             meta = data["meta"]
-            template_meta = {}
-            if trow and trow.get("strategy_template_id") is not None:
-                template_meta = {
-                    "strategy_template_id": trow["strategy_template_id"],
-                    "strategy_template_name": trow.get("strategy_template_name"),
-                    "strategy_template_updated_at": trow.get("strategy_template_updated_at"),
-                    "source_task_id": trow.get("source_task_id"),
-                }
+            template_meta = {
+                "strategy_template_id": trow.get("strategy_template_id") if trow else None,
+                "strategy_template_name": trow.get("strategy_template_name") if trow else None,
+                "strategy_template_updated_at": trow.get("strategy_template_updated_at") if trow else None,
+                "source_task_id": trow.get("source_task_id") if trow else None,
+            }
             meta = {**meta, **template_meta}
             uri = make_result_uri(user_id, task_id)
             task_dir = os.path.join(RESULT_DIR, uri)
