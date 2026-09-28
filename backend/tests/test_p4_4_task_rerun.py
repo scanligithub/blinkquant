@@ -208,7 +208,27 @@ def test_existing_scheduler_db_migrates_source_task_id(tmp_path, monkeypatch):
                     payload TEXT NOT NULL,
                     priority INTEGER DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    assigned_node TEXT,
+                    cluster_job_id TEXT,
+                    result TEXT,
+                    result_summary TEXT,
+                    result_uri TEXT,
+                    result_bytes INTEGER,
+                    error TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    queued_at TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 2,
+                    preempted_by INTEGER,
+                    generation INTEGER NOT NULL DEFAULT 0,
+                    strategy_template_id INTEGER,
+                    strategy_template_name TEXT,
+                    strategy_template_updated_at TEXT,
+                    timeout_sec INTEGER,
+                    progress_pct REAL,
+                    progress_json TEXT
                 )
             """)
             await conn.commit()
