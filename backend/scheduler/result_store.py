@@ -152,6 +152,7 @@ def persist(task_id: int, data: dict, result_dir: str, *, user_id: str) -> tuple
         "strategy_template_id": data.get("strategy_template_id"),
         "strategy_template_name": data.get("strategy_template_name"),
         "strategy_template_updated_at": data.get("strategy_template_updated_at"),
+        "source_task_id": data.get("source_task_id"),
     }
     try:
         with open(os.path.join(task_dir, "meta.json"), "w") as f:
