@@ -681,7 +681,11 @@ class ClusterScheduler:
         from .result_store import persist, make_result_uri, dir_size
         from .dispatcher import fetch_backtest_artifact
 
-        trow = await fetchrow("SELECT user_id FROM task_queue WHERE id = ?", task_id)
+        trow = await fetchrow(
+            "SELECT user_id, strategy_template_id, strategy_template_name, "
+            "strategy_template_updated_at FROM task_queue WHERE id = ?",
+            task_id,
+        )
         user_id = trow["user_id"] if trow else None
         if not user_id:
             log.error("task %s missing user_id, cannot persist", task_id)
@@ -692,6 +696,14 @@ class ClusterScheduler:
         if data and "summary" in data and "meta" in data:
             summary = data["summary"]
             meta = data["meta"]
+            template_meta = {}
+            if trow and trow.get("strategy_template_id") is not None:
+                template_meta = {
+                    "strategy_template_id": trow["strategy_template_id"],
+                    "strategy_template_name": trow.get("strategy_template_name"),
+                    "strategy_template_updated_at": trow.get("strategy_template_updated_at"),
+                }
+            meta = {**meta, **template_meta}
             uri = make_result_uri(user_id, task_id)
             task_dir = os.path.join(RESULT_DIR, uri)
             os.makedirs(task_dir, exist_ok=True)
@@ -711,7 +723,13 @@ class ClusterScheduler:
                         log.exception("artifact %s download failed task=%s", name, task_id)
             nbytes = dir_size(task_dir)
         else:
-            summary, uri, nbytes = persist(task_id, data or {}, RESULT_DIR, user_id=user_id)
+            legacy_data = {
+                **(data or {}),
+                "strategy_template_id": trow.get("strategy_template_id") if trow else None,
+                "strategy_template_name": trow.get("strategy_template_name") if trow else None,
+                "strategy_template_updated_at": trow.get("strategy_template_updated_at") if trow else None,
+            }
+            summary, uri, nbytes = persist(task_id, legacy_data, RESULT_DIR, user_id=user_id)
 
         await execute("""
             UPDATE task_queue
