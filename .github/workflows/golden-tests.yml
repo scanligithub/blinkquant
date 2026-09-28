@@ -70,4 +70,4 @@ jobs:
       - name: Run all backend tests (diagnostic timeout)
         run: |
           cd backend
-          PYTHONPATH=.. pytest tests/ -v --ignore=tests/test_golden_2024q1.py             --timeout=180 --timeout-method=thread --durations=30
+          PYTHONPATH=.. pytest tests/ -v --ignore=tests/test_golden_2024q1.py             --timeout=60 --timeout-method=signal --maxfail=1 --durations=30
