@@ -1,0 +1,120 @@
+name: P4.1 Template To Backtest Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/p4-template-backtest-acceptance.yml'
+
+concurrency:
+  group: p4.1-template-backtest
+  cancel-in-progress: true
+
+jobs:
+  template-to-backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Node1
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          healthy=0
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+            echo "$body"
+            if echo "$body" | grep -q '"status":"healthy"'; then
+              healthy=$((healthy+1))
+              if [ "$healthy" -ge 3 ]; then break; fi
+            else
+              healthy=0
+            fi
+            sleep 10
+          done
+          [ "$healthy" -ge 3 ]
+
+      - name: Create and read template
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          BASE="$NODE1/api/v1/backtest-strategy-templates"
+          cat >/tmp/template.json <<'JSON'
+          {"name":"P4.1 template-to-backtest","description":"P4.1 canonical apply acceptance","config":{"strategy":{"universe":{"type":"all_a"},"entry":{"condition":"CLOSE > MA(CLOSE,20)","trigger":"condition","timeframe":"D"},"sizing":{"method":"top_n_equal_weight","max_positions":5},"rebalance":{"frequency":"weekly"},"mode":"target_portfolio"},"fee_policy":{"mode":"historical"},"benchmark":{"enabled":true,"type":"index","index_id":"000300"},"min_listing_days":30,"exclude_st":true}}
+          JSON
+          curl -fsS --max-time 20 -H 'Content-Type: application/json' -H 'X-User-Id: p41-template-backtest'             --data-binary @/tmp/template.json "$BASE" | tee /tmp/template-create.json
+          python - <<'PY'
+          import json
+          t=json.load(open('/tmp/template-create.json'))["template"]
+          assert t["config"]["strategy"]["sizing"]["max_positions"] == 5
+          assert t["config"]["strategy"]["rebalance"]["frequency"] == "weekly"
+          assert t["config"]["benchmark"]["index_id"] == "000300"
+          open("/tmp/template-config.json","w").write(json.dumps(t["config"]))
+          open("/tmp/template-id","w").write(str(t["id"]))
+          print("TEMPLATE CONFIG READ OK")
+          PY
+
+      - name: Apply template config to real backtest
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          cfg=json.load(open("/tmp/template-config.json"))
+          req={
+            "start_date":"2024-01-02",
+            "end_signal_date":"2024-03-29",
+            "initial_cash":1000000,
+            "fee_policy":cfg["fee_policy"],
+            "benchmark":cfg["benchmark"],
+            "min_listing_days":cfg["min_listing_days"],
+            "exclude_st":cfg["exclude_st"],
+            "strategy":cfg["strategy"],
+          }
+          json.dump(req,open("/tmp/backtest.json"),ensure_ascii=False)
+          PY
+          response=$(curl -fsS --max-time 30 -H 'Content-Type: application/json' --data-binary @/tmp/backtest.json "$NODE1/api/v1/backtest/async")
+          echo "$response" | tee /tmp/submit.json
+          echo "$response" | python -c 'import json,sys; print(json.load(sys.stdin)["job_id"])' >/tmp/job_id
+
+      - name: Poll and verify applied strategy
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set -euo pipefail
+          job_id=$(cat /tmp/job_id)
+          for i in $(seq 1 180); do
+            body=$(curl -fsS --max-time 20 "$NODE1/api/v1/backtest/async/$job_id")
+            echo "$body" >/tmp/result.json
+            status=$(echo "$body" | python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+            echo "poll=$i status=$status"
+            if [ "$status" = "done" ]; then break; fi
+            if [ "$status" = "failed" ] || [ "$status" = "cancelled" ]; then cat /tmp/result.json; exit 1; fi
+            sleep 10
+          done
+          python - <<'PY'
+          import json
+          r=json.load(open("/tmp/result.json"))
+          assert r["status"]=="done",r
+          cfg=r["meta"]["backtest_config"]
+          saved=json.load(open("/tmp/template-config.json"))
+          assert cfg["strategy"]==saved["strategy"], (cfg["strategy"],saved["strategy"])
+          assert cfg["fee_policy"]==saved["fee_policy"], (cfg["fee_policy"],saved["fee_policy"])
+          assert cfg["benchmark"]==saved["benchmark"], (cfg["benchmark"],saved["benchmark"])
+          assert cfg["min_listing_days"]==saved["min_listing_days"], cfg
+          assert cfg["exclude_st"]==saved["exclude_st"], cfg
+          assert r["summary"]["n_trades"]>0, r["summary"]
+          assert r["summary"]["final_equity"]>0, r["summary"]
+          print("P4.1 TEMPLATE -> BACKTEST APPLY OK")
+          PY
+
+      - name: Cleanup
+        if: always()
+        env:
+          NODE1: https://scanli-blinkquant-node1.hf.space
+        run: |
+          set +e
+          ID=$(cat /tmp/template-id 2>/dev/null)
+          [ -n "$ID" ] && curl -sS --max-time 20 -X DELETE -H 'X-User-Id: p41-template-backtest' "$NODE1/api/v1/backtest-strategy-templates?id=$ID"
+          true
