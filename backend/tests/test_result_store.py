@@ -47,6 +47,22 @@ def test_build_result_summary_empty():
     assert summary["n_trades"] is None
 
 
+def test_persist_includes_template_metadata():
+    data = _make_sample_data()
+    data.update({
+        "strategy_template_id": 6,
+        "strategy_template_name": "MA60 趋势",
+        "strategy_template_updated_at": "2026-09-28 08:00:00",
+    })
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _, uri, _ = persist(42, data, tmpdir, user_id="test-user")
+        with open(os.path.join(tmpdir, uri, "meta.json")) as f:
+            meta = json.load(f)
+        assert meta["strategy_template_id"] == 6
+        assert meta["strategy_template_name"] == "MA60 趋势"
+        assert meta["strategy_template_updated_at"] == "2026-09-28 08:00:00"
+
+
 def test_persist_creates_files():
     data = _make_sample_data()
     with tempfile.TemporaryDirectory() as tmpdir:
