@@ -52,7 +52,9 @@ export default function StrategiesPage() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { if (user) void refresh(); }, [user, refresh]);\n\n  useEffect(() => {
+  useEffect(() => { if (user) void refresh(); }, [user, refresh]);
+
+  useEffect(() => {
     if (!user) return;
     let mounted = true;
     (async () => {
@@ -228,6 +230,7 @@ export default function StrategiesPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <Link href={'/strategies/backtest/' + template.id} className="font-bold text-slate-800 hover:text-blue-600">{template.name}</Link>
                           <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">回测策略</span>
+                          {template.version_no && <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">v{template.version_no}</span>}
                         </div>
                         <div className="text-xs font-mono text-slate-500 mt-2 break-all">{entry.condition || '未设置 Entry 条件'}</div>
                         <div className="text-xs text-slate-400 mt-2">
