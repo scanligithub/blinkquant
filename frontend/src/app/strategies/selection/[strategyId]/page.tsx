@@ -6,7 +6,14 @@ import { useParams, useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
 
 interface User { id: string; email: string; role: string }
-interface Strategy { id: number; name: string; formula: string; timeframe: string; created_at: string; updated_at: string; version_no?: number }
+interface Strategy {
+  id: number; name: string; formula: string; timeframe: string;
+  created_at: string; updated_at: string; version_no?: number;
+  source_backtest_strategy_id?: number | null;
+  source_backtest_strategy_version?: number | null;
+  source_backtest_strategy_name?: string | null;
+  source_backtest_strategy_trigger?: string | null;
+}
 interface Version { id: number; strategy_id: number; version_no: number; name: string; formula: string; timeframe: string; created_at: string }
 
 export default function SelectionStrategyPage() {
