@@ -2,18 +2,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import StockSearch from '../StockSearch';
 import AISelectModal from '../AISelectModal';
-import BacktestPanel, { type BacktestParams } from '../BacktestPanel';
-import BacktestResults from '../BacktestResults';
-import { TaskList } from '../TaskList';
+import type { BacktestParams } from '../BacktestPanel';
 import { useCluster } from '@/hooks/useCluster';
 import AppShell from '../app/AppShell';
-
-const KLineChart = dynamic(() => import('../KLineChart'), {
-  ssr: false,
-  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">加载图表引擎...</div>
-});
+import SelectionControls from './SelectionControls';
+import SelectionResultsSidebar from './SelectionResultsSidebar';
+import StockResearchPanel from './StockResearchPanel';
 
 const Watchlist = dynamic(() => import('../Watchlist'), { ssr: false });
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
@@ -31,14 +26,6 @@ const TIMEFRAMES = [
 ];
 
 // 板块分组显示配置：行业常驻，概念/地域超过阈值折叠
-const SECTOR_GROUP_ORDER = ['行业板块', '概念板块', '地域板块'];
-const SECTOR_GROUP_LABELS: Record<string, string> = {
-  '行业板块': '行业',
-  '概念板块': '概念',
-  '地域板块': '地域',
-};
-const SECTOR_MAX_SHOWN = 3;
-
 function nodeIdFromHealthCard(node: any, idx: number): "node1" | "node2" | "node3" {
   const n = node?.node;
   if (n === 0 || n === "0") return "node1";
@@ -766,370 +753,122 @@ setDailyDataCache(dailyData);
           </div>
         </section>
 
-        {/* Formula Inputs */}
-        <section className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex flex-col gap-3">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">策略公式</label>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                placeholder="例如：CLOSE > MA(CLOSE, 20)"
-                value={formula} onChange={(e) => setFormula(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSelect({ date: selectDate || undefined })}
-              />
-              <input
-                type="date"
-                title="选股日期（留空 = 最新交易日）"
-                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-mono text-sm text-slate-600 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                value={selectDate} onChange={(e) => setSelectDate(e.target.value)}
-              />
-              <button onClick={() => handleSelect({ date: selectDate || undefined })} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-xl font-bold flex items-center justify-center gap-2 min-w-[160px]">
-                {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : '运行选股'}
-              </button>
-              <button
-                onClick={() => setShowAISelect(true)}
-                disabled={loading}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-bold"
-              >
-                AI 选股
-              </button>
-              <button
-                onClick={() => setSaveStrategyOpen(true)}
-                disabled={loading}
-                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-xl font-bold"
-              >
-                保存为策略
-              </button>
-            </div>
-          </div>
-        </section>
+        <SelectionControls
+          formula={formula}
+          selectDate={selectDate}
+          loading={loading}
+          onFormulaChange={setFormula}
+          onDateChange={setSelectDate}
+          onRun={() => handleSelect({ date: selectDate || undefined })}
+          onAISelect={() => setShowAISelect(true)}
+          onSaveStrategy={() => setSaveStrategyOpen(true)}
+        />
 
         {/* Results Area */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
-          <aside className="lg:col-span-1 order-1 lg:order-1">
-            <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm">
-              <div className="p-4 border-b flex justify-between items-center bg-slate-50/50">
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => setSidebarTab('results')}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                  >
-                    结果
-                  </button>
-                  <button
-                    onClick={() => setSidebarTab('watchlist')}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'watchlist' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                  >
-                    自选
-                  </button>
-                  <button
-                    onClick={() => setSidebarTab('backtest')}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg ${sidebarTab === 'backtest' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                  >
-                    回测
-                  </button>
-                </div>
-                {sidebarTab === 'results' && (
-                  <>
-                    {selectMeta?.date && (
-                      <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-mono">
-                        {selectMeta.date}
-                      </span>
-                    )}
-                    <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-mono">{results.length}</span>
-                  </>
-                )}
-              </div>
-              {sidebarTab === 'results' && selectMeta?.degraded && (
-                <div className="mx-2 mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  部分计算节点响应失败，本次结果可能不完整，建议重试。
-                </div>
-              )}
-              {sidebarTab === 'watchlist' ? (
-                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
-                  <Watchlist
-                    codes={watchlistCodes}
-                    selectedCode={selectedStock?.code}
-                    onSelect={(code) => viewStock(code)}
-                    onRemove={(code) => toggleWatchlist(code)}
-                    stockList={stockList}
-                  />
-                </div>
-              ) : sidebarTab === 'backtest' ? (
-                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-4">
-                  <BacktestPanel
-                    initialFormula={formula}
-                    onRun={handleBacktest}
-                    loading={backtestLoading}
-                    onTemplateSelected={setBacktestTemplateId}
-                  />
-                  {backtestResult && (
-                    <BacktestResults
-                      result={backtestResult.legacy}
-                      taskId={backtestResult.taskId}
-                      summary={backtestResult.summary}
-                    />
-                  )}
-                  <TaskList isAdmin={user?.role === 'admin'} />
-                </div>
-              ) : (
-              <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
-                {results.map(code => {
-                  const name = stockList.find(s => s.code === code)?.name || code;
-                  return (
-                    <div key={code} className={`rounded-lg mb-1 ${selectedStock?.code === code ? 'bg-blue-50 border border-blue-100' : ''}`}>
-                      <button onClick={() => viewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedStock?.code === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
-                        <span className="truncate">{name}</span>
-                        <span className="text-xs font-mono text-slate-400 ml-2">{code}</span>
-                      </button>
-                      <div className="px-4 pb-2">
-                        <button
-                          onClick={() => setSidebarTab('backtest')}
-                          className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
-                        >
-                          回测此策略 →
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              )}
-            </div>
-          </aside>
-
-          <section className="lg:col-span-3 order-2 lg:order-2">
-            {sidebarTab === 'backtest' ? (
-              <div className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full p-4 overflow-y-auto">
-                {backtestResult ? (
-                  <BacktestResults
-                    result={backtestResult.legacy}
-                    taskId={backtestResult.taskId}
-                    summary={backtestResult.summary}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-slate-400">
-                    {backtestLoading ? '回测计算中...' : '设置参数后点击"运行回测"'}
-                  </div>
-                )}
-              </div>
-            ) : (
-            <div ref={chartWrapperRef} className="bg-white rounded-2xl border flex flex-col h-[600px] shadow-sm w-full">
-              <div className="px-4 py-3 border-b flex flex-wrap justify-between items-center gap-2 bg-white z-10 shrink-0">
-                <StockSearch stockList={stockList} onSelect={viewStock} />
-                {selectedStock && (
-                  <>
-                    <div className="flex flex-col items-start min-w-0">
-                      <div className="flex items-baseline">
-                        <span className="text-xl font-bold">{selectedStock.code}</span>
-                        <span className="ml-2 text-base font-medium text-slate-500 truncate">{selectedStock.name}</span>
-                      </div>
-  {selectedStock.kind === 'stock' && (
-    <>
-      <div className="w-full mt-1 flex flex-col gap-0.5">
-        {SECTOR_GROUP_ORDER.map((type) => {
-          const group = sectors.filter((s) => s.type === type);
-          if (group.length === 0) return null;
-          const expanded = !!expandedSectors[type];
-          const shown = expanded ? group : group.slice(0, SECTOR_MAX_SHOWN);
-          const hidden = group.length - shown.length;
-          return (
-            <div key={type} className="flex flex-wrap items-center gap-1">
-              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-none shrink-0">
-                {SECTOR_GROUP_LABELS[type] || type}
-              </span>
-              {shown.map((s) => (
-                <button
-                  key={s.code}
-                  onClick={() => { lastStockRef.current = { code: selectedStock.code, name: selectedStock.name || selectedStock.code }; viewSector(s.code, s.name); }}
-                  className={`text-[10px] md:text-xs px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                    s.type === '行业板块' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                    : s.type === '概念板块' ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                    : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                  }`}
-                >
-                  {s.name}
-                </button>
-              ))}
-              {hidden > 0 && (
-                <button
-                  onClick={() => setExpandedSectors((prev) => ({ ...prev, [type]: !prev[type] }))}
-                  className="text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
-                >
-                  {expanded ? '收起' : `+${hidden}`}
-                </button>
-              )}
-            </div>
-          );
-        })}
-        {Object.values(expandedSectors).some(Boolean) && (
-          <button
-            onClick={() => setExpandedSectors({})}
-            className="self-start text-[10px] md:text-xs px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:bg-slate-100 font-medium transition-colors"
-          >
-            收起
-          </button>
-        )}
-      </div>
-      {(() => {
-        const latest = selectedStock.data[selectedStock.data.length - 1];
-        if (!latest) return null;
-        const items = [
-          { label: 'PE(TTM)', value: latest.peTTM != null ? Number(latest.peTTM).toFixed(2) : '--' },
-          { label: '总市值', value: formatMoney(latest.total_mv) },
-          { label: '流通市值', value: formatMoney(latest.float_mv) },
-          { label: '成交额', value: formatMoney(latest.amount) },
-          { label: '换手率', value: latest.turn != null ? `${Number(latest.turn).toFixed(2)}%` : '--' },
-          { label: '成交量', value: formatVolume(latest.volume) },
-        ];
-        return (
-          <div className="w-full mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-            {items.map(it => (
-              <span key={it.label} className="text-[9px] md:text-xs text-slate-500 whitespace-nowrap">
-                {it.label}: <span className="font-mono font-medium text-slate-900">{it.value}</span>
-              </span>
-            ))}
-          </div>
-        );
-      })()}
-    </>
-  )}
-                    </div>
-  
-                    <div className="flex flex-wrap items-center gap-2">
-                      {selectedStock?.kind === 'sector' && (
-                        <button
-                          onClick={() => {
-                            const last = lastStockRef.current;
-                            if (!last) return;
-                            setSelectedStock({ kind: 'stock', code: last.code, name: last.name, data: resampleData(adjustedDaily, chartTimeframe) });
-                          }}
-                          className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
-                        >
-                          ← 返回 {lastStockRef.current?.name || '个股'}
-                        </button>
-                      )}
-                      {selectedStock?.kind === 'stock' && (
-                        <button
-                          onClick={() => toggleWatchlist(selectedStock.code)}
-                          className="px-3 py-1 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md mr-2 hover:bg-amber-100 transition-colors"
-                        >
-                          {watchlistCodes.includes(selectedStock.code) ? '★ 已自选' : '☆ 加自选'}
-                        </button>
-                      )}
-                    <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
-    {/* 复权按钮 */}
-    {selectedStock?.kind === 'stock' && (
-    <div className="relative" ref={adjustMenuRef}>
-      <button
-        onClick={() => setAdjustMenuOpen(o => !o)}
-        className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
-      >
-        {ADJUST_LABELS[adjustMode]} ▼
-      </button>
-      {adjustMenuOpen && (
-        <div className="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[120px]">
-          {ADJUST_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => {
-                setAdjustMode(opt.value);
-                localStorage.setItem('klineAdjustMode', opt.value);
-                setAdjustMenuOpen(false);
-                if (selectedStock?.kind === 'stock' && dailyDataCache.length > 0) {
-                  const adjusted = applyAdjust(dailyDataCache, opt.value);
-                  setSelectedStock(prev => prev ? { ...prev, data: resampleData(adjusted, chartTimeframe) } : prev);
+          <SelectionResultsSidebar
+            sidebarTab={sidebarTab}
+            onTabChange={setSidebarTab}
+            selectMeta={selectMeta}
+            results={results}
+            watchlistCodes={watchlistCodes}
+            selectedCode={selectedStock?.code}
+            stockList={stockList}
+            onViewStock={viewStock}
+            onRemoveWatchlist={toggleWatchlist}
+            formula={formula}
+            backtestLoading={backtestLoading}
+            backtestResult={backtestResult}
+            onBacktest={handleBacktest}
+            onTemplateSelected={setBacktestTemplateId}
+            isAdmin={user?.role === 'admin'}
+          />
+          <StockResearchPanel
+            sidebarTab={sidebarTab}
+            selectedStock={selectedStock}
+            stockList={stockList}
+            sectors={sectors}
+            expandedSectors={expandedSectors}
+            chartLoading={chartLoading}
+            dailyDataCache={dailyDataCache}
+            adjustedDaily={adjustedDaily}
+            sectorDataCache={sectorDataCache}
+            chartTimeframe={chartTimeframe}
+            onChangeChartTimeframe={(value) => {
+              setChartTimeframe(value);
+              if (selectedStock?.kind === 'sector') {
+                if (sectorDataCache.length > 0) {
+                  setSelectedStock({ ...selectedStock, data: resampleData(sectorDataCache, value) });
                 }
-              }}
-              className={`w-full text-left px-3 py-1 text-xs ${adjustMode === opt.value ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-    )}
-                        <button
-                          onClick={async () => {
-                            if (!document.fullscreenElement) {
-                              // 进入全屏
-                              try {
-                                await chartWrapperRef.current?.requestFullscreen();
-                                
-                                // 移动端处理
-                                if (isMobile()) {
-                                  if (isIOS()) {
-                                    // iOS：显示横屏提示
-                                    setShowRotateHint(true);
-                                  } else {
-                                    // Android：强制横屏
-                                    try {
-                                      await (screen.orientation as any).lock('landscape');
-                                    } catch (e) {
-                                      console.log('Orientation lock not supported:', e);
-                                    }
-                                  }
-                                }
-                              } catch (e) {
-                                console.log('Fullscreen request failed:', e);
-                              }
-                            } else {
-                              // 退出全屏
-                              try {
-                                await document.exitFullscreen();
-                                setShowRotateHint(false);
-                                // 释放屏幕方向锁定
-                                if (screen.orientation && screen.orientation.unlock) {
-                                  screen.orientation.unlock();
-                                }
-                              } catch (e) {
-                                console.log('Exit fullscreen failed:', e);
-                              }
-                            }
-                          }}
-                          className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
-                        >
-                          {isFullScreen ? '退出全屏' : '全屏'}
-                        </button>
-                        {TIMEFRAMES.map((tf) => (
-                          <button key={tf.value} onClick={() => {
-                              setChartTimeframe(tf.value);
-                              if (selectedStock?.kind === 'sector') {
-                                if (sectorDataCache.length > 0) setSelectedStock({ ...selectedStock, data: resampleData(sectorDataCache, tf.value) });
-                              } else if (adjustedDaily && adjustedDaily.length > 0) {
-                                setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, tf.value) });
-                              }
-                            }}
-                            className={`px-3 py-1 text-xs font-bold rounded-md ${chartTimeframe === tf.value ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                          >
-                            {tf.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              
-              <div className="flex-1 w-full h-full relative p-1">
-                {chartLoading && <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-sm flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin"></div></div>}
-                {selectedStock ? (
-                  <KLineChart
-                    code={selectedStock.code}
-                    data={selectedStock.data}
-                    subChartType={subChartType}
-                    onSubChartTypeChange={setSubChartType}
-                    mainChartType={mainChartType}
-                    onMainChartTypeChange={setMainChartType}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-slate-400 bg-slate-50">选择股票查看图表</div>
-                )}
-              </div>
-            </div>
-            )}
-          </section>
+              } else if (adjustedDaily.length > 0) {
+                setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, value) });
+              }
+            }}
+            subChartType={subChartType}
+            onChangeSubChartType={setSubChartType}
+            mainChartType={mainChartType}
+            onChangeMainChartType={setMainChartType}
+            isFullScreen={isFullScreen}
+            chartWrapperRef={chartWrapperRef}
+            adjustMode={adjustMode}
+            adjustMenuOpen={adjustMenuOpen}
+            adjustMenuRef={adjustMenuRef}
+            onChangeAdjustMode={(value) => {
+              setAdjustMode(value);
+              localStorage.setItem('klineAdjustMode', value);
+              setAdjustMenuOpen(false);
+              if (selectedStock?.kind === 'stock' && dailyDataCache.length > 0) {
+                const adjusted = applyAdjust(dailyDataCache, value);
+                setSelectedStock(prev => prev ? { ...prev, data: resampleData(adjusted, chartTimeframe) } : prev);
+              }
+            }}
+            onChangeAdjustMenuOpen={setAdjustMenuOpen}
+            onChangeSectorsExpanded={setExpandedSectors}
+            onViewStock={viewStock}
+            onViewSector={viewSector}
+            onToggleWatchlist={toggleWatchlist}
+            watchlistCodes={watchlistCodes}
+            lastStockRef={lastStockRef}
+            onReturnToStock={() => {
+              const last = lastStockRef.current;
+              if (!last) return;
+              setSelectedStock({ kind: 'stock', code: last.code, name: last.name, data: resampleData(adjustedDaily, chartTimeframe) });
+            }}
+            onToggleFullscreen={async () => {
+              if (!document.fullscreenElement) {
+                try {
+                  await chartWrapperRef.current?.requestFullscreen();
+                  if (isMobile()) {
+                    if (isIOS()) {
+                      setShowRotateHint(true);
+                    } else {
+                      try {
+                        await (screen.orientation as any).lock('landscape');
+                      } catch (e) {
+                        console.log('Orientation lock not supported:', e);
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.log('Fullscreen request failed:', e);
+                }
+              } else {
+                try {
+                  await document.exitFullscreen();
+                  setShowRotateHint(false);
+                  if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                  }
+                } catch (e) {
+                  console.log('Exit fullscreen failed:', e);
+                }
+              }
+            }}
+            backtestResult={backtestResult}
+            backtestLoading={backtestLoading}
+            onSetSelectedStock={(stock) => setSelectedStock(stock)}
+            onSetSelectedStockData={(data) => setSelectedStock(prev => prev ? { ...prev, data } : prev)}
+          />
         </div>
       </div>
 
