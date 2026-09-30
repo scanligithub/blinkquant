@@ -23,10 +23,25 @@ export async function GET(req: NextRequest) {
     const watchlist = await sql`
       SELECT code, created_at FROM watchlist WHERE user_id = ${auth.user.userId} ORDER BY created_at DESC
     `;
+    const watchlistsRes = await sql`
+      SELECT id, name, is_default, created_at, updated_at
+      FROM watchlists WHERE user_id = ${auth.user.userId}
+      ORDER BY is_default DESC, created_at ASC
+    `;
+    const watchlistItems = await sql`
+      SELECT watchlist_id, code, created_at
+      FROM watchlist_items
+      WHERE watchlist_id IN (SELECT id FROM watchlists WHERE user_id = ${auth.user.userId})
+      ORDER BY created_at ASC
+    `;
+    const watchlists = watchlistsRes.rows.map((list) => ({
+      ...list,
+      items: watchlistItems.rows.filter((item) => String(item.watchlist_id) === String(list.id)),
+    }));
     const strategies = await sql`
       SELECT name, formula, timeframe, created_at, updated_at FROM strategies WHERE user_id = ${auth.user.userId} ORDER BY created_at DESC
     `;
-    const body = JSON.stringify(buildUserExport(user, watchlist.rows, strategies.rows), null, 2);
+    const body = JSON.stringify(buildUserExport(user, watchlist.rows, strategies.rows, watchlists), null, 2);
     const filename = sanitizeFilename(user.email, 'json');
     return new NextResponse(body, {
       headers: {
