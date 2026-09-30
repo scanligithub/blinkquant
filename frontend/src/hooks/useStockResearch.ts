@@ -95,6 +95,22 @@ export default function useStockResearch() {
 
   const [stockList, setStockList] = useState<StockListItem[]>([]);
 
+  const chartTimeframeRef = useRef(chartTimeframe);
+  const adjustModeRef = useRef(adjustMode);
+  const stockListRef = useRef(stockList);
+
+  useEffect(() => {
+    chartTimeframeRef.current = chartTimeframe;
+  }, [chartTimeframe]);
+
+  useEffect(() => {
+    adjustModeRef.current = adjustMode;
+  }, [adjustMode]);
+
+  useEffect(() => {
+    stockListRef.current = stockList;
+  }, [stockList]);
+
   useEffect(() => {
     const saved = localStorage.getItem('klineAdjustMode');
     if (saved === 'none' || saved === 'qfq' || saved === 'hfq') {
@@ -206,9 +222,11 @@ export default function useStockResearch() {
         const dailyData = parseParquetRecords(records);
         setDailyDataCache(dailyData);
 
-        const adjusted = applyAdjust(dailyData, adjustMode);
-        const resampledData = resampleDailyData(adjusted, chartTimeframe);
-        const stock = stockList.find((s) => s.code === code);
+        const currentAdjustMode = adjustModeRef.current;
+        const currentChartTimeframe = chartTimeframeRef.current;
+        const adjusted = applyAdjust(dailyData, currentAdjustMode);
+        const resampledData = resampleDailyData(adjusted, currentChartTimeframe);
+        const stock = stockListRef.current.find((s) => s.code === code);
 
         setSelectedStock({
           kind: 'stock',
@@ -238,7 +256,7 @@ export default function useStockResearch() {
         setChartLoading(false);
       }
     },
-    [adjustMode, chartTimeframe, stockList]
+    []
   );
 
   const viewSector = useCallback(
@@ -263,7 +281,7 @@ export default function useStockResearch() {
           kind: 'sector',
           code: sectorCode,
           name: sectorName,
-          data: resampleDailyData(sectorDaily, chartTimeframe),
+          data: resampleDailyData(sectorDaily, chartTimeframeRef.current),
         });
       } catch (err: any) {
         alert(`Failed: ${err.message}`);
@@ -271,7 +289,7 @@ export default function useStockResearch() {
         setChartLoading(false);
       }
     },
-    [chartTimeframe]
+    []
   );
 
   const changeChartTimeframe = useCallback(
