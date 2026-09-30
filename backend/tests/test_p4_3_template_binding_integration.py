@@ -81,7 +81,7 @@ def test_template_binding_drops_stale_config(tmp_path, monkeypatch):
             task = TaskCreate(user_id="u1", task_type="backtest",
                               payload=stale, strategy_template_id=1)
             bound = await _resolve_strategy_template(task)
-            assert bound == (None, None, None)
+            assert bound == (None, None, None, None)
         finally:
             await db.close_pool()
 
