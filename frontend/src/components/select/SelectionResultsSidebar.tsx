@@ -125,6 +125,7 @@ export default function SelectionResultsSidebar(props: SelectionResultsSidebarPr
                       </button>
                     </div>
                   </div>
+                  );
                 })}
               </div>
               )}
