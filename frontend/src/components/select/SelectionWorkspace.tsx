@@ -56,6 +56,28 @@ export default function SelectionWorkspace() {
   const router = useRouter();
   const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/session', { cache: 'no-store' });
+        const json = await res.json();
+        if (!mounted) return;
+        if (json.user) {
+          setUser(json.user);
+        } else {
+          router.replace('/login');
+        }
+      } catch (error) {
+        console.error('Failed to load session', error);
+        if (mounted) router.replace('/login');
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [router]);
   const [showStrategies, setShowStrategies] = useState(false);
   const [saveStrategyOpen, setSaveStrategyOpen] = useState(false);
   const [showAISelect, setShowAISelect] = useState(false);
