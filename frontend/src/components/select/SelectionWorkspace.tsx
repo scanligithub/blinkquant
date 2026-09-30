@@ -782,9 +782,6 @@ setDailyDataCache(dailyData);
             sectors={sectors}
             expandedSectors={expandedSectors}
             chartLoading={chartLoading}
-            dailyDataCache={dailyDataCache}
-            adjustedDaily={adjustedDaily}
-            sectorDataCache={sectorDataCache}
             chartTimeframe={chartTimeframe}
             onChangeChartTimeframe={(value) => {
               setChartTimeframe(value);
