@@ -79,7 +79,7 @@ export default function SelectionResultsSidebar(props: SelectionResultsSidebarPr
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
                   <Watchlist
                     codes={watchlistCodes}
-                    selectedCode={selectedStock?.code}
+                    selectedCode={selectedCode}
                     onSelect={onViewStock}
                     onRemove={onRemoveWatchlist}
                     stockList={stockList}
@@ -107,8 +107,8 @@ export default function SelectionResultsSidebar(props: SelectionResultsSidebarPr
                 {results.map(code => {
                   const name = stockList.find(s => s.code === code)?.name || code;
                   return (
-                    <div key={code} className={`rounded-lg mb-1 ${selectedStock?.code === code ? 'bg-blue-50 border border-blue-100' : ''}`}>
-                      <button onClick={() => onViewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedStock?.code === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                    <div key={code} className={`rounded-lg mb-1 ${selectedCode === code ? 'bg-blue-50 border border-blue-100' : ''}`}>
+                      <button onClick={() => onViewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedCode === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
                         <span className="truncate">{name}</span>
                         <span className="text-xs font-mono text-slate-400 ml-2">{code}</span>
                       </button>
