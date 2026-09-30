@@ -7,6 +7,7 @@ export interface BacktestTemplateConfig {
   benchmark: any;
   min_listing_days: number;
   exclude_st: boolean;
+  source_selection_strategy?: SelectionStrategySource;
 }
 export interface BacktestStrategyTemplate {
   id: number;
@@ -16,11 +17,20 @@ export interface BacktestStrategyTemplate {
   updated_at: string;
   version_no?: number;
 }
+
+export interface SelectionStrategySource {
+  id: number;
+  version_no: number;
+  name: string;
+  formula: string;
+  timeframe: 'D' | 'W' | 'M';
+}
 // P4.1/P4.2: templates are persisted by Node1 Scheduler SQLite; Vercel only proxies authenticated requests.
 interface Props {
   currentConfig: BacktestTemplateConfig;
   onLoad: (config: BacktestTemplateConfig) => void;
   onTemplateSelected?: (templateId: number | null) => void;
+  onSourceSelectionChanged?: (source: SelectionStrategySource | undefined) => void;
 }
 
 export const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string; config: BacktestTemplateConfig }> = [
@@ -98,7 +108,7 @@ export const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: 
   },
 ];
 
-export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTemplateSelected }: Props) {
+export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTemplateSelected, onSourceSelectionChanged }: Props) {
   const [open, setOpen] = useState(false);
   const [templates, setTemplates] = useState<BacktestStrategyTemplate[]>([]);
   const [name, setName] = useState('');
@@ -107,6 +117,9 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [selectionStrategies, setSelectionStrategies] = useState<Array<{ id: number; name: string; version_no?: number }>>([]);
+  const [selectionVersions, setSelectionVersions] = useState<Array<{ id: number; version_no: number; name: string; formula: string; timeframe: string }>>([]);
+  const source = currentConfig.source_selection_strategy;
 
   const refresh = useCallback(async () => {
     setError('');
@@ -117,8 +130,31 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
   }, []);
 
   useEffect(() => {
-    if (open) refresh().catch(e => setError(e.message));
+    if (!open) return;
+    refresh().catch(e => setError(e.message));
+    fetch('/api/strategies', { cache: 'no-store' })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || '加载选股策略失败');
+        setSelectionStrategies(json.strategies || []);
+      })
+      .catch(e => setError(e.message));
   }, [open, refresh]);
+
+  useEffect(() => {
+    const sourceId = source?.id;
+    if (!sourceId) {
+      setSelectionVersions([]);
+      return;
+    }
+    fetch('/api/strategies/' + sourceId + '/versions', { cache: 'no-store' })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || '加载选股策略版本失败');
+        setSelectionVersions(json.versions || []);
+      })
+      .catch(e => setError(e.message));
+  }, [source?.id]);
 
   const selectTemplate = (id: number | null) => {
     setSelectedTemplateId(id);
@@ -211,6 +247,68 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
 
     {open && <div className='rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3'>
       <div className='space-y-2'>
+        <div className='rounded-lg border border-blue-100 bg-blue-50/60 p-2 space-y-2'>
+          <div className='text-[11px] font-semibold text-blue-700'>来源选股策略（可选）</div>
+          <select
+            value={source?.id ? String(source.id) : ''}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              if (!id) {
+                onSourceSelectionChanged?.(undefined);
+                return;
+              }
+              const selected = selectionStrategies.find(item => item.id === id);
+              const versionNo = selected?.version_no || 1;
+              const version = selectionVersions.find(item => item.version_no === versionNo);
+              if (version) {
+                onSourceSelectionChanged?.({
+                  id,
+                  version_no: version.version_no,
+                  name: version.name,
+                  formula: version.formula,
+                  timeframe: version.timeframe === 'W' || version.timeframe === 'M' ? version.timeframe : 'D',
+                });
+              } else {
+                onSourceSelectionChanged?.(undefined);
+              }
+            }}
+            className='w-full px-2 py-1.5 text-xs border border-blue-200 rounded-lg bg-white'
+          >
+            <option value=''>独立回测策略（不关联）</option>
+            {selectionStrategies.map(item => (
+              <option key={item.id} value={item.id}>{item.name} · v{item.version_no || 1}</option>
+            ))}
+          </select>
+          {source?.id && selectionVersions.length > 0 && (
+            <select
+              value={String(source.version_no)}
+              onChange={(e) => {
+                const version = selectionVersions.find(item => item.version_no === Number(e.target.value));
+                if (version) {
+                  onSourceSelectionChanged?.({
+                    id: source.id,
+                    version_no: version.version_no,
+                    name: version.name,
+                    formula: version.formula,
+                    timeframe: version.timeframe === 'W' || version.timeframe === 'M' ? version.timeframe : 'D',
+                  });
+                }
+              }}
+              className='w-full px-2 py-1.5 text-xs border border-blue-200 rounded-lg bg-white'
+            >
+              {selectionVersions.map(version => (
+                <option key={version.id} value={version.version_no}>v{version.version_no} · {version.name}</option>
+              ))}
+            </select>
+          )}
+          {source?.id && (
+            <div className='text-[10px] text-blue-600 break-all'>
+              基础公式：{source.formula} · {source.timeframe}
+            </div>
+          )}
+          <div className='text-[10px] text-slate-400'>只保存“基于哪个选股策略版本”的快照；之后修改 Entry 不会修改源选股策略。</div>
+        </div>
+
         <div className='flex gap-2'>
           <input
             value={name}
