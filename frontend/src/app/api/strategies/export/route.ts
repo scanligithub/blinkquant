@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
+import { ensureSelectionStrategyVersions } from '@/lib/strategy-versions';
 
 export const runtime = 'edge';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  await ensureSelectionStrategyVersions();
 
   const [strategies, versions] = await Promise.all([
     sql`
