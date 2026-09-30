@@ -16,3 +16,37 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ arti
   const data = await response.json().catch(() => ({}));
   return NextResponse.json(data, { status: response.status });
 }
+
+
+async function forwardMutation(
+  req: NextRequest,
+  method: 'PATCH' | 'DELETE',
+  artifactId: string,
+) {
+  const auth = await requireAuth(req);
+  if (auth.status !== 200 || !auth.user?.userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const id = Number(artifactId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ error: 'Invalid artifact ID' }, { status: 400 });
+  }
+  const body = method === 'PATCH' ? await req.text() : undefined;
+  const headers: Record<string, string> = { Authorization: 'Bearer ' + INTERNAL_TOKEN };
+  if (method === 'PATCH') headers['Content-Type'] = 'application/json';
+  const qs = new URLSearchParams({ user_id: auth.user.userId });
+  if (auth.user.role) qs.set('role', auth.user.role);
+  const response = await fetch(NODE1_URL + '/internal/artifacts/' + id + '?' + qs.toString(), {
+    method, headers, body, cache: 'no-store',
+  });
+  const data = await response.json().catch(() => ({}));
+  return NextResponse.json(data, { status: response.status });
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ artifactId: string }> }) {
+  return forwardMutation(req, 'PATCH', (await params).artifactId);
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ artifactId: string }> }) {
+  return forwardMutation(req, 'DELETE', (await params).artifactId);
+}

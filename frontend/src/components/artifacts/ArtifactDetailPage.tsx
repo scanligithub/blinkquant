@@ -26,6 +26,10 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
   const [authLoading, setAuthLoading] = useState(true);
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
+  const [watchlists, setWatchlists] = useState<Array<{ id: number; name: string; item_count: number }>>([]);
+  const [selectedWatchlist, setSelectedWatchlist] = useState<number | ''>('');
+  const [savingToWatchlist, setSavingToWatchlist] = useState(false);
+  const [savedCount, setSavedCount] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -71,6 +75,37 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
     return () => { mounted = false; };
   }, [user, params?.artifactId, kind]);
 
+  useEffect(() => {
+    if (!user || kind !== 'selection') return;
+    fetch('/api/watchlists', { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        const rows = Array.isArray(d?.watchlists) ? d.watchlists : [];
+        setWatchlists(rows);
+        if (rows[0]) setSelectedWatchlist(Number(rows[0].id));
+      })
+      .catch(() => undefined);
+  }, [user, kind]);
+
+  const addSelectionToWatchlist = async () => {
+    if (!selectedWatchlist || !selectionCodes.length) return;
+    setSavingToWatchlist(true);
+    try {
+      const res = await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: selectedWatchlist, codes: selectionCodes.map((code: unknown) => String(code)) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '加入自选股失败');
+      setSavedCount(Number(data.added_count || 0));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '加入自选股失败');
+    } finally {
+      setSavingToWatchlist(false);
+    }
+  };
+
   if (authLoading) {
     return <main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin" /></main>;
   }
@@ -99,7 +134,24 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
               <h1 className="text-2xl font-black mt-2">{kind === 'selection' ? '选股成果' : (task?.strategy_template_name || '回测成果')} #{task?.id || params?.artifactId}</h1>
               <div className="text-xs text-slate-400 mt-1">这是任务完成时形成的结果快照；本页不读取当前策略的最新内容作为历史结果。</div>
             </div>
-            {task && <span className="px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">{STATUS_LABELS[task.status] || task.status}</span>}
+            {task && <div className="flex items-center gap-2">
+              <button type="button" onClick={async () => {
+                const title = window.prompt('成果名称', (task as any).title || (kind === 'selection' ? '选股成果' : task.strategy_template_name || '回测成果'));
+                if (!title || !title.trim()) return;
+                const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
+                if (res.ok) {
+                  const updated = await res.json();
+                  setTask((prev) => prev ? ({ ...prev, ...updated }) : prev);
+                }
+              }} className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-600">重命名</button>
+              <button type="button" onClick={async () => {
+                if (!window.confirm('删除该成果？原任务不会被删除。')) return;
+                const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' });
+                if (res.ok) router.replace('/artifacts');
+                else alert('删除失败');
+              }} className="px-3 py-1.5 rounded-lg border border-red-200 text-xs font-bold text-red-600">删除</button>
+              <span className="px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">{STATUS_LABELS[task.status] || task.status}</span>
+            </div>}
           </div>
 
           {loading ? <section className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">加载中...</section> : !task ? (
@@ -147,7 +199,18 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     {selectionCodes.length === 0 ? (
                       <div className="py-10 text-center text-slate-400">没有返回股票代码</div>
                     ) : (
-                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <select value={selectedWatchlist} onChange={(e) => setSelectedWatchlist(e.target.value ? Number(e.target.value) : '')} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs">
+                        <option value="">选择自选股列表</option>
+                        {watchlists.map((w) => <option key={w.id} value={w.id}>{w.name} · {w.item_count}</option>)}
+                      </select>
+                      <button type="button" onClick={() => void addSelectionToWatchlist()} disabled={savingToWatchlist || !selectedWatchlist || selectionCodes.length === 0} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">
+                        {savingToWatchlist ? '加入中…' : '将本次选股结果加入自选股'}
+                      </button>
+                      {savedCount != null && <span className="text-xs text-emerald-600">已新增 {savedCount} 只</span>}
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
                         {selectionCodes.slice(0, 300).map((code: string) => (
                           <Link key={code} href={'/stocks/' + encodeURIComponent(String(code))} className="px-3 py-2 rounded-lg border border-slate-100 bg-slate-50 text-xs font-mono text-slate-700 hover:border-blue-200 hover:text-blue-600 text-center">{String(code)}</Link>
                         ))}

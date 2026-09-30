@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 import json
+import os
 
 from .db import acquire, execute, fetch, fetchrow, fetchval
 from .config import INTERNAL_TOKEN
@@ -97,6 +98,10 @@ class TaskResponse(BaseModel):
 
 class TaskListResponse(BaseModel):
     tasks: List[TaskResponse]
+
+
+class ArtifactUpdate(BaseModel):
+    title: Optional[str] = None
 
 
 # ──────────────────────────────────────────────
@@ -399,7 +404,7 @@ async def list_artifacts(
     total = int(await fetchval(f"SELECT COUNT(*) FROM artifacts WHERE {where_sql}") or 0)
 
     query = f"""SELECT id, user_id, artifact_type, task_id, title, status, metadata,
-                       summary, result_json, result_uri, result_bytes, created_at, finished_at,
+                       summary, result_json, result_uri, result_bytes, created_at, finished_at, updated_at,
                        EXISTS(SELECT 1 FROM task_queue tq WHERE tq.id = artifacts.task_id) AS task_exists
                 FROM artifacts WHERE {where_sql}
                 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"""
@@ -423,6 +428,7 @@ async def list_artifacts(
             "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
             "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
             "created_at": row["created_at"], "finished_at": row["finished_at"],
+            "updated_at": row["updated_at"],
             "task_exists": bool(task_exists),
             "strategy_template_id": metadata.get("strategy_template_id"),
             "strategy_template_name": metadata.get("strategy_template_name"),
@@ -452,12 +458,61 @@ async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Op
         "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
         "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
         "created_at": row["created_at"], "finished_at": row["finished_at"],
+        "updated_at": row["updated_at"],
         "task_exists": bool(task_exists), "source_task_id": row["task_id"],
         "strategy_template_id": metadata.get("strategy_template_id"),
         "strategy_template_name": metadata.get("strategy_template_name"),
         "strategy_template_updated_at": metadata.get("strategy_template_updated_at"),
         "strategy_template_version": metadata.get("strategy_template_version"),
     }
+
+@router.patch("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
+async def update_artifact(
+    artifact_id: int,
+    patch: ArtifactUpdate,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> dict:
+    row = await fetchrow("SELECT * FROM artifacts WHERE id = ?", artifact_id)
+    if not row:
+        raise HTTPException(404, "Artifact not found")
+    _assert_task_access(row, user_id, role)
+
+    if patch.title is None:
+        return await get_artifact(artifact_id, user_id=user_id, role=role)
+    title = patch.title.strip()
+    if not title:
+        raise HTTPException(400, "Artifact title cannot be empty")
+    if len(title) > 80:
+        raise HTTPException(400, "Artifact title too long")
+
+    await execute(
+        "UPDATE artifacts SET title = ?, updated_at = datetime('now') WHERE id = ?",
+        title, artifact_id,
+    )
+    return await get_artifact(artifact_id, user_id=user_id, role=role)
+
+
+@router.delete("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
+async def delete_artifact(
+    artifact_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+) -> dict:
+    from .config import RESULT_DIR
+    from .result_store import delete_result_dir
+    row = await fetchrow("SELECT id, user_id, result_uri FROM artifacts WHERE id = ?", artifact_id)
+    if not row:
+        raise HTTPException(404, "Artifact not found")
+    _assert_task_access(row, user_id, role)
+
+    result_uri = row.get("result_uri")
+    if result_uri and os.path.isdir(os.path.join(RESULT_DIR, str(result_uri))):
+        if not delete_result_dir(result_uri, RESULT_DIR):
+            raise HTTPException(409, "Artifact result files could not be deleted safely")
+    await execute("DELETE FROM artifacts WHERE id = ? AND user_id = ?", artifact_id, row["user_id"])
+    return {"ok": True, "artifact_id": artifact_id}
+
 
 @router.get("/artifacts/{artifact_id}/part", dependencies=[Depends(verify_internal_token)])
 async def get_artifact_part(

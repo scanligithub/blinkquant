@@ -45,6 +45,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const [authLoading, setAuthLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number }>({ usedBytes: 0, quotaBytes: 0, total: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,6 +55,11 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       if (!res.ok) throw new Error(json.error || '加载成果失败');
       const done = Array.isArray(json?.artifacts) ? json.artifacts : [];
       setTasks(done);
+      setStorage({
+        usedBytes: Number(json?.used_bytes || 0),
+        quotaBytes: Number(json?.quota_bytes || 0),
+        total: Number(json?.total || done.length),
+      });
     } catch (e) {
       console.error('load artifacts failed', e);
       setTasks([]);
@@ -97,6 +103,13 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const selectionCount = tasks.filter(t => t.task_type === 'selection').length;
   const backtestCount = tasks.filter(t => t.task_type === 'backtest').length;
 
+  const storagePct = storage.quotaBytes > 0 ? Math.min(100, (storage.usedBytes / storage.quotaBytes) * 100) : 0;
+  const fmtBytes = (n: number) => n < 1024 * 1024
+    ? Math.round(n / 1024) + ' KB'
+    : n < 1024 * 1024 * 1024
+      ? (n / 1024 / 1024).toFixed(1) + ' MB'
+      : (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+
   const tabs: Array<{ key: ArtifactKind; label: string; count?: number }> = [
     { key: 'all', label: '全部成果', count: tasks.length },
     { key: 'selection', label: '选股成果', count: selectionCount },
@@ -133,6 +146,16 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
             </Link>
           </div>
 
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>成果存储</span><span>{fmtBytes(storage.usedBytes)} / {fmtBytes(storage.quotaBytes)}</span>
+            </div>
+            <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full bg-blue-600" style={{ width: storagePct + '%' }} />
+            </div>
+            <div className="mt-2 text-xs text-slate-400">{storage.total} 个成果；已删除的成果不占用成果库容量。</div>
+          </div>
+
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-2">
               {tabs.map(tab => (
@@ -165,7 +188,20 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                           <div className="text-xs text-slate-400 mt-2">周期：{meta.timeframe} · 日期：{meta.date} · 完成：{fmtTime(task.finished_at)}</div>
                           {meta.source && <div className="text-xs text-blue-600 mt-1">来源策略：{meta.source.name} · v{meta.source.version_no}</div>}
                         </div>
-                        <Link href={'/artifacts/selections/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 shrink-0">查看成果</Link>
+                        <div className="flex gap-2 shrink-0">
+                          <Link href={'/artifacts/selections/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看成果</Link>
+                          <button type="button" onClick={async () => {
+                            const title = window.prompt('成果名称', (task as any).title || ('选股成果 #' + task.id));
+                            if (!title || !title.trim()) return;
+                            const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
+                            if (res.ok) void load();
+                          }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
+                          <button type="button" onClick={async () => {
+                            if (!window.confirm('删除该成果？此操作不会删除原任务。')) return;
+                            const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' });
+                            if (res.ok) void load(); else alert('删除失败');
+                          }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
+                        </div>
                       </div>
                     );
                   }
@@ -192,7 +228,20 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                         )}
                         {meta.source && <div className="text-xs text-blue-600 mt-1">基础选股策略：{meta.source.name} · v{meta.source.version_no}</div>}
                       </div>
-                      <Link href={'/artifacts/backtests/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 shrink-0">查看成果</Link>
+                      <div className="flex gap-2 shrink-0">
+                        <Link href={'/artifacts/backtests/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看成果</Link>
+                        <button type="button" onClick={async () => {
+                          const title = window.prompt('成果名称', (task as any).title || (task.strategy_template_name || ('回测成果 #' + task.id)));
+                          if (!title || !title.trim()) return;
+                          const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
+                          if (res.ok) void load();
+                        }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
+                        <button type="button" onClick={async () => {
+                          if (!window.confirm('删除该成果？此操作不会删除原任务。')) return;
+                          const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' });
+                          if (res.ok) void load(); else alert('删除失败');
+                        }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
+                      </div>
                     </div>
                   );
                 })}

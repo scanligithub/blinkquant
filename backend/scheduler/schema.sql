@@ -71,13 +71,16 @@ CREATE TABLE IF NOT EXISTS artifacts (
     result_uri      TEXT,
     result_bytes    INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now')),
-    finished_at     TEXT
+    finished_at     TEXT,
+    updated_at      TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_artifacts_user_type_created
     ON artifacts (user_id, artifact_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_task
     ON artifacts (task_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_user_updated
+    ON artifacts (user_id, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

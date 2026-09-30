@@ -102,6 +102,11 @@ async def _migrate() -> None:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN progress_json TEXT")
     if "result_bytes" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_bytes INTEGER")
+    cursor = await _pool.execute("PRAGMA table_info(artifacts)")
+    artifact_existing = {row[1] for row in await cursor.fetchall()}
+    if "updated_at" not in artifact_existing:
+        await _pool.execute("ALTER TABLE artifacts ADD COLUMN updated_at TEXT")
+        await _pool.execute("UPDATE artifacts SET updated_at = COALESCE(finished_at, created_at, datetime('now')) WHERE updated_at IS NULL")
     if "strategy_template_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN strategy_template_id INTEGER")
     if "strategy_template_name" not in existing:

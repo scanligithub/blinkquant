@@ -29,12 +29,32 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
   const body = await req.json();
-  const code = String(body?.code || '').trim();
-  if (!code) return NextResponse.json({ error: '缺少股票代码' }, { status: 400 });
   const listId = await resolveListId(auth.user.userId, body?.listId);
   if (!listId) return NextResponse.json({ error: '自选股列表不存在' }, { status: 404 });
-  await sql`INSERT INTO watchlist_items (watchlist_id, code) VALUES (${listId}, ${code}) ON CONFLICT (watchlist_id, code) DO NOTHING`;
-  return NextResponse.json({ success: true, listId });
+
+  const requestedCodes = Array.isArray(body?.codes)
+    ? body.codes.map((v: unknown) => String(v || '').trim()).filter(Boolean)
+    : [String(body?.code || '').trim()].filter(Boolean);
+
+  const codes = [...new Set(requestedCodes)];
+  if (!codes.length) return NextResponse.json({ error: '缺少股票代码' }, { status: 400 });
+  if (codes.length > 5000) return NextResponse.json({ error: '一次最多加入 5000 只股票' }, { status: 400 });
+
+  let addedCount = 0;
+  for (let i = 0; i < codes.length; i += 50) {
+    const chunk = codes.slice(i, i + 50);
+    const results = await Promise.all(
+      chunk.map((code) => sql`
+        INSERT INTO watchlist_items (watchlist_id, code)
+        VALUES (${listId}, ${code})
+        ON CONFLICT (watchlist_id, code) DO NOTHING
+        RETURNING code
+      `)
+    );
+    addedCount += results.filter((r) => r.rows.length > 0).length;
+  }
+  await sql`UPDATE watchlists SET updated_at = NOW() WHERE id = ${listId} AND user_id = ${auth.user.userId}`;
+  return NextResponse.json({ success: true, listId, requested_count: codes.length, added_count: addedCount });
 }
 
 export async function DELETE(req: NextRequest) {
