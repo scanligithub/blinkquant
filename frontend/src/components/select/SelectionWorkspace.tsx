@@ -10,20 +10,12 @@ import SelectionControls from './SelectionControls';
 import SelectionResultsSidebar from './SelectionResultsSidebar';
 import StockResearchPanel from './StockResearchPanel';
 
-const Watchlist = dynamic(() => import('../Watchlist'), { ssr: false });
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
 
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { applyAdjust, ADJUST_LABELS, ADJUST_OPTIONS } from '@/utils/applyAdjust';
+import { applyAdjust } from '@/utils/applyAdjust';
 import { parseParquetRecords } from '@/utils/parquet';
-import { formatMoney, formatVolume } from '@/utils/format';
-
-const TIMEFRAMES = [
-  { label: '日', value: 'D' },
-  { label: '周', value: 'W' },
-  { label: '月', value: 'M' },
-];
 
 // 板块分组显示配置：行业常驻，概念/地域超过阈值折叠
 function nodeIdFromHealthCard(node: any, idx: number): "node1" | "node2" | "node3" {
@@ -866,8 +858,6 @@ setDailyDataCache(dailyData);
             }}
             backtestResult={backtestResult}
             backtestLoading={backtestLoading}
-            onSetSelectedStock={(stock) => setSelectedStock(stock)}
-            onSetSelectedStockData={(data) => setSelectedStock(prev => prev ? { ...prev, data } : prev)}
           />
         </div>
       </div>
