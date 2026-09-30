@@ -26,7 +26,7 @@ const NAV_ITEMS = [
   { label: '回测研究', href: '/backtests', enabled: true },
   { label: '成果库', href: '/artifacts', enabled: true },
   { label: '任务中心', href: '/tasks', enabled: true },
-  { label: '系统状态', href: '/system', enabled: false },
+  { label: '系统状态', href: '/system', enabled: true },
 ] as const;
 
 export default function MainNav({
