@@ -163,13 +163,16 @@ async def _migrate() -> None:
             "strategy_template_version": row[11],
             "source_task_id": row[12],
         }, ensure_ascii=False, separators=(",", ":"))
+        backfill_result_bytes = int(row[7] or 0)
+        if result_json:
+            backfill_result_bytes = len(str(result_json).encode("utf-8"))
         await _pool.execute("""
             INSERT OR IGNORE INTO artifacts (
                 user_id, artifact_type, task_id, title, status, metadata,
                 summary, result_json, result_uri, result_bytes, created_at, finished_at
             ) VALUES (?, ?, ?, ?, "ready", ?, ?, ?, ?, ?, ?, ?)
         """, row[1], row[2], row[0], title, metadata, row[5], result_json,
-        row[6], int(row[7] or 0), row[14], row[15])
+        row[6], backfill_result_bytes, row[14], row[15])
 
 
 async def close_pool() -> None:

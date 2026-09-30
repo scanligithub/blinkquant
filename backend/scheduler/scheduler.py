@@ -777,6 +777,12 @@ class ClusterScheduler:
         except (TypeError, json.JSONDecodeError): payload = {}
         source = payload.get("selection_strategy_snapshot") or {}
         title = (f"{source.get('name')} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (row.get("strategy_template_name") or f"回测成果 #{task_id}")
+        result_json = row.get("result") if row["task_type"] == "selection" else None
+        # Selection results live in SQLite, so count their serialized bytes for logical quota
+        # accounting. Backtest artifacts use the physical result-store byte count.
+        result_bytes = int(row.get("result_bytes") or 0)
+        if result_json:
+            result_bytes = len(str(result_json).encode("utf-8"))
         metadata = json.dumps({
             "payload": payload, "assigned_node": row.get("assigned_node"),
             "strategy_template_id": row.get("strategy_template_id"),
@@ -792,9 +798,52 @@ class ClusterScheduler:
                     result_uri, result_bytes, created_at, finished_at
                 ) VALUES (?, ?, ?, ?, "ready", ?, ?, ?, ?, ?, datetime("now"), ?)
             """, row["user_id"], row["task_type"], task_id, title, metadata, row.get("result_summary"),
-            row.get("result") if row["task_type"] == "selection" else None, row.get("result_uri"),
-            int(row.get("result_bytes") or 0), row.get("finished_at"))
-            return await conn.fetchval("SELECT id FROM artifacts WHERE task_id = ?", task_id)
+            result_json, row.get("result_uri"), result_bytes, row.get("finished_at"))
+            artifact_id = await conn.fetchval("SELECT id FROM artifacts WHERE task_id = ?", task_id)
+
+        if artifact_id is not None:
+            try:
+                await self._enforce_artifact_quota(row["user_id"], keep_artifact_id=int(artifact_id))
+            except Exception:
+                log.exception("artifact quota enforce failed user=%s", row["user_id"])
+        return int(artifact_id) if artifact_id is not None else None
+
+    async def _enforce_artifact_quota(self, user_id: str, *, keep_artifact_id: int) -> list[int]:
+        """独立成果配额 GC：只清理 Artifact 及其结果文件，不触碰任务调度状态。
+
+        当前沿用每用户 2GB 默认上限；可通过 ARTIFACT_QUOTA_BYTES_PER_USER 单独配置。
+        keep_artifact_id 始终保留，即便单个成果自身超过配额。
+        """
+        from .db import fetch, execute
+        from .config import RESULT_DIR, ARTIFACT_QUOTA_BYTES_PER_USER, ADMIN_USER_IDS
+        from .result_store import delete_result_dir
+
+        if user_id in ADMIN_USER_IDS:
+            return []
+
+        rows = await fetch(
+            "SELECT id, result_uri, COALESCE(result_bytes, 0) AS result_bytes "
+            "FROM artifacts WHERE user_id = ? ORDER BY finished_at ASC NULLS LAST, id ASC",
+            user_id,
+        )
+        used = sum(int(r.get("result_bytes") or 0) for r in rows)
+        if used <= ARTIFACT_QUOTA_BYTES_PER_USER:
+            return []
+
+        evicted: list[int] = []
+        for artifact in rows:
+            artifact_id = int(artifact["id"])
+            if artifact_id == keep_artifact_id:
+                continue
+            if used <= ARTIFACT_QUOTA_BYTES_PER_USER:
+                break
+            delete_result_dir(artifact.get("result_uri"), RESULT_DIR)
+            await execute("DELETE FROM artifacts WHERE id = ? AND user_id = ?", artifact_id, user_id)
+            used -= int(artifact.get("result_bytes") or 0)
+            evicted.append(artifact_id)
+            log.info("artifact quota GC: deleted artifact %s for user %s", artifact_id, user_id)
+        return evicted
+
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
         log.warning("Failing task %s (gen=%s): %s", task_id, generation, error)

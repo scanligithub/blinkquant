@@ -99,6 +99,11 @@ class TaskStatus(str, Enum):
 RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(os.path.dirname(SCHEDULER_DB_PATH), "results"))
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
 RESULT_QUOTA_BYTES_PER_USER = int(os.getenv("RESULT_QUOTA_BYTES_PER_USER", str(2 * 1024**3)))
+# Artifact lifecycle quota is independent from task lifecycle. Keep the same 2GB default
+# so existing deployments do not change retention behavior unexpectedly.
+ARTIFACT_QUOTA_BYTES_PER_USER = int(
+    os.getenv("ARTIFACT_QUOTA_BYTES_PER_USER", str(2 * 1024**3))
+)
 
 # admin 免配额：逗号分隔的 user_id (UUID) 集合；为空则全员走 GC
 ADMIN_USER_IDS = frozenset(

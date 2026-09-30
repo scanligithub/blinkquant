@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import json
 
-from .db import acquire, execute, fetch, fetchrow
+from .db import acquire, execute, fetch, fetchrow, fetchval
 from .config import INTERNAL_TOKEN
 from .scheduler import ClusterScheduler
 from .models import TaskRow
@@ -383,19 +383,28 @@ async def list_artifacts(
         raise HTTPException(401, "user_id required")
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
-    query = """SELECT id, user_id, artifact_type, task_id, title, status, metadata,
-                      summary, result_json, result_uri, result_bytes, created_at, finished_at
-               FROM artifacts WHERE 1=1"""
+    where = ["1=1"]
     params: list = []
     if not _is_admin(role):
-        query += " AND user_id = ?"; params.append(user_id)
+        where.append("user_id = ?")
+        params.append(user_id)
     elif user_id:
-        query += " AND user_id = ?"; params.append(user_id)
+        where.append("user_id = ?")
+        params.append(user_id)
     if artifact_type:
-        query += " AND artifact_type = ?"; params.append(artifact_type)
-    query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-    rows = await fetch(query, *params)
+        where.append("artifact_type = ?")
+        params.append(artifact_type)
+
+    where_sql = " AND ".join(where)
+    total = int(await fetchval(f"SELECT COUNT(*) FROM artifacts WHERE {where_sql}") or 0)
+
+    query = f"""SELECT id, user_id, artifact_type, task_id, title, status, metadata,
+                       summary, result_json, result_uri, result_bytes, created_at, finished_at,
+                       EXISTS(SELECT 1 FROM task_queue tq WHERE tq.id = artifacts.task_id) AS task_exists
+                FROM artifacts WHERE {where_sql}
+                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"""
+    page_params = [*params, limit, offset]
+    rows = await fetch(query, *page_params)
     items = []
     for row in rows:
         try: metadata = json.loads(row["metadata"]) if row["metadata"] else {}
@@ -404,7 +413,7 @@ async def list_artifacts(
         except (TypeError, json.JSONDecodeError): summary = None
         try: result = json.loads(row["result_json"]) if row["result_json"] else None
         except (TypeError, json.JSONDecodeError): result = None
-        task_exists = await fetchval("SELECT 1 FROM task_queue WHERE id = ?", row["task_id"])
+        task_exists = bool(row["task_exists"])
         payload = metadata.get("payload") if isinstance(metadata, dict) else {}
         items.append({
             "id": row["id"], "artifact_id": row["id"], "task_id": row["task_id"],
@@ -421,7 +430,7 @@ async def list_artifacts(
             "strategy_template_version": metadata.get("strategy_template_version"),
             "source_task_id": metadata.get("source_task_id"),
         })
-    return {"artifacts": items, "total": len(items), "limit": limit, "offset": offset}
+    return {"artifacts": items, "total": total, "limit": limit, "offset": offset}
 
 @router.get("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
 async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Optional[str] = None) -> dict:
