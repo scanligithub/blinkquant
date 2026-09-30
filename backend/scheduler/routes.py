@@ -139,6 +139,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         strategy_template_id=row.get("strategy_template_id"),
         strategy_template_name=row.get("strategy_template_name"),
         strategy_template_updated_at=row.get("strategy_template_updated_at"),
+        strategy_template_version=row.get("strategy_template_version"),
         source_task_id=row.get("source_task_id"),
         progress_pct=row.get("progress_pct"),
         progress=progress,
