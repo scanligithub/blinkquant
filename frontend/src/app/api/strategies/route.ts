@@ -12,6 +12,8 @@ export async function GET(req: NextRequest) {
 
   const result = await sql`
     SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at,
+      s.source_backtest_strategy_id, s.source_backtest_strategy_version,
+      s.source_backtest_strategy_name, s.source_backtest_strategy_trigger,
       COALESCE((SELECT MAX(v.version_no) FROM strategy_versions v WHERE v.strategy_id = s.id), 1)::int AS version_no
     FROM strategies s
     WHERE s.user_id = ${auth.user.userId}
