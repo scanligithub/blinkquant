@@ -14,6 +14,7 @@ export interface BacktestStrategyTemplate {
   description?: string | null;
   config: BacktestTemplateConfig;
   updated_at: string;
+  version_no?: number;
 }
 // P4.1/P4.2: templates are persisted by Node1 Scheduler SQLite; Vercel only proxies authenticated requests.
 interface Props {
@@ -259,7 +260,10 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
             {templates.map(t => <div key={t.id} className='bg-white border border-slate-200 rounded-lg p-2 space-y-2'>
               <div className='flex items-center gap-2'>
                 <div className='flex-1 min-w-0'>
-                  <div className='text-xs font-semibold text-slate-700'>{t.name}</div>
+                  <div className='flex items-center gap-1.5'>
+                    <div className='text-xs font-semibold text-slate-700'>{t.name}</div>
+                    {t.version_no && <span className='text-[9px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700'>v{t.version_no}</span>}
+                  </div>
                   <div className='text-[10px] text-slate-400 truncate'>
                     {t.description || t.config?.strategy?.entry?.condition || '未命名策略'}
                   </div>
