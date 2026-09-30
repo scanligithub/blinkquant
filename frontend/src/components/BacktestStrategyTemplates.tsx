@@ -109,7 +109,7 @@ export const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: 
 ];
 
 export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTemplateSelected, onSourceSelectionChanged }: Props) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [templates, setTemplates] = useState<BacktestStrategyTemplate[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
