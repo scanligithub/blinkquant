@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   { label: '股票研究', href: '/stocks', enabled: true },
   { label: '自选股', href: '/watchlists', enabled: true },
   { label: '策略库', href: '/strategies', enabled: true },
-  { label: '回测研究', href: '/backtests', enabled: false },
+  { label: '回测研究', href: '/backtests', enabled: true },
   { label: '成果库', href: '/artifacts', enabled: true },
   { label: '任务中心', href: '/tasks', enabled: true },
   { label: '系统状态', href: '/system', enabled: false },
