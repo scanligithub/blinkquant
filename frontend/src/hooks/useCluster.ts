@@ -73,6 +73,7 @@ export interface Task {
   strategy_template_version?: number | null;
   source_task_id?: number | null;
   artifact_id?: number | null;
+  task_id?: number | null;
   progress_pct?: number | null;
   progress?: {
     pct?: number;
