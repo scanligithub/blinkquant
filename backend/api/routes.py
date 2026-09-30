@@ -985,8 +985,19 @@ def get_node_status():
     except Exception:
         pass
 
+    build_sha = os.getenv("BLINKQUANT_GIT_SHA")
+    if not build_sha:
+        try:
+            build_sha_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".build_git_sha")
+            with open(build_sha_path, "r", encoding="utf-8") as build_file:
+                build_sha = build_file.read().strip() or "unknown"
+        except OSError:
+            build_sha = "unknown"
+
     return {
         "node": os.getenv("NODE_INDEX"),
+        "build_id": build_sha[:12] if build_sha != "unknown" else "unknown",
+        "git_sha": build_sha,
         "status": "healthy" if data_manager.df_daily is not None else "loading",
         "rows_daily": len(data_manager.df_daily) if data_manager.df_daily is not None else 0,
 
