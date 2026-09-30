@@ -135,7 +135,17 @@ export default function StockResearchPage() {
         <div className="max-w-7xl mx-auto space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-black">股票研究</h1>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => router.push('/select')}
+                  className="text-sm font-semibold text-slate-500 hover:text-blue-600"
+                >
+                  ← 选股
+                </button>
+                <span className="text-slate-300">/</span>
+                <h1 className="text-2xl font-black">股票研究</h1>
+              </div>
               <p className="text-sm text-slate-500 mt-1">以单只股票为中心查看行情、技术指标和板块信息</p>
             </div>
             <StockSearch
