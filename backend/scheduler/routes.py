@@ -163,13 +163,16 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
 def _task_template_config(payload: dict) -> dict | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("strategy"), dict):
         return None
-    return {
+    candidate = {
         "strategy": payload.get("strategy"),
         "fee_policy": payload.get("fee_policy") or {"mode": "historical"},
         "benchmark": payload.get("benchmark") or {"enabled": True, "type": "index", "index_id": "000300"},
         "min_listing_days": payload.get("min_listing_days", 0),
         "exclude_st": payload.get("exclude_st", False),
     }
+    if payload.get("source_selection_strategy") is not None:
+        candidate["source_selection_strategy"] = payload.get("source_selection_strategy")
+    return candidate
 
 
 def _canonical_json(value: object) -> str:
