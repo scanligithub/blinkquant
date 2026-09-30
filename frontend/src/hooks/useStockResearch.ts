@@ -351,6 +351,10 @@ export default function useStockResearch() {
     }
   }, []);
 
+  const clearSelectedStock = useCallback(() => {
+    setSelectedStock(null);
+  }, []);
+
   const returnToStock = useCallback(() => {
     const last = lastStockRef.current;
     if (!last) return;
@@ -378,7 +382,7 @@ export default function useStockResearch() {
     changeAdjustMode,
     setAdjustMenuOpen,
     selectedStock,
-    clearSelectedStock: () => setSelectedStock(null),
+    clearSelectedStock,
     chartLoading,
     sectors,
     expandedSectors,
