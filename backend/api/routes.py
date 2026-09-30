@@ -294,6 +294,7 @@ class BacktestStrategyTemplateRequest(BaseModel):
     description: Optional[str] = None
     config: dict
 
+
 TEMPLATE_AUTH_SESSION_URL = os.getenv(
     "FRONTEND_AUTH_SESSION_URL",
     "https://blinkquant.de5.net/api/auth/session",
@@ -305,7 +306,7 @@ async def _template_user_id(cookie_header: Optional[str]) -> str:
 
     Template CRUD is intentionally not authorized by a client-supplied X-User-Id.
     Node1 asks the Vercel auth endpoint to validate the same signed session cookie
-    that the frontend proxy already accepted.
+    that the frontend proxy already accepted here.
     """
     cookie = (cookie_header or "").strip()
     if not cookie:
@@ -342,6 +343,7 @@ async def _template_user_id(cookie_header: Optional[str]) -> str:
         raise HTTPException(status_code=401, detail="authentication required")
     return uid
 
+
 def _validate_template_config(config: dict) -> dict:
     required = ("strategy", "fee_policy", "benchmark", "min_listing_days", "exclude_st")
     if not isinstance(config, dict) or any(k not in config for k in required):
@@ -354,54 +356,135 @@ def _validate_template_config(config: dict) -> dict:
         raise HTTPException(status_code=400, detail="invalid exclude_st")
     return config
 
+
 @router.get("/backtest-strategy-templates")
 async def list_backtest_strategy_templates(cookie: Optional[str] = Header(None)):
     from scheduler.db import fetch, json_loads
     user_id = await _template_user_id(cookie)
-    rows = await fetch("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 ORDER BY updated_at DESC", user_id)
+    rows = await fetch(
+        "SELECT t.id,t.name,t.description,t.config,t.created_at,t.updated_at, "
+        "(SELECT MAX(v.version_no) FROM backtest_strategy_versions v "
+        " WHERE v.strategy_template_id=t.id) AS version_no "
+        "FROM backtest_strategy_templates t WHERE t.user_id=$1 ORDER BY t.updated_at DESC",
+        user_id,
+    )
     for row in rows:
         row["config"] = json_loads(row["config"])
+        row["version_no"] = int(row["version_no"] or 1)
     return {"templates": rows}
+
+
+@router.get("/backtest-strategy-templates/{template_id}/versions")
+async def list_backtest_strategy_template_versions(
+    template_id: int,
+    cookie: Optional[str] = Header(None),
+):
+    from scheduler.db import fetch, fetchrow, json_loads
+    user_id = await _template_user_id(cookie)
+    template = await fetchrow(
+        "SELECT id,name FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2",
+        template_id,
+        user_id,
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="template not found")
+    rows = await fetch(
+        "SELECT id,version_no,name,description,config,created_at "
+        "FROM backtest_strategy_versions WHERE strategy_template_id=$1 "
+        "ORDER BY version_no DESC",
+        template_id,
+    )
+    for row in rows:
+        row["config"] = json_loads(row["config"])
+    return {"template_id": template_id, "versions": rows}
+
 
 @router.post("/backtest-strategy-templates")
 async def create_backtest_strategy_template(req: BacktestStrategyTemplateRequest, cookie: Optional[str] = Header(None)):
-    from scheduler.db import execute, fetchrow, json_dumps, json_loads
+    from scheduler.db import acquire, fetchrow, json_dumps, json_loads
     user_id = await _template_user_id(cookie)
     name = req.name.strip()
     if not name or len(name) > 100:
         raise HTTPException(status_code=400, detail="invalid template name")
     config = _validate_template_config(req.config)
     try:
-        await execute("INSERT INTO backtest_strategy_templates (user_id,name,description,config) VALUES ($1,$2,$3,$4)", user_id, name, req.description, json_dumps(config))
+        async with acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO backtest_strategy_templates (user_id,name,description,config) "
+                "VALUES ($1,$2,$3,$4) "
+                "RETURNING id,name,description,config,created_at,updated_at",
+                user_id, name, req.description, json_dumps(config),
+            )
+            await conn.execute(
+                "INSERT INTO backtest_strategy_versions "
+                "(strategy_template_id,version_no,name,description,config,created_at) "
+                "VALUES ($1,1,$2,$3,$4,$5)",
+                row["id"], name, req.description, json_dumps(config), row["created_at"],
+            )
     except Exception as exc:
         if "UNIQUE constraint failed" in str(exc):
             raise HTTPException(status_code=409, detail="template name already exists")
         raise
-    row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE user_id=$1 AND name=$2", user_id, name)
     await _checkpoint_template_mutation()
     row["config"] = json_loads(row["config"])
+    row["version_no"] = 1
     return {"template": row}
+
 
 @router.put("/backtest-strategy-templates")
 async def update_backtest_strategy_template(req: BacktestStrategyTemplateRequest, id: int, cookie: Optional[str] = Header(None)):
-    from scheduler.db import execute, fetchrow, json_dumps, json_loads
+    from scheduler.db import acquire, fetchrow, json_dumps, json_loads
     user_id = await _template_user_id(cookie)
     name = req.name.strip()
     if not name or len(name) > 100:
         raise HTTPException(status_code=400, detail="invalid template name")
     config = _validate_template_config(req.config)
+
     try:
-        result = await execute("UPDATE backtest_strategy_templates SET name=$1,description=$2,config=$3,updated_at=datetime('now') WHERE id=$4 AND user_id=$5", name, req.description, json_dumps(config), id, user_id)
+        async with acquire() as conn:
+            existing = await conn.fetchrow(
+                "SELECT id FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2",
+                id, user_id,
+            )
+            if not existing:
+                raise HTTPException(status_code=404, detail="template not found")
+
+            max_row = await conn.fetchrow(
+                "SELECT COALESCE(MAX(version_no),0) AS max_version "
+                "FROM backtest_strategy_versions WHERE strategy_template_id=$1",
+                id,
+            )
+            next_version = int(max_row["max_version"] or 0) + 1
+
+            await conn.execute(
+                "UPDATE backtest_strategy_templates "
+                "SET name=$1,description=$2,config=$3,updated_at=datetime('now') "
+                "WHERE id=$4 AND user_id=$5",
+                name, req.description, json_dumps(config), id, user_id,
+            )
+            row = await conn.fetchrow(
+                "SELECT id,name,description,config,created_at,updated_at "
+                "FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2",
+                id, user_id,
+            )
+            await conn.execute(
+                "INSERT INTO backtest_strategy_versions "
+                "(strategy_template_id,version_no,name,description,config,created_at) "
+                "VALUES ($1,$2,$3,$4,$5,$6)",
+                id, next_version, name, req.description, json_dumps(config), row["updated_at"],
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         if "UNIQUE constraint failed" in str(exc):
             raise HTTPException(status_code=409, detail="template name already exists")
         raise
-    if result.startswith("0 row"):
-        raise HTTPException(status_code=404, detail="template not found")
-    row = await fetchrow("SELECT id,name,description,config,created_at,updated_at FROM backtest_strategy_templates WHERE id=$1 AND user_id=$2", id, user_id)
+
     await _checkpoint_template_mutation()
     row["config"] = json_loads(row["config"])
+    row["version_no"] = next_version
     return {"template": row}
+
 
 @router.delete("/backtest-strategy-templates")
 async def delete_backtest_strategy_template(id: int, cookie: Optional[str] = Header(None)):
