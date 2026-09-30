@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     ? body.codes.map((v: unknown) => String(v || '').trim()).filter(Boolean)
     : [String(body?.code || '').trim()].filter(Boolean);
 
-  const codes = [...new Set(requestedCodes)];
+  const codes = Array.from(new Set<string>(requestedCodes));
   if (!codes.length) return NextResponse.json({ error: '缺少股票代码' }, { status: 400 });
   if (codes.length > 5000) return NextResponse.json({ error: '一次最多加入 5000 只股票' }, { status: 400 });
 
