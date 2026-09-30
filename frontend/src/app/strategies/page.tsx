@@ -11,6 +11,10 @@ interface User { id: string; email: string; role: string }
 interface Strategy {
   id: number; name: string; formula: string; timeframe: string;
   created_at: string; updated_at: string; version_no?: number;
+  source_backtest_strategy_id?: number | null;
+  source_backtest_strategy_version?: number | null;
+  source_backtest_strategy_name?: string | null;
+  source_backtest_strategy_trigger?: string | null;
 }
 
 export default function StrategiesPage() {
@@ -112,6 +116,17 @@ export default function StrategiesPage() {
     } catch (error) { alert(error instanceof Error ? error.message : '创建失败'); }
   };
 
+  const createBacktestFromStrategy = (strategy: Strategy) => {
+    sessionStorage.setItem('bq-pending-backtest-from-selection', JSON.stringify({
+      id: strategy.id,
+      version_no: strategy.version_no || 1,
+      name: strategy.name,
+      formula: strategy.formula,
+      timeframe: strategy.timeframe,
+    }));
+    router.push('/select?tab=backtest');
+  };
+
   const useStrategy = (strategy: Strategy) => {
     sessionStorage.setItem('bq-pending-selection-strategy', JSON.stringify({
       id: strategy.id, name: strategy.name, formula: strategy.formula, timeframe: strategy.timeframe,
@@ -193,9 +208,11 @@ export default function StrategiesPage() {
                       </div>
                       <div className="text-xs font-mono text-slate-500 mt-2 break-all">{strategy.formula}</div>
                       <div className="text-xs text-slate-400 mt-2">周期：{strategy.timeframe} · 更新：{new Date(strategy.updated_at).toLocaleString()}</div>
+                      {strategy.source_backtest_strategy_id && <div className="text-xs text-amber-600 mt-1">来源：回测策略 {strategy.source_backtest_strategy_name || ('#' + strategy.source_backtest_strategy_id)} · v{strategy.source_backtest_strategy_version || 1}</div>}
                     </div>
                     <div className="flex flex-wrap gap-2 shrink-0">
                       <button type="button" onClick={() => useStrategy(strategy)} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">运行选股</button>
+                      <button type="button" onClick={() => createBacktestFromStrategy(strategy)} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">创建回测策略</button>
                       <Link href={`/strategies/selection/${strategy.id}`} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">查看/编辑</Link>
                       <button type="button" onClick={() => void remove(strategy)} className="px-3 py-2 text-xs font-bold text-red-500 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
                     </div>
