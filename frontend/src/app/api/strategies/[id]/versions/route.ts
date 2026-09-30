@@ -23,7 +23,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!owned.rows[0]) return NextResponse.json({ error: '策略不存在' }, { status: 404 });
 
   const result = await sql`
-    SELECT id, strategy_id, version_no, name, formula, timeframe, created_at
+    SELECT id, strategy_id, version_no, name, formula, timeframe,
+           source_backtest_strategy_id, source_backtest_strategy_version,
+           source_backtest_strategy_name, source_backtest_strategy_trigger,
+           created_at
     FROM strategy_versions
     WHERE strategy_id = ${id}
     ORDER BY version_no DESC
