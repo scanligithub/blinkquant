@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
 import { downloadFromResponse } from '@/lib/download';
+import { BUILT_IN_TEMPLATES, type BacktestStrategyTemplate } from '@/components/BacktestStrategyTemplates';
 
 interface User { id: string; email: string; role: string }
 interface Strategy {
@@ -23,6 +24,8 @@ export default function StrategiesPage() {
   const [name, setName] = useState('');
   const [formula, setFormula] = useState('');
   const [timeframe, setTimeframe] = useState('D');
+  const [backtestTemplates, setBacktestTemplates] = useState<BacktestStrategyTemplate[]>([]);
+  const [backtestLoading, setBacktestLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
@@ -49,7 +52,47 @@ export default function StrategiesPage() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { if (user) void refresh(); }, [user, refresh]);
+  useEffect(() => { if (user) void refresh(); }, [user, refresh]);\n\n  useEffect(() => {
+    if (!user) return;
+    let mounted = true;
+    (async () => {
+      setBacktestLoading(true);
+      try {
+        const res = await fetch('/api/backtest-strategy-templates', { cache: 'no-store' });
+        const json = await res.json();
+        if (!mounted) return;
+        if (!res.ok) throw new Error(json.error || '加载回测策略失败');
+        setBacktestTemplates(json.templates || []);
+      } catch (error) {
+        console.error('Failed to load backtest strategies', error);
+        if (mounted) setBacktestTemplates([]);
+      } finally {
+        if (mounted) setBacktestLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [user]);
+
+  const openBacktestWorkspace = (template?: BacktestStrategyTemplate | { config: any }) => {
+    if (template) {
+      const payload = 'id' in template ? { id: template.id } : { config: template.config };
+      sessionStorage.setItem('bq-pending-backtest-template', JSON.stringify(payload));
+    }
+    router.push('/select?tab=backtest');
+  };
+
+  const removeBacktest = async (template: BacktestStrategyTemplate) => {
+    if (!confirm('确定删除回测策略“' + template.name + '”？')) return;
+    try {
+      const res = await fetch('/api/backtest-strategy-templates?id=' + template.id, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || '删除失败');
+      setBacktestTemplates((prev) => prev.filter((item) => item.id !== template.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '删除失败');
+    }
+  };
+
 
   const create = async () => {
     const n = name.trim();
@@ -160,9 +203,73 @@ export default function StrategiesPage() {
             )}
           </section>
 
-          <section className="bg-white rounded-2xl border border-slate-200 p-5">
-            <div className="font-bold text-slate-800">回测策略</div>
-            <p className="text-sm text-slate-500 mt-1">回测策略继续由 Node1 SQLite 持久化；统一策略详情与引用关系将在回测策略阶段接入。</p>
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="font-bold text-slate-800">我的回测策略</div>
+                <div className="text-xs text-slate-400 mt-1">策略定义继续持久化在 Node1 SQLite；这里提供统一管理入口</div>
+              </div>
+              <button type="button" onClick={() => openBacktestWorkspace()} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">+ 新建回测策略</button>
+            </div>
+            {backtestLoading ? <div className="p-10 text-center text-slate-400">加载中...</div> : backtestTemplates.length === 0 ? (
+              <div className="p-10 text-center text-slate-500">
+                <div className="font-semibold">暂无保存的回测策略</div>
+                <button type="button" onClick={() => openBacktestWorkspace()} className="mt-3 text-sm text-blue-600 font-semibold">打开回测工作台创建</button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {backtestTemplates.map((template) => {
+                  const s = template.config?.strategy || {};
+                  const entry = s.entry || {};
+                  const universe = s.universe || {};
+                  return (
+                    <div key={template.id} className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link href={'/strategies/backtest/' + template.id} className="font-bold text-slate-800 hover:text-blue-600">{template.name}</Link>
+                          <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">回测策略</span>
+                        </div>
+                        <div className="text-xs font-mono text-slate-500 mt-2 break-all">{entry.condition || '未设置 Entry 条件'}</div>
+                        <div className="text-xs text-slate-400 mt-2">
+                          {universe.type === 'index' ? '指数 ' + (universe.index_id || '') : '全 A'} · {entry.timeframe || 'D'} · {s.mode === 'event_driven' ? '事件驱动' : '目标组合'} · 更新：{new Date(template.updated_at).toLocaleString()}
+                        </div>
+                        {template.description && <div className="text-xs text-slate-500 mt-1 truncate">{template.description}</div>}
+                      </div>
+                      <div className="flex flex-wrap gap-2 shrink-0">
+                        <button type="button" onClick={() => openBacktestWorkspace(template)} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">使用</button>
+                        <Link href={'/strategies/backtest/' + template.id} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">查看/编辑</Link>
+                        <button type="button" onClick={() => void removeBacktest(template)} className="px-3 py-2 text-xs font-bold text-red-500 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <div className="font-bold text-slate-800">内置策略</div>
+                <div className="text-xs text-slate-400 mt-1">只读预置，不写入 Node1；使用后可在回测工作台另存为自己的回测策略</div>
+              </div>
+              <span className="text-xs font-mono text-slate-400">{BUILT_IN_TEMPLATES.length}</span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {BUILT_IN_TEMPLATES.map((template) => (
+                <div key={template.id} className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className="font-bold text-slate-800">{template.name}</div>
+                      <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-500">内置</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">{template.description}</div>
+                    <div className="text-xs font-mono text-slate-400 mt-2 break-all">{template.config?.strategy?.entry?.condition || ''}</div>
+                  </div>
+                  <button type="button" onClick={() => openBacktestWorkspace({ config: template.config })} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 shrink-0">使用</button>
+                </div>
+              ))}
+            </div>
           </section>
 
           {showCreate && <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
