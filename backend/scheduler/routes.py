@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 import json
+import math
 import os
 
 from .db import acquire, execute, fetch, fetchrow, fetchval
@@ -39,6 +40,19 @@ async def verify_internal_token(authorization: Optional[str] = Header(None)) -> 
 
 def _is_admin(role: str | None) -> bool:
     return (role or "").lower() == "admin"
+
+
+def _json_safe(value: object) -> object:
+    """Recursively replace non-finite floats so FastAPI JSON serialization cannot fail."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _assert_task_access(row: dict, user_id: str | None, role: str | None) -> None:
@@ -416,7 +430,7 @@ async def list_artifacts(
     backtest_total = int(stats["backtest_total"] or 0) if stats else 0
 
     query = f"""SELECT id, user_id, artifact_type, task_id, title, status, metadata,
-                       summary, result_json, result_uri, result_bytes, created_at, finished_at, updated_at,
+                       summary, result_json, result_uri, result_bytes, created_at, finished_at,
                        EXISTS(SELECT 1 FROM task_queue tq WHERE tq.id = artifacts.task_id) AS task_exists
                 FROM artifacts WHERE {where_sql}
                 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"""
@@ -424,11 +438,11 @@ async def list_artifacts(
     rows = await fetch(query, *page_params)
     items = []
     for row in rows:
-        try: metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        try: metadata = _json_safe(json.loads(row["metadata"])) if row["metadata"] else {}
         except (TypeError, json.JSONDecodeError): metadata = {}
-        try: summary = json.loads(row["summary"]) if row["summary"] else None
+        try: summary = _json_safe(json.loads(row["summary"])) if row["summary"] else None
         except (TypeError, json.JSONDecodeError): summary = None
-        try: result = json.loads(row["result_json"]) if row["result_json"] else None
+        try: result = _json_safe(json.loads(row["result_json"])) if row["result_json"] else None
         except (TypeError, json.JSONDecodeError): result = None
         task_exists = bool(row["task_exists"])
         payload = metadata.get("payload") if isinstance(metadata, dict) else {}
@@ -440,7 +454,7 @@ async def list_artifacts(
             "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
             "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
             "created_at": row["created_at"], "finished_at": row["finished_at"],
-            "updated_at": row["updated_at"],
+            "updated_at": row.get("updated_at") or row.get("finished_at") or row.get("created_at"),
             "task_exists": bool(task_exists),
             "strategy_template_id": metadata.get("strategy_template_id"),
             "strategy_template_name": metadata.get("strategy_template_name"),
@@ -465,11 +479,11 @@ async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Op
     row = await fetchrow("SELECT * FROM artifacts WHERE id = ?", artifact_id)
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
-    try: metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+    try: metadata = _json_safe(json.loads(row["metadata"])) if row["metadata"] else {}
     except (TypeError, json.JSONDecodeError): metadata = {}
-    try: summary = json.loads(row["summary"]) if row["summary"] else None
+    try: summary = _json_safe(json.loads(row["summary"])) if row["summary"] else None
     except (TypeError, json.JSONDecodeError): summary = None
-    try: result = json.loads(row["result_json"]) if row["result_json"] else None
+    try: result = _json_safe(json.loads(row["result_json"])) if row["result_json"] else None
     except (TypeError, json.JSONDecodeError): result = None
     task_exists = await fetchval("SELECT 1 FROM task_queue WHERE id = ?", row["task_id"])
     return {
@@ -480,7 +494,7 @@ async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Op
         "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
         "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
         "created_at": row["created_at"], "finished_at": row["finished_at"],
-        "updated_at": row["updated_at"],
+        "updated_at": row.get("updated_at") or row.get("finished_at") or row.get("created_at"),
         "task_exists": bool(task_exists), "source_task_id": row["task_id"],
         "strategy_template_id": metadata.get("strategy_template_id"),
         "strategy_template_name": metadata.get("strategy_template_name"),
