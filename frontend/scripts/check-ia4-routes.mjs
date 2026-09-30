@@ -55,4 +55,10 @@ for (const [label, href] of [
   assert.ok(nav.includes(`{ label: '${label}', href: '${href}', enabled: true }`), `Navigation item must be enabled: ${label}`);
 }
 
+
+const strategyImport = readFileSync(resolve(root, 'src/app/api/strategies/import/route.ts'), 'utf8');
+assert.match(strategyImport, /Imported JSON is untrusted/, 'Strategy imports must treat source provenance as untrusted');
+assert.doesNotMatch(strategyImport, /item\?\.source_backtest/, 'Strategy imports must not trust source_backtest metadata from uploaded JSON');
+assert.match(strategyImport, /VALUES \(\$\{strategyId\}, \$\{version\.version_no\}, \$\{version\.name\}, \$\{version\.formula\}, \$\{version\.timeframe\},\s*null,\s*null,\s*null,\s*null\)/, 'Imported strategy versions must not persist unverified provenance');
+
 console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, /watchlist compatibility redirect, no obsolete aggregate backup.`);
