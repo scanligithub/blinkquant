@@ -33,10 +33,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '无效的时间周期' }, { status: 400 });
   }
 
-  const inserted = await sql`
-    INSERT INTO strategies (user_id, name, formula, timeframe)
-    VALUES (${auth.user.userId}, ${name}, ${formula}, ${timeframe})
-    RETURNING id, name, formula, timeframe, created_at, updated_at
-  `;
-  return NextResponse.json({ strategy: inserted.rows[0] }, { status: 201 });
+  try {
+    const inserted = await sql`
+      INSERT INTO strategies (user_id, name, formula, timeframe)
+      VALUES (${auth.user.userId}, ${name}, ${formula}, ${timeframe})
+      RETURNING id, name, formula, timeframe, created_at, updated_at
+    `;
+    const strategy = inserted.rows[0];
+    if (!strategy) throw new Error('strategy insert returned no row');
+    await sql`
+      INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe)
+      VALUES (${strategy.id}, 1, ${name}, ${formula}, ${timeframe})
+    `;
+    return NextResponse.json({ strategy: { ...strategy, version_no: 1 } }, { status: 201 });
+  } catch (error: any) {
+    if (error?.code === '23505') return NextResponse.json({ error: '已存在同名策略' }, { status: 409 });
+    console.error('[strategies] POST error:', error);
+    return NextResponse.json({ error: '保存策略失败' }, { status: 500 });
+  }
 }
