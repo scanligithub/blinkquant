@@ -3,6 +3,7 @@
 import type { MutableRefObject, RefObject, Dispatch, SetStateAction } from 'react';
 import dynamic from 'next/dynamic';
 import StockSearch from '../StockSearch';
+import WatchlistPicker from '../WatchlistPicker';
 import BacktestResults from '../BacktestResults';
 import { formatMoney, formatVolume } from '@/utils/format';
 
@@ -67,8 +68,6 @@ interface StockResearchPanelProps {
   onChangeSectorsExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
   onViewStock: (code: string) => void;
   onViewSector: (code: string, name: string) => void;
-  onToggleWatchlist: (code: string) => void;
-  watchlistCodes: string[];
   lastStockRef: MutableRefObject<{ code: string; name: string } | null>;
   onReturnToStock: () => void;
   onToggleFullscreen: () => Promise<void>;
@@ -82,7 +81,7 @@ export default function StockResearchPanel({
   subChartType, onChangeSubChartType, mainChartType, onChangeMainChartType, isFullScreen,
   chartWrapperRef, adjustMode, adjustMenuOpen, adjustMenuRef, onChangeAdjustMode,
   onChangeAdjustMenuOpen, onChangeSectorsExpanded, onViewStock, onViewSector,
-  onToggleWatchlist, watchlistCodes, lastStockRef, onReturnToStock, onToggleFullscreen,
+  lastStockRef, onReturnToStock, onToggleFullscreen,
   backtestResult, backtestLoading
 }: StockResearchPanelProps) {
   return (
@@ -197,14 +196,7 @@ export default function StockResearchPanel({
                           ← 返回 {lastStockRef.current?.name || '个股'}
                         </button>
                       )}
-                      {selectedStock?.kind === 'stock' && (
-                        <button
-                          onClick={() => onToggleWatchlist(selectedStock.code)}
-                          className="px-3 py-1 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md mr-2 hover:bg-amber-100 transition-colors"
-                        >
-                          {watchlistCodes.includes(selectedStock.code) ? '★ 已自选' : '☆ 加自选'}
-                        </button>
-                      )}
+                      {selectedStock?.kind === 'stock' && <WatchlistPicker code={selectedStock.code} compact />}
                     <div className="flex items-center bg-slate-50 rounded-lg p-1 border border-slate-200">
     {/* 复权按钮 */}
     {selectedStock?.kind === 'stock' && (
