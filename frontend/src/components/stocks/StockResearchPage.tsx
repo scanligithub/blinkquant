@@ -39,7 +39,6 @@ export default function StockResearchPage() {
   const [authLoading, setAuthLoading] = useState(true);
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
   const [adjustMenuOpen, setAdjustMenuOpen] = useState(false);
-  const adjustMenuRef = useState<HTMLDivElement | null>(null)[0];
 
   const research = useStockResearch();
 
@@ -84,7 +83,7 @@ export default function StockResearchPage() {
     if (symbol && research.stockList.length > 0) {
       void research.viewStock(decodeURIComponent(symbol));
     }
-  }, [symbol, research.stockList.length]);
+  }, [symbol, research.stockList.length, research.viewStock]);
 
   useEffect(() => {
     if (!adjustMenuOpen) return;
