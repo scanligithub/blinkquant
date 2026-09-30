@@ -7,9 +7,18 @@ type SubmitSelectionTask = (
   payload: any
 ) => Promise<number>;
 
+export interface SelectionStrategySnapshot {
+  id: number;
+  version_no: number;
+  name: string;
+  formula: string;
+  timeframe: 'D' | 'W' | 'M';
+}
+
 interface UseSelectionOptions {
   submitTask: SubmitSelectionTask;
   onClearSelectedStock?: () => void;
+  strategySource?: SelectionStrategySnapshot;
 }
 
 export default function useSelection({
@@ -41,7 +50,12 @@ export default function useSelection({
       try {
         const taskId = await submitTask(
           'selection',
-          { formula: f, timeframe: t, ...(d ? { date: d } : {}) }
+          {
+            formula: f,
+            timeframe: t,
+            ...(d ? { date: d } : {}),
+            ...(strategySource ? { selection_strategy_snapshot: strategySource } : {}),
+          }
         );
 
         while (true) {
@@ -95,7 +109,7 @@ export default function useSelection({
         setLoading(false);
       }
     },
-    [clearResults, formula, submitTask, timeframe]
+    [clearResults, formula, submitTask, strategySource, timeframe]
   );
 
   return {
