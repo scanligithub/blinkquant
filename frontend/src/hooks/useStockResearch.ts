@@ -379,6 +379,7 @@ export default function useStockResearch() {
     changeAdjustMode,
     setAdjustMenuOpen,
     selectedStock,
+    clearSelectedStock: () => setSelectedStock(null),
     chartLoading,
     dailyDataCache,
     adjustedDaily,
