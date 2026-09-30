@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS task_queue (
     strategy_template_id INTEGER,
     strategy_template_name TEXT,
     strategy_template_updated_at TEXT,
+    strategy_template_version INTEGER,
     source_task_id   INTEGER,
     timeout_sec     INTEGER,          -- 动态墙钟上限（秒），NULL 用全局默认
     progress_pct    REAL,             -- 0~100，回测进度百分比
@@ -69,6 +70,20 @@ CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
 );
 CREATE INDEX IF NOT EXISTS idx_bst_user_updated
     ON backtest_strategy_templates (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS backtest_strategy_versions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_template_id INTEGER NOT NULL,
+    version_no      INTEGER NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    config          TEXT NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(strategy_template_id, version_no),
+    FOREIGN KEY(strategy_template_id) REFERENCES backtest_strategy_templates(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_bsv_template_version
+    ON backtest_strategy_versions (strategy_template_id, version_no DESC);
 
 CREATE TABLE IF NOT EXISTS node_heartbeats (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
