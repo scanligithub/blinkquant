@@ -103,6 +103,11 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     return () => window.clearInterval(timer);
   }, [user, load]);
 
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(storage.filteredTotal / pageSize) - 1);
+    if (page > lastPage) setPage(lastPage);
+  }, [page, storage.filteredTotal, pageSize]);
+
   if (authLoading) {
     return <main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin" /></main>;
   }
