@@ -402,14 +402,16 @@ async def list_artifacts(
         raise HTTPException(401, "user_id required")
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
-    where = ["1=1"]
-    params: list = []
+    base_where = ["1=1"]
+    base_params: list = []
     if not _is_admin(role):
-        where.append("user_id = ?")
-        params.append(user_id)
+        base_where.append("user_id = ?")
+        base_params.append(user_id)
     elif user_id:
-        where.append("user_id = ?")
-        params.append(user_id)
+        base_where.append("user_id = ?")
+        base_params.append(user_id)
+    where = list(base_where)
+    params = list(base_params)
     if artifact_type:
         where.append("artifact_type = ?")
         params.append(artifact_type)
@@ -418,16 +420,28 @@ async def list_artifacts(
     stats = await fetchrow(f"""
         SELECT
             COUNT(*) AS total,
-            COALESCE(SUM(result_bytes), 0) AS used_bytes,
-            COALESCE(SUM(CASE WHEN artifact_type = 'selection' THEN 1 ELSE 0 END), 0) AS selection_total,
-            COALESCE(SUM(CASE WHEN artifact_type = 'backtest' THEN 1 ELSE 0 END), 0) AS backtest_total
+            COALESCE(SUM(result_bytes), 0) AS used_bytes
         FROM artifacts
         WHERE {where_sql}
     """, *params)
     total = int(stats["total"] or 0) if stats else 0
     used_bytes = int(stats["used_bytes"] or 0) if stats else 0
-    selection_total = int(stats["selection_total"] or 0) if stats else 0
-    backtest_total = int(stats["backtest_total"] or 0) if stats else 0
+
+    # Tab counters are user-wide counts, independent of the currently selected tab.
+    # Keep the base ownership filter separate so pagination/type filtering cannot
+    # make the other tab counters disappear.
+    base_where_sql = " AND ".join(base_where)
+    counts = await fetchrow(f"""
+        SELECT
+            COUNT(*) AS global_total,
+            COALESCE(SUM(CASE WHEN artifact_type = 'selection' THEN 1 ELSE 0 END), 0) AS selection_total,
+            COALESCE(SUM(CASE WHEN artifact_type = 'backtest' THEN 1 ELSE 0 END), 0) AS backtest_total
+        FROM artifacts
+        WHERE {base_where_sql}
+    """, *base_params)
+    global_total = int(counts["global_total"] or 0) if counts else 0
+    selection_total = int(counts["selection_total"] or 0) if counts else 0
+    backtest_total = int(counts["backtest_total"] or 0) if counts else 0
 
     query = f"""SELECT id, user_id, artifact_type, task_id, title, status, metadata,
                        summary, result_json, result_uri, result_bytes, created_at, finished_at,
@@ -466,6 +480,7 @@ async def list_artifacts(
     return {
         "artifacts": items,
         "total": total,
+        "global_total": global_total,
         "selection_total": selection_total,
         "backtest_total": backtest_total,
         "used_bytes": used_bytes,
