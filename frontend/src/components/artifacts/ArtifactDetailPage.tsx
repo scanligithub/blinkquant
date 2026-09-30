@@ -199,21 +199,22 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     {selectionCodes.length === 0 ? (
                       <div className="py-10 text-center text-slate-400">没有返回股票代码</div>
                     ) : (
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <select value={selectedWatchlist} onChange={(e) => setSelectedWatchlist(e.target.value ? Number(e.target.value) : '')} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs">
-                        <option value="">选择自选股列表</option>
-                        {watchlists.map((w) => <option key={w.id} value={w.id}>{w.name} · {w.item_count}</option>)}
-                      </select>
-                      <button type="button" onClick={() => void addSelectionToWatchlist()} disabled={savingToWatchlist || !selectedWatchlist || selectionCodes.length === 0} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">
-                        {savingToWatchlist ? '加入中…' : '将本次选股结果加入自选股'}
-                      </button>
-                      {savedCount != null && <span className="text-xs text-emerald-600">已新增 {savedCount} 只</span>}
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                        {selectionCodes.slice(0, 300).map((code: string) => (
-                          <Link key={code} href={'/stocks/' + encodeURIComponent(String(code))} className="px-3 py-2 rounded-lg border border-slate-100 bg-slate-50 text-xs font-mono text-slate-700 hover:border-blue-200 hover:text-blue-600 text-center">{String(code)}</Link>
-                        ))}
+                      <div className="mt-4 space-y-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <select value={selectedWatchlist} onChange={(e) => setSelectedWatchlist(e.target.value ? Number(e.target.value) : '')} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs">
+                            <option value="">选择自选股列表</option>
+                            {watchlists.map((w) => <option key={w.id} value={w.id}>{w.name} · {w.item_count}</option>)}
+                          </select>
+                          <button type="button" onClick={() => void addSelectionToWatchlist()} disabled={savingToWatchlist || !selectedWatchlist || selectionCodes.length === 0} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">
+                            {savingToWatchlist ? '加入中…' : '将本次选股结果加入自选股'}
+                          </button>
+                          {savedCount != null && <span className="text-xs text-emerald-600">已新增 {savedCount} 只</span>}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                          {selectionCodes.slice(0, 300).map((code: string) => (
+                            <Link key={code} href={'/stocks/' + encodeURIComponent(String(code))} className="px-3 py-2 rounded-lg border border-slate-100 bg-slate-50 text-xs font-mono text-slate-700 hover:border-blue-200 hover:text-blue-600 text-center">{String(code)}</Link>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </section>
