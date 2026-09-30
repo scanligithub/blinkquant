@@ -715,16 +715,43 @@ class ClusterScheduler:
                 with open(os.path.join(task_dir, "meta.json"), "w") as f:
                     json.dump({**meta, "task_id": task_id, "user_id": user_id}, f,
                               ensure_ascii=False, indent=2, default=str)
-            except Exception:
+            except Exception as exc:
                 log.exception("meta.json write failed task=%s", task_id)
-            if node_id and job_id and data.get("artifacts"):
-                for name in data["artifacts"]:
-                    try:
-                        raw = await fetch_backtest_artifact(node_id, job_id, name)
-                        with open(os.path.join(task_dir, f"{name}.parquet"), "wb") as f:
-                            f.write(raw)
-                    except Exception:
-                        log.exception("artifact %s download failed task=%s", name, task_id)
+                await self._fail_backtest(task_id, f"artifact persistence failed: meta.json: {exc}", generation)
+                return
+
+            # Do not publish a completed result unless every advertised part is present,
+            # downloadable, and readable as Parquet.
+            required_parts = ("equity_curve", "trades", "positions_daily")
+            advertised = set((data or {}).get("artifacts") or {})
+            missing = [name for name in required_parts if name not in advertised]
+            if missing:
+                error = "artifact persistence incomplete: compute node did not advertise " + ", ".join(missing)
+                log.error("task=%s node=%s job=%s %s", task_id, node_id, job_id, error)
+                await self._fail_backtest(task_id, error, generation)
+                return
+
+            for name in required_parts:
+                try:
+                    if not node_id or not job_id:
+                        raise RuntimeError(f"missing node/job mapping (node_id={node_id!r}, job_id={job_id!r})")
+                    raw = await fetch_backtest_artifact(node_id, job_id, name)
+                    if not raw:
+                        raise RuntimeError("compute node returned an empty response body")
+                    import io
+                    import polars as pl
+                    frame = pl.read_parquet(io.BytesIO(raw))
+                    with open(os.path.join(task_dir, f"{name}.parquet"), "wb") as f:
+                        f.write(raw)
+                    log.info("artifact persisted task=%s node=%s job=%s name=%s bytes=%s rows=%s",
+                             task_id, node_id, job_id, name, len(raw), frame.height)
+                except Exception as exc:
+                    log.exception("artifact %s download/persist failed task=%s node=%s job=%s",
+                                  name, task_id, node_id, job_id)
+                    error = f"artifact persistence incomplete: {name}: {type(exc).__name__}: {exc}"
+                    await self._fail_backtest(task_id, error, generation)
+                    return
+
             nbytes = dir_size(task_dir)
         else:
             legacy_data = {
