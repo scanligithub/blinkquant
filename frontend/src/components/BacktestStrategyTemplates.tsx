@@ -117,7 +117,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selectionStrategies, setSelectionStrategies] = useState<Array<{ id: number; name: string; version_no?: number }>>([]);
+  const [selectionStrategies, setSelectionStrategies] = useState<Array<{ id: number; name: string; formula: string; timeframe: string; version_no?: number }>>([]);
   const [selectionVersions, setSelectionVersions] = useState<Array<{ id: number; version_no: number; name: string; formula: string; timeframe: string }>>([]);
   const source = currentConfig.source_selection_strategy;
 
@@ -258,15 +258,13 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
                 return;
               }
               const selected = selectionStrategies.find(item => item.id === id);
-              const versionNo = selected?.version_no || 1;
-              const version = selectionVersions.find(item => item.version_no === versionNo);
-              if (version) {
+              if (selected) {
                 onSourceSelectionChanged?.({
                   id,
-                  version_no: version.version_no,
-                  name: version.name,
-                  formula: version.formula,
-                  timeframe: version.timeframe === 'W' || version.timeframe === 'M' ? version.timeframe : 'D',
+                  version_no: selected.version_no || 1,
+                  name: selected.name,
+                  formula: selected.formula,
+                  timeframe: selected.timeframe === 'W' || selected.timeframe === 'M' ? selected.timeframe : 'D',
                 });
               } else {
                 onSourceSelectionChanged?.(undefined);
