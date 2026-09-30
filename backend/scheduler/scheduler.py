@@ -837,7 +837,13 @@ class ClusterScheduler:
                 continue
             if used <= ARTIFACT_QUOTA_BYTES_PER_USER:
                 break
-            delete_result_dir(artifact.get("result_uri"), RESULT_DIR)
+            result_uri = artifact.get("result_uri")
+            deleted = delete_result_dir(result_uri, RESULT_DIR)
+            # A failed filesystem deletion must not destroy the registry row; otherwise
+            # the result file becomes an unreachable orphan.
+            if result_uri and not deleted and os.path.isdir(os.path.join(RESULT_DIR, str(result_uri))):
+                log.error("artifact quota GC: keeping artifact %s because result delete failed", artifact_id)
+                continue
             await execute("DELETE FROM artifacts WHERE id = ? AND user_id = ?", artifact_id, user_id)
             used -= int(artifact.get("result_bytes") or 0)
             evicted.append(artifact_id)

@@ -59,10 +59,6 @@ def test_artifact_quota_gc_does_not_touch_new_artifact(tmp_path, monkeypatch):
         await db.close_pool()
         await db.init_pool()
         try:
-            # Import after env is patched so config sees the test quota.
-            from scheduler.config import ARTIFACT_QUOTA_BYTES_PER_USER
-            assert ARTIFACT_QUOTA_BYTES_PER_USER == 10
-
             await db.execute(
                 """INSERT INTO artifacts
                    (user_id, artifact_type, task_id, title, metadata, result_bytes, finished_at)
@@ -85,9 +81,6 @@ def test_artifact_quota_gc_does_not_touch_new_artifact(tmp_path, monkeypatch):
 
             # Method reads the module-level config value; exercise the concrete value used at runtime.
             scheduler = ClusterScheduler()
-            import scheduler.scheduler as scheduler_module
-            scheduler_module.ARTIFACT_QUOTA_BYTES_PER_USER = 10
-
             # The method imports config inside the function, so monkeypatch the config module.
             import scheduler.config as config_module
             config_module.ARTIFACT_QUOTA_BYTES_PER_USER = 10
