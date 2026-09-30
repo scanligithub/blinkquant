@@ -116,6 +116,29 @@ export default function BacktestStrategyDetailPage() {
     router.push('/select?tab=backtest');
   };
 
+  const extractVersion = async (versionNo?: number, versionName?: string) => {
+    if (!template) return;
+    const defaultName = (versionName || template.name) + ' · Entry选股';
+    const name = window.prompt('新选股策略名称', defaultName);
+    if (!name?.trim()) return;
+    try {
+      const res = await fetch('/api/strategies/extract-from-backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backtest_strategy_id: template.id,
+          ...(versionNo ? { version_no: versionNo } : {}),
+          name: name.trim(),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || '提取失败');
+      router.push('/strategies/selection/' + json.strategy.id);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '提取失败');
+    }
+  };
+
   const remove = async () => {
     if (!template) return;
     if (!confirm('确定删除回测策略“' + template.name + '”？')) return;
@@ -177,10 +200,26 @@ export default function BacktestStrategyDetailPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={openWorkspace} className="px-4 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700">在回测工作台使用</button>
+                    <button type="button" onClick={() => void extractVersion(template.version_no)} className="px-4 py-2.5 text-sm font-bold text-blue-600 border border-blue-200 rounded-xl hover:bg-blue-50">提取为选股策略</button>
                     <button type="button" onClick={() => void remove()} className="px-4 py-2.5 text-sm font-bold text-red-500 border border-red-200 rounded-xl hover:bg-red-50">删除</button>
                   </div>
                 </div>
               </section>
+
+              {config.source_selection_strategy && (
+                <section className="bg-white rounded-2xl border border-blue-200 shadow-sm p-5">
+                  <div className="text-xs font-bold text-blue-700">基础选股策略</div>
+                  <div className="mt-1 text-sm text-slate-700">
+                    <Link href={'/strategies/selection/' + config.source_selection_strategy.id} className="font-semibold text-blue-600 hover:underline">
+                      {config.source_selection_strategy.name || ('选股策略 #' + config.source_selection_strategy.id)}
+                    </Link>
+                    {' · v' + (config.source_selection_strategy.version_no || 1)}
+                    {' · ' + (config.source_selection_strategy.timeframe || 'D')}
+                  </div>
+                  <div className="mt-1 text-xs font-mono text-slate-500 break-all">{config.source_selection_strategy.formula}</div>
+                  <div className="mt-1 text-[11px] text-slate-400">该快照表示“创建/更新回测策略时所依据的选股策略版本”；后续 Entry 修改不会回写源策略。</div>
+                </section>
+              )}
 
               <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
