@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import BacktestStrategyTemplates, { type BacktestTemplateConfig } from './BacktestStrategyTemplates';
+import BacktestStrategyTemplates, { type BacktestTemplateConfig, type SelectionStrategySource } from './BacktestStrategyTemplates';
 
 export interface BacktestParams {
   formula: string;
@@ -66,6 +66,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
   const [commissionMin, setCommissionMin] = useState('5');
   const [stampTaxRate, setStampTaxRate] = useState('0.0005');
   const [transferFeeRate, setTransferFeeRate] = useState('0.00001');
+  const [sourceSelectionStrategy, setSourceSelectionStrategy] = useState<SelectionStrategySource | undefined>();
 
   const templateConfig: BacktestTemplateConfig = {
     strategy: {
@@ -94,6 +95,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     benchmark: { enabled: benchmarkEnabled, type: 'index', index_id: benchmarkIndex.trim() || '000300' },
     min_listing_days: Math.max(0, parseInt(minListingDays, 10) || 0),
     exclude_st: excludeSt,
+    ...(sourceSelectionStrategy ? { source_selection_strategy: sourceSelectionStrategy } : {}),
   };
 
   const applyTemplate = (config: BacktestTemplateConfig) => {
@@ -125,6 +127,26 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     setBenchmarkIndex(String(benchmark.index_id || '000300'));
     setMinListingDays(String(config.min_listing_days || 0));
     setExcludeSt(!!config.exclude_st);
+    const source = config.source_selection_strategy;
+    if (source && Number.isInteger(Number(source.id)) && Number(source.id) > 0) {
+      setSourceSelectionStrategy({
+        id: Number(source.id),
+        version_no: Number(source.version_no) || 1,
+        name: String(source.name || ''),
+        formula: String(source.formula || ''),
+        timeframe: source.timeframe === 'W' || source.timeframe === 'M' ? source.timeframe : 'D',
+      });
+    } else {
+      setSourceSelectionStrategy(undefined);
+    }
+  };
+
+  const handleSourceSelectionChanged = (source: SelectionStrategySource | undefined) => {
+    setSourceSelectionStrategy(source);
+    if (source) {
+      setFormula(source.formula);
+      setEntryTimeframe(source.timeframe);
+    }
   };
 
   const triggerLabel = (value: string) => ({
@@ -136,6 +158,23 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
   // 从策略库进入回测工作台时，恢复指定的 Node1 SQLite 回测策略模板或内置配置。
   useEffect(() => {
     let active = true;
+    const pendingFromSelection = sessionStorage.getItem('bq-pending-backtest-from-selection');
+    if (pendingFromSelection) {
+      try {
+        const source = JSON.parse(pendingFromSelection) as SelectionStrategySource;
+        if (source && Number(source.id) > 0 && source.formula) {
+          setSourceSelectionStrategy({
+            id: Number(source.id), version_no: Number(source.version_no) || 1,
+            name: String(source.name || ''), formula: String(source.formula),
+            timeframe: source.timeframe === 'W' || source.timeframe === 'M' ? source.timeframe : 'D',
+          });
+          setFormula(String(source.formula));
+          setEntryTimeframe(source.timeframe === 'W' || source.timeframe === 'M' ? source.timeframe : 'D');
+        }
+      } catch { /* keep defaults */ }
+      sessionStorage.removeItem('bq-pending-backtest-from-selection');
+    }
+
     const raw = sessionStorage.getItem('bq-pending-backtest-template');
     if (!raw) return () => { active = false; };
 
@@ -434,6 +473,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
         currentConfig={templateConfig}
         onLoad={applyTemplate}
         onTemplateSelected={onTemplateSelected}
+        onSourceSelectionChanged={handleSourceSelectionChanged}
       />
 
       <button
