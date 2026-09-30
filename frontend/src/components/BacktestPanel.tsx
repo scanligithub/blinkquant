@@ -139,7 +139,6 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     const raw = sessionStorage.getItem('bq-pending-backtest-template');
     if (!raw) return () => { active = false; };
 
-    sessionStorage.removeItem('bq-pending-backtest-template');
     let pending: { id?: number; config?: BacktestTemplateConfig } = {};
     try {
       pending = JSON.parse(raw);
@@ -150,6 +149,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     if (pending.config && typeof pending.config === 'object') {
       applyTemplate(pending.config);
       onTemplateSelected?.(null);
+      sessionStorage.removeItem('bq-pending-backtest-template');
       return () => { active = false; };
     }
 
@@ -166,6 +166,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
         if (template?.config) {
           applyTemplate(template.config);
           onTemplateSelected?.(Number(template.id));
+          sessionStorage.removeItem('bq-pending-backtest-template');
         }
       } catch {
         // 回测工作台仍可继续使用当前默认参数。
