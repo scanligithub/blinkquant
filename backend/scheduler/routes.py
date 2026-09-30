@@ -16,7 +16,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 LIST_COLS = (
     "id, user_id, task_type, payload, priority, status, "
     "assigned_node, cluster_job_id, error, result_summary, result_uri, result_bytes, "
-    "strategy_template_id, strategy_template_name, strategy_template_updated_at, source_task_id, "
+    "strategy_template_id, strategy_template_name, strategy_template_updated_at, strategy_template_version, source_task_id, "
     "progress_pct, progress_json, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
@@ -77,6 +77,7 @@ class TaskResponse(BaseModel):
     strategy_template_id: Optional[int] = None
     strategy_template_name: Optional[str] = None
     strategy_template_updated_at: Optional[str] = None
+    strategy_template_version: Optional[int] = None
     source_task_id: Optional[int] = None
     progress_pct: Optional[float] = None
     progress: Optional[dict] = None
@@ -174,21 +175,23 @@ def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str | None, str | None]:
+async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str | None, str | None, int | None]:
     """Validate optional template binding and return an immutable task-time snapshot."""
     template_id = task.strategy_template_id
     if template_id is None:
-        return None, None, None
+        return None, None, None, None
     if task.task_type != "backtest":
         raise HTTPException(400, "strategy_template_id is only valid for backtest tasks")
 
     candidate = _task_template_config(task.payload)
     if candidate is None:
         # Backward-compatible task payloads may not contain the canonical strategy.
-        return None, None, None
+        return None, None, None, None
 
     row = await fetchrow(
-        "SELECT id, name, updated_at, config FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
+        "SELECT id, name, updated_at, config, "
+        "(SELECT MAX(version_no) FROM backtest_strategy_versions WHERE strategy_template_id = backtest_strategy_templates.id) AS version_no "
+        "FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
         template_id, task.user_id,
     )
     if not row:
@@ -202,9 +205,9 @@ async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str 
     if _canonical_json(candidate) != _canonical_json(template_config):
         # Do not reject the backtest: the user may have edited the panel after selecting
         # a template. Simply avoid a false historical attribution.
-        return None, None, None
+        return None, None, None, None
 
-    return int(row["id"]), str(row["name"]), row["updated_at"]
+    return int(row["id"]), str(row["name"]), row["updated_at"], int(row["version_no"] or 1)
 
 
 # ──────────────────────────────────────────────
@@ -215,20 +218,20 @@ async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str 
 async def create_task(task: TaskCreate) -> dict:
     """创建任务，返回 task_id"""
     from .config import compute_task_timeout_sec
-    template_id, template_name, template_updated_at = await _resolve_strategy_template(task)
+    template_id, template_name, template_updated_at, template_version = await _resolve_strategy_template(task)
     timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
     async with acquire() as conn:
         row = await conn.fetchrow("""
             INSERT INTO task_queue (
                 user_id, task_type, payload, priority, status, timeout_sec,
-                strategy_template_id, strategy_template_name, strategy_template_updated_at
+                strategy_template_id, strategy_template_name, strategy_template_updated_at, strategy_template_version
             )
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             RETURNING id, status, created_at, strategy_template_id,
-                      strategy_template_name, strategy_template_updated_at
+                      strategy_template_name, strategy_template_updated_at, strategy_template_version
         """,
         task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec,
-        template_id, template_name, template_updated_at)
+        template_id, template_name, template_updated_at, template_version)
     return {
         "task_id": row["id"],
         "status": row["status"],
@@ -323,23 +326,23 @@ async def rerun_task(
         priority=int(row.get("priority") or 0),
         strategy_template_id=candidate_template_id,
     )
-    template_id, template_name, template_updated_at = await _resolve_strategy_template(task)
+    template_id, template_name, template_updated_at, template_version = await _resolve_strategy_template(task)
     timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
 
     async with acquire() as conn:
         new_row = await conn.fetchrow("""
             INSERT INTO task_queue (
                 user_id, task_type, payload, priority, status, timeout_sec,
-                strategy_template_id, strategy_template_name, strategy_template_updated_at,
+                strategy_template_id, strategy_template_name, strategy_template_updated_at, strategy_template_version,
                 source_task_id
             )
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
             RETURNING id, status, created_at, strategy_template_id,
                       strategy_template_name, strategy_template_updated_at,
                       source_task_id
         """,
         task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec,
-        template_id, template_name, template_updated_at, task_id)
+        template_id, template_name, template_updated_at, template_version, task_id)
 
     return {
         "task_id": new_row["id"],
@@ -348,6 +351,7 @@ async def rerun_task(
         "strategy_template_id": new_row["strategy_template_id"],
         "strategy_template_name": new_row["strategy_template_name"],
         "strategy_template_updated_at": new_row["strategy_template_updated_at"],
+        "strategy_template_version": new_row["strategy_template_version"],
         "source_task_id": new_row["source_task_id"],
     }
 
