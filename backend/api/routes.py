@@ -725,13 +725,12 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             "stage": "writing_result",
         })
 
-        artifacts = {}
-        if not result.trades.is_empty():
-            artifacts["trades"] = _df_to_parquet_bytes(result.trades)
-        if not result.positions_daily.is_empty():
-            artifacts["positions_daily"] = _df_to_parquet_bytes(result.positions_daily)
-        if not result.equity_curve.is_empty():
-            artifacts["equity_curve"] = _df_to_parquet_bytes(result.equity_curve)
+        # Stable contract: all three parts exist, even when a frame has zero rows.
+        artifacts = {
+            "equity_curve": _df_to_parquet_bytes(result.equity_curve),
+            "trades": _df_to_parquet_bytes(result.trades),
+            "positions_daily": _df_to_parquet_bytes(result.positions_daily),
+        }
         _backtest_artifacts[job_id] = artifacts
 
         summary = _build_summary_from_result(config, result)
