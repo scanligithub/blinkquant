@@ -513,7 +513,7 @@ async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Op
         "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
         "created_at": row["created_at"], "finished_at": row["finished_at"],
         "updated_at": row.get("updated_at") or row.get("finished_at") or row.get("created_at"),
-        "task_exists": bool(task_exists), "source_task_id": row["task_id"],
+        "task_exists": bool(task_exists), "source_task_id": metadata.get("source_task_id"),
         "strategy_template_id": metadata.get("strategy_template_id"),
         "strategy_template_name": metadata.get("strategy_template_name"),
         "strategy_template_updated_at": metadata.get("strategy_template_updated_at"),
