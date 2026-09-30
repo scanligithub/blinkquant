@@ -17,6 +17,18 @@ const TIMEFRAMES = [
   { label: '月', value: 'M' },
 ];
 
+const ADJUST_OPTIONS = [
+  { label: '不复权', value: 'none' as const },
+  { label: '前复权', value: 'qfq' as const },
+  { label: '后复权', value: 'hfq' as const },
+];
+
+const ADJUST_LABELS: Record<'none' | 'qfq' | 'hfq', string> = {
+  none: '不复权',
+  qfq: '前复权',
+  hfq: '后复权',
+};
+
 const SECTOR_GROUP_ORDER = ['行业板块', '概念板块', '地域板块'];
 const SECTOR_GROUP_LABELS: Record<string, string> = {
   '行业板块': '行业',
