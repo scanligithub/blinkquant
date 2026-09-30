@@ -63,7 +63,7 @@ def test_artifact_quota_gc_does_not_touch_new_artifact(tmp_path, monkeypatch):
                 """INSERT INTO artifacts
                    (user_id, artifact_type, task_id, title, metadata, result_uri, result_bytes, finished_at)
                    VALUES (?, 'backtest', ?, ?, '{}', ?, ?, datetime('now', '-2 days'))""",
-                "u-quota", 9001, "old", 20,
+                "u-quota", 9001, "old", "by_user/u-quota/task_9001", 20,
             )
             old_id = int(await db.fetchval("SELECT MAX(id) FROM artifacts"))
             old_uri = "by_user/u-quota/task_9001"
