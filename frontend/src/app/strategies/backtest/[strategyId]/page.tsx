@@ -14,6 +14,16 @@ interface BacktestTemplate {
   config: any;
   created_at: string;
   updated_at: string;
+  version_no?: number;
+}
+
+interface BacktestStrategyVersion {
+  id: number;
+  version_no: number;
+  name: string;
+  description?: string | null;
+  config: any;
+  created_at: string;
 }
 
 function triggerLabel(value: string) {
@@ -30,6 +40,7 @@ export default function BacktestStrategyDetailPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [template, setTemplate] = useState<BacktestTemplate | null>(null);
+  const [versions, setVersions] = useState<BacktestStrategyVersion[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -75,6 +86,29 @@ export default function BacktestStrategyDetailPage() {
   useEffect(() => {
     if (user) void refresh();
   }, [user, refresh]);
+
+  useEffect(() => {
+    if (!user || !template) {
+      setVersions([]);
+      return;
+    }
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/backtest-strategy-templates/' + template.id + '/versions', { cache: 'no-store' });
+        const json = await res.json();
+        if (!mounted) return;
+        if (!res.ok) throw new Error(json.error || '加载策略版本失败');
+        setVersions(json.versions || []);
+      } catch (error) {
+        console.error('Failed to load backtest strategy versions', error);
+        if (mounted) setVersions([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [user, template?.id]);
+
+
 
   const openWorkspace = () => {
     if (!template) return;
@@ -136,6 +170,7 @@ export default function BacktestStrategyDetailPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h1 className="text-2xl font-black text-slate-800">{template.name}</h1>
                       <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">回测策略</span>
+                      {template.version_no && <span className="text-[10px] px-2 py-1 rounded-full bg-blue-50 text-blue-600">v{template.version_no}</span>}
                     </div>
                     {template.description && <p className="text-sm text-slate-500 mt-2">{template.description}</p>}
                     <div className="text-xs text-slate-400 mt-3">创建：{new Date(template.created_at).toLocaleString()} · 更新：{new Date(template.updated_at).toLocaleString()}</div>
@@ -184,6 +219,28 @@ export default function BacktestStrategyDetailPage() {
                       <div>最低佣金：{fee.commission_min ?? '—'}</div>
                       <div>印花税率：{fee.stamp_tax_rate ?? '—'}</div>
                       <div>过户费率：{fee.transfer_fee_rate ?? '—'}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+                  <h2 className="font-bold text-slate-800">版本历史</h2>
+                  {versions.length === 0 ? (
+                    <div className="text-sm text-slate-400">暂无版本历史</div>
+                  ) : (
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {versions.map((version) => (
+                        <div key={version.id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-blue-600">v{version.version_no}</span>
+                            <span className="text-xs font-semibold text-slate-700 truncate">{version.name}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-1">
+                            {new Date(version.created_at).toLocaleString()}
+                            {version.config?.strategy?.entry?.condition ? ' · ' + version.config.strategy.entry.condition : ''}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
