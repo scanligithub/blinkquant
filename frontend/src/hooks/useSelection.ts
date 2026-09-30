@@ -24,6 +24,7 @@ interface UseSelectionOptions {
 export default function useSelection({
   submitTask,
   onClearSelectedStock,
+  strategySource,
 }: UseSelectionOptions) {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [selectDate, setSelectDate] = useState('');
