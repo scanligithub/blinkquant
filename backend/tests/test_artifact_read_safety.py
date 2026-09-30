@@ -29,18 +29,23 @@ def test_artifact_read_paths_are_json_safe_and_schema_tolerant(monkeypatch):
         }
 
         async def fake_fetchrow(query, *args):
-            if "COUNT(*) AS total" in query:
+            if "AS global_total" in query:
                 return {
-                    "total": 1,
-                    "used_bytes": 1234,
-                    "selection_total": 0,
+                    "global_total": 2,
+                    "global_used_bytes": 4321,
+                    "selection_total": 1,
                     "backtest_total": 1,
                 }
+            if "COUNT(*) AS total" in query:
+                return {"total": 1, "used_bytes": 1234}
             assert "FROM artifacts WHERE id = ?" in query
             return dict(row)
 
+        list_queries = []
+
         async def fake_fetch(query, *args):
             assert "FROM artifacts WHERE" in query
+            list_queries.append((query, args))
             listed = dict(row)
             listed["task_exists"] = 1
             return [listed]
@@ -66,5 +71,21 @@ def test_artifact_read_paths_are_json_safe_and_schema_tolerant(monkeypatch):
         assert item["result"]["value"] is None
         assert item["payload"]["ratio"] is None
         assert math.isfinite(float(item["result_bytes"]))
+        assert listing["total"] == 1
+        assert listing["global_total"] == 2
+        assert listing["global_used_bytes"] == 4321
+        assert listing["selection_total"] == 1
+        assert listing["backtest_total"] == 1
+
+        page = await routes.list_artifacts(
+            artifact_type="backtest", user_id="u1", limit=20, offset=20
+        )
+        assert page["total"] == 1
+        assert page["global_total"] == 2
+        assert page["selection_total"] == 1
+        assert page["backtest_total"] == 1
+        query, args = list_queries[-1]
+        assert "artifact_type = ?" in query
+        assert args == ("u1", "backtest", 20, 20)
 
     asyncio.run(run())
