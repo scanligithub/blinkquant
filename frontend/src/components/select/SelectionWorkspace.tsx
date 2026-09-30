@@ -375,8 +375,6 @@ export default function SelectionWorkspace() {
             onChangeSectorsExpanded={setExpandedSectors}
             onViewStock={handleViewStock}
             onViewSector={viewSector}
-            onToggleWatchlist={toggleWatchlist}
-            watchlistCodes={watchlistCodes}
             lastStockRef={lastStockRef}
             onReturnToStock={returnToStock}
             onToggleFullscreen={toggleFullscreen}
