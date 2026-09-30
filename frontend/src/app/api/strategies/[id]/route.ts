@@ -4,6 +4,26 @@ import { requireAuth } from '@/lib/auth';
 
 export const runtime = 'edge';
 
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireAuth(req);
+  if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ error: '无效的策略 ID' }, { status: 400 });
+  }
+
+  const result = await sql`
+    SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at,
+      COALESCE((SELECT MAX(v.version_no) FROM strategy_versions v WHERE v.strategy_id = s.id), 1)::int AS version_no
+    FROM strategies s
+    WHERE s.id = ${id} AND s.user_id = ${auth.user.userId}
+    LIMIT 1
+  `;
+  if (!result.rows[0]) return NextResponse.json({ error: '策略不存在' }, { status: 404 });
+  return NextResponse.json({ strategy: result.rows[0] });
+}
+
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
