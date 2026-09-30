@@ -5,6 +5,7 @@ import type { BacktestParams } from '../BacktestPanel';
 import BacktestPanel from '../BacktestPanel';
 import BacktestResults from '../BacktestResults';
 import { TaskList } from '../TaskList';
+import WatchlistPicker from '../WatchlistPicker';
 
 const Watchlist = dynamic(() => import('../Watchlist'), { ssr: false });
 
@@ -108,20 +109,22 @@ export default function SelectionResultsSidebar(props: SelectionResultsSidebarPr
                   const name = stockList.find(s => s.code === code)?.name || code;
                   return (
                     <div key={code} className={`rounded-lg mb-1 ${selectedCode === code ? 'bg-blue-50 border border-blue-100' : ''}`}>
-                      <button onClick={() => onViewStock(code)} className={`w-full text-left px-4 py-3 rounded-lg flex justify-between group ${selectedCode === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                    <div className="flex items-center gap-2 px-2">
+                      <button onClick={() => onViewStock(code)} className={`flex-1 min-w-0 text-left px-2 py-3 rounded-lg flex justify-between group ${selectedCode === code ? 'text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
                         <span className="truncate">{name}</span>
                         <span className="text-xs font-mono text-slate-400 ml-2">{code}</span>
                       </button>
-                      <div className="px-4 pb-2">
-                        <button
-                          onClick={() => onTabChange('backtest')}
-                          className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
-                        >
-                          回测此策略 →
-                        </button>
-                      </div>
+                      <WatchlistPicker code={code} compact />
                     </div>
-                  );
+                    <div className="px-4 pb-2">
+                      <button
+                        onClick={() => onTabChange('backtest')}
+                        className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
+                      >
+                        回测此策略 →
+                      </button>
+                    </div>
+                  </div>
                 })}
               </div>
               )}
