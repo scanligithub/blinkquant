@@ -84,37 +84,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '选股策略名称无效（最多 80 个字符）' }, { status: 400 });
     }
 
-    const inserted = await sql\`
+    const inserted = await sql`
       INSERT INTO strategies (
         user_id, name, formula, timeframe,
         source_backtest_strategy_id, source_backtest_strategy_version,
         source_backtest_strategy_name, source_backtest_strategy_trigger
       )
       VALUES (
-        \${auth.user.userId}, \${name}, \${formula}, \${timeframe},
-        \${strategyId}, \${Number(version.version_no)},
-        \${String(version.name || '')}, \${trigger}
+        ${auth.user.userId}, ${name}, ${formula}, ${timeframe},
+        ${strategyId}, ${Number(version.version_no)},
+        ${String(version.name || '')}, ${trigger}
       )
       RETURNING id, name, formula, timeframe, created_at, updated_at,
         source_backtest_strategy_id, source_backtest_strategy_version,
         source_backtest_strategy_name, source_backtest_strategy_trigger
-    \`;
+    `;
 
     const strategy = inserted.rows[0];
     if (!strategy) throw new Error('strategy insert returned no row');
 
-    await sql\`
+    await sql`
       INSERT INTO strategy_versions (
         strategy_id, version_no, name, formula, timeframe,
         source_backtest_strategy_id, source_backtest_strategy_version,
         source_backtest_strategy_name, source_backtest_strategy_trigger
       )
       VALUES (
-        \${strategy.id}, 1, \${name}, \${formula}, \${timeframe},
-        \${strategyId}, \${Number(version.version_no)},
-        \${String(version.name || '')}, \${trigger}
+        ${strategy.id}, 1, ${name}, ${formula}, ${timeframe},
+        ${strategyId}, ${Number(version.version_no)},
+        ${String(version.name || '')}, ${trigger}
       )
-    \`;
+    `;
 
     return NextResponse.json({
       strategy,
