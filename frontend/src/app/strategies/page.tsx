@@ -129,7 +129,7 @@ export default function StrategiesPage() {
 
   const useStrategy = (strategy: Strategy) => {
     sessionStorage.setItem('bq-pending-selection-strategy', JSON.stringify({
-      id: strategy.id, name: strategy.name, formula: strategy.formula, timeframe: strategy.timeframe,
+      id: strategy.id, version_no: strategy.version_no || 1, name: strategy.name, formula: strategy.formula, timeframe: strategy.timeframe,
     }));
     router.push('/select');
   };
