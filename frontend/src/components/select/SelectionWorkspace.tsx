@@ -10,7 +10,7 @@ import { TaskList } from '../TaskList';
 import { useCluster } from '@/hooks/useCluster';
 import AppShell from '../app/AppShell';
 
-const KLineChart = dynamic(() => import('../components/KLineChart'), {
+const KLineChart = dynamic(() => import('../KLineChart'), {
   ssr: false,
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">加载图表引擎...</div>
 });
