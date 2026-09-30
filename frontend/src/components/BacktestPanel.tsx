@@ -297,6 +297,18 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      {sourceSelectionStrategy && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+          <div className="text-xs font-semibold text-blue-700">来源选股策略</div>
+          <div className="mt-0.5 text-xs text-blue-800">
+            {sourceSelectionStrategy.name || ('选股策略 #' + sourceSelectionStrategy.id)} · v{sourceSelectionStrategy.version_no}
+          </div>
+          <div className="mt-0.5 text-[10px] font-mono text-blue-600 break-all">
+            {sourceSelectionStrategy.formula} · {sourceSelectionStrategy.timeframe}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">仅保存版本快照；修改 Entry 不会修改源选股策略。</div>
+        </div>
+      )}
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-1">Entry 条件（必填）</label>
         <input
