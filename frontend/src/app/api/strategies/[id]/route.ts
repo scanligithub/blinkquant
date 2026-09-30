@@ -38,13 +38,34 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: '无效的时间周期' }, { status: 400 });
   }
 
-  const updated = await sql`
-    UPDATE strategies
-    SET name = ${name}, formula = ${formula}, timeframe = ${timeframe}, updated_at = NOW()
-    WHERE id = ${id} AND user_id = ${auth.user.userId}
-    RETURNING id, name, formula, timeframe, created_at, updated_at
-  `;
-  return NextResponse.json({ strategy: updated.rows[0] });
+  try {
+    const versionRow = await sql`
+      SELECT COALESCE(MAX(version_no), 0)::int AS max_version
+      FROM strategy_versions
+      WHERE strategy_id = ${id}
+    `;
+    const nextVersion = Number(versionRow.rows[0]?.max_version || 0) + 1;
+
+    const updated = await sql`
+      UPDATE strategies
+      SET name = ${name}, formula = ${formula}, timeframe = ${timeframe}, updated_at = NOW()
+      WHERE id = ${id} AND user_id = ${auth.user.userId}
+      RETURNING id, name, formula, timeframe, created_at, updated_at
+    `;
+    const strategy = updated.rows[0];
+    if (!strategy) return NextResponse.json({ error: '策略不存在' }, { status: 404 });
+
+    await sql`
+      INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe)
+      VALUES (${id}, ${nextVersion}, ${name}, ${formula}, ${timeframe})
+    `;
+
+    return NextResponse.json({ strategy: { ...strategy, version_no: nextVersion } });
+  } catch (error: any) {
+    if (error?.code === '23505') return NextResponse.json({ error: '保存版本失败：策略版本冲突，请重试' }, { status: 409 });
+    console.error('[strategies/:id] PUT error:', error);
+    return NextResponse.json({ error: '更新策略失败' }, { status: 500 });
+  }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
