@@ -149,7 +149,7 @@ async def _migrate() -> None:
             payload = {}
         if row[2] == "selection":
             source = payload.get("selection_strategy_snapshot") or {}
-            title = f"{source.get("name")} 选股成果" if source.get("name") else f"选股成果 #{row[0]}"
+            title = f"{source.get('name')} 选股成果" if source.get("name") else f"选股成果 #{row[0]}"
             result_json = row[4]
         else:
             title = row[9] or f"回测成果 #{row[0]}"

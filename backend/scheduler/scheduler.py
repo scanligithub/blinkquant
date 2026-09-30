@@ -776,7 +776,7 @@ class ClusterScheduler:
         try: payload = json.loads(row["payload"]) if row.get("payload") else {}
         except (TypeError, json.JSONDecodeError): payload = {}
         source = payload.get("selection_strategy_snapshot") or {}
-        title = (f"{source.get("name")} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (row.get("strategy_template_name") or f"回测成果 #{task_id}")
+        title = (f"{source.get('name')} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (row.get("strategy_template_name") or f"回测成果 #{task_id}")
         metadata = json.dumps({
             "payload": payload, "assigned_node": row.get("assigned_node"),
             "strategy_template_id": row.get("strategy_template_id"),
