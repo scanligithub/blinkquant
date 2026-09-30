@@ -31,6 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  await ensureSelectionStrategyVersions();
 
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) {
