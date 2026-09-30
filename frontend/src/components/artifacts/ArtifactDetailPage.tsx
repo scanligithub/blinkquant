@@ -162,10 +162,15 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                 <h2 className="font-bold text-slate-800">来源信息</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
                   <div><div className="text-xs text-slate-400">成果类型</div><div className="mt-1 font-semibold">{labelTaskType(task.task_type)}</div></div>
-                  <div><div className="text-xs text-slate-400">来源任务</div>{task.task_exists === false ? (
+                  <div><div className="text-xs text-slate-400">所属任务</div>{task.task_exists === false ? (
                     <div className="mt-1 font-mono text-slate-400">任务已删除 · #{task.task_id ?? task.id}</div>
                   ) : (
                     <Link href={'/tasks/' + (task.task_id ?? task.id)} className="mt-1 inline-block font-mono text-blue-600 hover:underline">#{task.task_id ?? task.id}</Link>
+                  )}</div>
+                  <div><div className="text-xs text-slate-400">来源任务</div>{(task as any).source_task_id == null ? (
+                    <div className="mt-1 text-slate-400">无来源任务</div>
+                  ) : (
+                    <Link href={'/tasks/' + (task as any).source_task_id} className="mt-1 inline-block font-mono text-blue-600 hover:underline">#{(task as any).source_task_id}</Link>
                   )}</div>
                   <div><div className="text-xs text-slate-400">完成时间</div><div className="mt-1">{fmtTime(task.finished_at)}</div></div>
                   <div><div className="text-xs text-slate-400">执行节点</div><div className="mt-1 font-mono">{task.assigned_node || '—'}</div></div>

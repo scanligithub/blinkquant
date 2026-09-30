@@ -28,8 +28,9 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # 1. 进入后端目录
+          # 1. 进入后端目录，并写入本次源代码提交 SHA，供节点 health 追溯
           cd backend
+          printf '%s\n' "$GITHUB_SHA" > .build_git_sha
           
           # 2. 初始化临时 Git 仓库
           git init

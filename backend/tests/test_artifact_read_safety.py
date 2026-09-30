@@ -59,7 +59,9 @@ def test_artifact_read_paths_are_json_safe_and_schema_tolerant(monkeypatch):
 
         detail = await routes.get_artifact(7, user_id="u1", role=None)
         assert detail["updated_at"] == row["finished_at"]
+        assert detail["task_id"] == 17
         assert detail["source_task_id"] == 11
+        assert detail["source_task_id"] != detail["task_id"]
         assert detail["summary"]["sharpe"] is None
         assert detail["summary"]["nested"]["beta"] is None
         assert detail["result"]["value"] is None
@@ -68,7 +70,9 @@ def test_artifact_read_paths_are_json_safe_and_schema_tolerant(monkeypatch):
         listing = await routes.list_artifacts(user_id="u1")
         item = listing["artifacts"][0]
         assert item["updated_at"] == row["finished_at"]
+        assert item["task_id"] == 17
         assert item["source_task_id"] == 11
+        assert item["source_task_id"] != item["task_id"]
         assert item["summary"]["sharpe"] is None
         assert item["result"]["value"] is None
         assert item["payload"]["ratio"] is None
