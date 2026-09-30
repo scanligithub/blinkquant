@@ -9,10 +9,11 @@ export async function GET(req: NextRequest) {
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
 
   const result = await sql`
-    SELECT id, name, formula, timeframe, created_at, updated_at
-    FROM strategies
-    WHERE user_id = ${auth.user.userId}
-    ORDER BY updated_at DESC
+    SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at,
+      COALESCE((SELECT MAX(v.version_no) FROM strategy_versions v WHERE v.strategy_id = s.id), 1)::int AS version_no
+    FROM strategies s
+    WHERE s.user_id = ${auth.user.userId}
+    ORDER BY s.updated_at DESC
   `;
   return NextResponse.json({ strategies: result.rows });
 }
