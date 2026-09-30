@@ -40,18 +40,26 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const inserted = await sql`
-      INSERT INTO strategies (user_id, name, formula, timeframe)
-      VALUES (${auth.user.userId}, ${name}, ${formula}, ${timeframe})
-      RETURNING id, name, formula, timeframe, created_at, updated_at
+    // Keep the strategy row and its initial version in one PostgreSQL statement:
+    // if version creation fails, the strategy insert rolls back with the statement.
+    const result = await sql`
+      WITH new_strategy AS (
+        INSERT INTO strategies (user_id, name, formula, timeframe)
+        VALUES (${auth.user.userId}, ${name}, ${formula}, ${timeframe})
+        RETURNING id, name, formula, timeframe, created_at, updated_at
+      ),
+      new_version AS (
+        INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe)
+        SELECT id, 1, name, formula, timeframe FROM new_strategy
+        RETURNING strategy_id, version_no
+      )
+      SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at, v.version_no
+      FROM new_strategy s
+      JOIN new_version v ON v.strategy_id = s.id
     `;
-    const strategy = inserted.rows[0];
-    if (!strategy) throw new Error('strategy insert returned no row');
-    await sql`
-      INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe)
-      VALUES (${strategy.id}, 1, ${name}, ${formula}, ${timeframe})
-    `;
-    return NextResponse.json({ strategy: { ...strategy, version_no: 1 } }, { status: 201 });
+    const strategy = result.rows[0];
+    if (!strategy) throw new Error('strategy and initial version insert returned no row');
+    return NextResponse.json({ strategy }, { status: 201 });
   } catch (error: any) {
     if (error?.code === '23505') return NextResponse.json({ error: '已存在同名策略' }, { status: 409 });
     console.error('[strategies] POST error:', error);

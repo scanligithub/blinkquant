@@ -7,7 +7,6 @@ export const runtime = 'edge';
 
 const validTimeframe = (value: unknown) => ['D', 'W', 'M'].includes(String(value));
 
-
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
@@ -34,73 +33,80 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const existing = await sql`
-      SELECT id FROM strategies
-      WHERE user_id = ${auth.user.userId} AND name = ${name}
-      LIMIT 1
-    `;
-    if (existing.rows[0]) {
+    // Imported JSON is untrusted: source_backtest fields are descriptive metadata,
+    // not proof that the referenced backtest strategy/version belongs to this user.
+    // Never persist provenance unless it has been verified by the backtest API.
+    const rawVersions = Array.isArray(item?.versions) ? item.versions : [];
+    if (rawVersions.length > 100) {
       skipped.push(name);
       continue;
     }
 
+    const byVersion = new Map<number, { version_no: number; name: string; formula: string; timeframe: string }>();
+    for (const version of rawVersions) {
+      const versionNo = Number(version?.version_no);
+      const versionName = String(version?.name || name).trim();
+      const versionFormula = String(version?.formula || formula).trim();
+      const versionTimeframe = String(version?.timeframe || timeframe).trim();
+      if (!Number.isInteger(versionNo) || versionNo <= 0 || !versionName ||
+          !versionFormula || !validTimeframe(versionTimeframe) || byVersion.has(versionNo)) {
+        continue;
+      }
+      byVersion.set(versionNo, {
+        version_no: versionNo,
+        name: versionName,
+        formula: versionFormula,
+        timeframe: versionTimeframe,
+      });
+    }
+
+    const cleanVersions = Array.from(byVersion.values()).sort((a, b) => a.version_no - b.version_no);
+    if (cleanVersions.length === 0) {
+      cleanVersions.push({ version_no: 1, name, formula, timeframe });
+    }
+    const versionsJson = JSON.stringify(cleanVersions);
+
     try {
-      const inserted = await sql`
-        INSERT INTO strategies (user_id, name, formula, timeframe)
-        VALUES (${auth.user.userId}, ${name}, ${formula}, ${timeframe})
-        RETURNING id
-      `;
-      const strategyId = inserted.rows[0]?.id;
-      if (!strategyId) throw new Error('strategy insert failed');
-
-      // Imported JSON is untrusted: source_backtest fields are descriptive metadata,
-      // not proof that the referenced backtest strategy/version belongs to this user.
-      // Do not create provenance links unless the source is verified by the backtest API.
-      const versions = Array.isArray(item?.versions) ? item.versions : [];
-      const cleanVersions = versions
-        .map((version: any) => ({
-          version_no: Number(version?.version_no),
-          name: String(version?.name || name).trim(),
-          formula: String(version?.formula || formula).trim(),
-          timeframe: String(version?.timeframe || timeframe).trim(),
-        }))
-        .filter((version: any) =>
-          Number.isInteger(version.version_no) && version.version_no > 0 &&
-          version.name && version.formula && validTimeframe(version.timeframe)
-        )
-        .sort((a: any, b: any) => a.version_no - b.version_no);
-
-      if (cleanVersions.length > 0) {
-        for (const version of cleanVersions) {
-          await sql`
-            INSERT INTO strategy_versions (
-              strategy_id, version_no, name, formula, timeframe,
-              source_backtest_strategy_id, source_backtest_strategy_version,
-              source_backtest_strategy_name, source_backtest_strategy_trigger
-            )
-            VALUES (${strategyId}, ${version.version_no}, ${version.name}, ${version.formula}, ${version.timeframe},
-                    null,
-                    null,
-                    null,
-                    null)
-            ON CONFLICT (strategy_id, version_no) DO NOTHING
-          `;
-        }
-      } else {
-        await sql`
+      // A single statement creates the parent strategy and every imported version.
+      // If any insert fails, PostgreSQL rolls back the whole statement for this item.
+      const result = await sql`
+        WITH new_strategy AS (
+          INSERT INTO strategies (user_id, name, formula, timeframe)
+          SELECT ${auth.user.userId}, ${name}, ${formula}, ${timeframe}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM strategies
+            WHERE user_id = ${auth.user.userId} AND name = ${name}
+          )
+          RETURNING id, name, formula, timeframe
+        ),
+        version_input AS (
+          SELECT version_no, name, formula, timeframe
+          FROM jsonb_to_recordset(${versionsJson}::jsonb)
+            AS v(version_no integer, name text, formula text, timeframe text)
+        ),
+        new_versions AS (
           INSERT INTO strategy_versions (
             strategy_id, version_no, name, formula, timeframe,
             source_backtest_strategy_id, source_backtest_strategy_version,
             source_backtest_strategy_name, source_backtest_strategy_trigger
           )
-          VALUES (${strategyId}, 1, ${name}, ${formula}, ${timeframe},
-                  null,
-                  null,
-                  null,
-                  null)
-        `;
+          SELECT s.id, v.version_no, v.name, v.formula, v.timeframe,
+                 NULL, NULL, NULL, NULL
+          FROM new_strategy s
+          CROSS JOIN version_input v
+          RETURNING strategy_id, version_no
+        )
+        SELECT s.id, COUNT(v.version_no)::int AS version_count
+        FROM new_strategy s
+        JOIN new_versions v ON v.strategy_id = s.id
+        GROUP BY s.id
+      `;
+
+      if (result.rows[0]) {
+        imported += 1;
+      } else {
+        skipped.push(name);
       }
-      imported += 1;
     } catch (error) {
       console.error('[strategies/import] item error:', error);
       skipped.push(name);

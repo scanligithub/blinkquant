@@ -55,10 +55,21 @@ for (const [label, href] of [
   assert.ok(nav.includes(`{ label: '${label}', href: '${href}', enabled: true }`), `Navigation item must be enabled: ${label}`);
 }
 
-
 const strategyImport = readFileSync(resolve(root, 'src/app/api/strategies/import/route.ts'), 'utf8');
 assert.match(strategyImport, /Imported JSON is untrusted/, 'Strategy imports must treat source provenance as untrusted');
 assert.doesNotMatch(strategyImport, /item\?\.source_backtest/, 'Strategy imports must not trust source_backtest metadata from uploaded JSON');
-assert.match(strategyImport, /VALUES \(\$\{strategyId\}, \$\{version\.version_no\}, \$\{version\.name\}, \$\{version\.formula\}, \$\{version\.timeframe\},\s*null,\s*null,\s*null,\s*null\)/, 'Imported strategy versions must not persist unverified provenance');
+assert.match(strategyImport, /jsonb_to_recordset/, 'Imported versions must be inserted from validated JSON in one statement');
+assert.match(strategyImport, /WITH new_strategy AS/, 'Strategy import must create parent and versions atomically');
+assert.match(strategyImport, /rawVersions\.length > 100/, 'Strategy import must cap the number of versions per strategy');
 
-console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, /watchlist compatibility redirect, no obsolete aggregate backup.`);
+const strategyCreate = readFileSync(resolve(root, 'src/app/api/strategies/route.ts'), 'utf8');
+assert.match(strategyCreate, /WITH new_strategy AS[\s\S]*new_version AS/, 'Strategy creation and initial version must share one SQL statement');
+
+const strategyUpdate = readFileSync(resolve(root, 'src/app/api/strategies/[id]/route.ts'), 'utf8');
+assert.match(strategyUpdate, /WITH updated AS[\s\S]*next_version AS[\s\S]*new_version AS/, 'Strategy update and version history must share one SQL statement');
+
+const strategyExtract = readFileSync(resolve(root, 'src/app/api/strategies/extract-from-backtest/route.ts'), 'utf8');
+assert.match(strategyExtract, /WITH new_strategy AS[\s\S]*new_version AS/, 'Backtest extraction and initial version must share one SQL statement');
+assert.match(strategyExtract, /Cookie: cookie/, 'Backtest extraction must forward the authenticated session for owner verification');
+
+console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, /watchlist compatibility redirect, and atomic strategy/version persistence checks.`);
