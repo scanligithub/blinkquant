@@ -75,6 +75,7 @@ export interface Task {
   artifact_id?: number | null;
   title?: string;
   updated_at?: string | null;
+  task_exists?: boolean;
   task_id?: number | null;
   progress_pct?: number | null;
   progress?: {
