@@ -133,7 +133,50 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     cross_below: '下穿',
   } as Record<string, string>)[value] || value;
 
-  // 从策略库进入回测工作台时，恢复指定的 Node1 SQLite 回测策略模板。\n  useEffect(() => {\n    let active = true;\n    const raw = sessionStorage.getItem('bq-pending-backtest-template');\n    if (!raw) return () => { active = false; };\n\n    sessionStorage.removeItem('bq-pending-backtest-template');\n    let pending: { id?: number } = {};\n    try {\n      pending = JSON.parse(raw);\n    } catch {\n      return () => { active = false; };\n    }\n    if (!Number.isInteger(pending.id) || Number(pending.id) <= 0) {\n      return () => { active = false; };\n    }\n\n    (async () => {\n      try {\n        const res = await fetch('/api/backtest-strategy-templates', { cache: 'no-store' });\n        const json = await res.json();\n        if (!res.ok || !active) return;\n        const template = (json.templates || []).find((item: any) => Number(item.id) === Number(pending.id));\n        if (template?.config) {\n          applyTemplate(template.config);\n          onTemplateSelected?.(Number(template.id));\n        }\n      } catch {\n        // 回测工作台仍可继续使用当前默认参数。\n      }\n    })();\n\n    return () => { active = false; };\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, []);\n\n  const handleSubmit = (e: React.FormEvent) => {
+  // 从策略库进入回测工作台时，恢复指定的 Node1 SQLite 回测策略模板或内置配置。
+  useEffect(() => {
+    let active = true;
+    const raw = sessionStorage.getItem('bq-pending-backtest-template');
+    if (!raw) return () => { active = false; };
+
+    sessionStorage.removeItem('bq-pending-backtest-template');
+    let pending: { id?: number; config?: BacktestTemplateConfig } = {};
+    try {
+      pending = JSON.parse(raw);
+    } catch {
+      return () => { active = false; };
+    }
+
+    if (pending.config && typeof pending.config === 'object') {
+      applyTemplate(pending.config);
+      onTemplateSelected?.(null);
+      return () => { active = false; };
+    }
+
+    if (!Number.isInteger(pending.id) || Number(pending.id) <= 0) {
+      return () => { active = false; };
+    }
+
+    (async () => {
+      try {
+        const res = await fetch('/api/backtest-strategy-templates', { cache: 'no-store' });
+        const json = await res.json();
+        if (!res.ok || !active) return;
+        const template = (json.templates || []).find((item: any) => Number(item.id) === Number(pending.id));
+        if (template?.config) {
+          applyTemplate(template.config);
+          onTemplateSelected?.(Number(template.id));
+        }
+      } catch {
+        // 回测工作台仍可继续使用当前默认参数。
+      }
+    })();
+
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const entryCondition = formula.trim();
     const exitCondition = exitFormula.trim();
