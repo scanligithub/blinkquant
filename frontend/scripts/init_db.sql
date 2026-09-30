@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS strategies (
     name TEXT NOT NULL,
     formula TEXT NOT NULL,
     timeframe TEXT NOT NULL DEFAULT 'D',
+    source_backtest_strategy_id BIGINT,
+    source_backtest_strategy_version INTEGER,
+    source_backtest_strategy_name TEXT,
+    source_backtest_strategy_trigger TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -77,12 +81,16 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
     name TEXT NOT NULL,
     formula TEXT NOT NULL,
     timeframe TEXT NOT NULL DEFAULT 'D',
+    source_backtest_strategy_id BIGINT,
+    source_backtest_strategy_version INTEGER,
+    source_backtest_strategy_name TEXT,
+    source_backtest_strategy_trigger TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (strategy_id, version_no)
 );
 CREATE INDEX IF NOT EXISTS idx_strategy_versions_strategy ON strategy_versions (strategy_id, version_no DESC);
 
-INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe, created_at)
-SELECT id, 1, name, formula, timeframe, COALESCE(created_at, NOW())
+INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe, source_backtest_strategy_id, source_backtest_strategy_version, source_backtest_strategy_name, source_backtest_strategy_trigger, created_at)
+SELECT id, 1, name, formula, timeframe, source_backtest_strategy_id, source_backtest_strategy_version, source_backtest_strategy_name, source_backtest_strategy_trigger, COALESCE(created_at, NOW())
 FROM strategies s
 WHERE NOT EXISTS (SELECT 1 FROM strategy_versions v WHERE v.strategy_id = s.id);
