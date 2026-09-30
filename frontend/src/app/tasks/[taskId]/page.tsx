@@ -147,7 +147,7 @@ export default function TaskDetailPage() {
 
               <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                 <h2 className="font-bold text-slate-800">任务输入快照</h2>
-                <pre className="mt-4 p-4 rounded-xl bg-slate-950 text-slate-100 text-xs overflow-auto max-h-[520px]">{JSON.stringify(task.result ? { payload: (task as any).payload, result: task.result } : { payload: (task as any).payload }, null, 2)}</pre>
+                <pre className="mt-4 p-4 rounded-xl bg-slate-950 text-slate-100 text-xs overflow-auto max-h-[520px]">{JSON.stringify((task as any).payload || {}, null, 2)}</pre>
               </section>
             </>
           )}
