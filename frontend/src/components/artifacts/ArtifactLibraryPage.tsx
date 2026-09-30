@@ -45,31 +45,36 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const [authLoading, setAuthLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number; selectionTotal: number; backtestTotal: number }>({ usedBytes: 0, quotaBytes: 0, total: 0, selectionTotal: 0, backtestTotal: 0 });
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
+  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number; filteredTotal: number; selectionTotal: number; backtestTotal: number }>({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/artifacts', { cache: 'no-store' });
+      const query = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) });
+      if (kind !== 'all') query.set('artifact_type', kind);
+      const res = await fetch('/api/artifacts?' + query.toString(), { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加载成果失败');
       const done = Array.isArray(json?.artifacts) ? json.artifacts : [];
       setTasks(done);
       setStorage({
-        usedBytes: Number(json?.used_bytes || 0),
+        usedBytes: Number(json?.global_used_bytes ?? json?.used_bytes ?? 0),
         quotaBytes: Number(json?.quota_bytes || 0),
-        total: Number(json?.total || done.length),
+        total: Number(json?.global_total ?? json?.total ?? done.length),
+        filteredTotal: Number(json?.total || 0),
         selectionTotal: Number(json?.selection_total || 0),
         backtestTotal: Number(json?.backtest_total || 0),
       });
     } catch (e) {
       console.error('load artifacts failed', e);
       setTasks([]);
-      setStorage({ usedBytes: 0, quotaBytes: 0, total: 0, selectionTotal: 0, backtestTotal: 0 });
+      setStorage({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [kind, page, pageSize]);
 
   useEffect(() => {
     let mounted = true;
@@ -102,7 +107,8 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     return <main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin" /></main>;
   }
 
-  const filtered = kind === 'all' ? tasks : tasks.filter(task => task.task_type === kind);
+  const filtered = tasks;
+  const pageCount = Math.max(1, Math.ceil(storage.filteredTotal / pageSize));
   const selectionCount = storage.selectionTotal;
   const backtestCount = storage.backtestTotal;
 
@@ -137,7 +143,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Link href="/artifacts" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200">
               <div className="text-xs text-slate-400">全部成果</div>
-              <div className="text-2xl font-black mt-1">{tasks.length}</div>
+              <div className="text-2xl font-black mt-1">{storage.total}</div>
             </Link>
             <Link href="/artifacts/selections" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200">
               <div className="text-xs text-slate-400">选股成果</div>
@@ -248,6 +254,27 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {!loading && storage.filteredTotal > 0 && (
+              <div className="px-5 py-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-slate-500">
+                  共 {storage.filteredTotal} 条 · 第 {page + 1}/{pageCount} 页 · 每页 {pageSize} 条
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage(current => Math.max(0, current - 1))}
+                    disabled={page <= 0}
+                    className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40"
+                  >上一页</button>
+                  <button
+                    type="button"
+                    onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
+                    disabled={page >= pageCount - 1}
+                    className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40"
+                  >下一页</button>
+                </div>
               </div>
             )}
           </section>
