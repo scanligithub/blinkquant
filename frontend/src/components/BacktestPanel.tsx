@@ -156,44 +156,62 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     cross_below: '下穿',
   } as Record<string, string>)[value] || value;
 
-  // 从策略库进入回测工作台时，恢复指定的 Node1 SQLite 回测策略模板或内置配置。
+  // 从策略库进入回测工作台时，先恢复模板，再应用“从选股策略创建”来源快照。
+  // 这样即使浏览器里残留旧的模板 pending key，也不会覆盖新选择的源策略。
   useEffect(() => {
     let active = true;
-    const pendingFromSelection = sessionStorage.getItem('bq-pending-backtest-from-selection');
-    if (pendingFromSelection) {
+
+    const rawSource = sessionStorage.getItem('bq-pending-backtest-from-selection');
+    let pendingSource: SelectionStrategySource | null = null;
+    if (rawSource) {
       try {
-        const source = JSON.parse(pendingFromSelection) as SelectionStrategySource;
-        if (source && Number(source.id) > 0 && source.formula) {
-          setSourceSelectionStrategy({
-            id: Number(source.id), version_no: Number(source.version_no) || 1,
-            name: String(source.name || ''), formula: String(source.formula),
-            timeframe: source.timeframe === 'W' || source.timeframe === 'M' ? source.timeframe : 'D',
-          });
-          setFormula(String(source.formula));
-          setEntryTimeframe(source.timeframe === 'W' || source.timeframe === 'M' ? source.timeframe : 'D');
+        const parsed = JSON.parse(rawSource) as SelectionStrategySource;
+        if (parsed && Number(parsed.id) > 0 && String(parsed.formula || '').trim()) {
+          pendingSource = {
+            id: Number(parsed.id),
+            version_no: Number(parsed.version_no) || 1,
+            name: String(parsed.name || ''),
+            formula: String(parsed.formula).trim(),
+            timeframe: parsed.timeframe === 'W' || parsed.timeframe === 'M' ? parsed.timeframe : 'D',
+          };
         }
-      } catch { /* keep defaults */ }
+      } catch {
+        // Ignore malformed browser state and keep defaults.
+      }
       sessionStorage.removeItem('bq-pending-backtest-from-selection');
     }
 
-    const raw = sessionStorage.getItem('bq-pending-backtest-template');
-    if (!raw) return () => { active = false; };
+    const applySource = (source: SelectionStrategySource | null) => {
+      if (!source || !active) return;
+      setSourceSelectionStrategy(source);
+      setFormula(source.formula);
+      setEntryTimeframe(source.timeframe);
+    };
+
+    const rawTemplate = sessionStorage.getItem('bq-pending-backtest-template');
+    if (!rawTemplate) {
+      applySource(pendingSource);
+      return () => { active = false; };
+    }
 
     let pending: { id?: number; config?: BacktestTemplateConfig } = {};
     try {
-      pending = JSON.parse(raw);
+      pending = JSON.parse(rawTemplate);
     } catch {
+      applySource(pendingSource);
       return () => { active = false; };
     }
 
     if (pending.config && typeof pending.config === 'object') {
       applyTemplate(pending.config);
+      applySource(pendingSource);
       onTemplateSelected?.(null);
       sessionStorage.removeItem('bq-pending-backtest-template');
       return () => { active = false; };
     }
 
     if (!Number.isInteger(pending.id) || Number(pending.id) <= 0) {
+      applySource(pendingSource);
       return () => { active = false; };
     }
 
@@ -205,10 +223,14 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
         const template = (json.templates || []).find((item: any) => Number(item.id) === Number(pending.id));
         if (template?.config) {
           applyTemplate(template.config);
+          applySource(pendingSource);
           onTemplateSelected?.(Number(template.id));
           sessionStorage.removeItem('bq-pending-backtest-template');
+        } else {
+          applySource(pendingSource);
         }
       } catch {
+        applySource(pendingSource);
         // 回测工作台仍可继续使用当前默认参数。
       }
     })();
