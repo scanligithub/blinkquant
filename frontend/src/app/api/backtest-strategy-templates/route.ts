@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
+import { sql } from '@/lib/db';
+import { ensureSelectionStrategyVersions } from '@/lib/strategy-versions';
 
 export const runtime = 'nodejs';
 
@@ -13,7 +15,53 @@ async function forward(req: NextRequest, method: string) {
   const result = await auth(req);
   if (!result.user) return NextResponse.json({ error: 'Unauthorized' }, { status: result.status });
 
-  const body = method === 'GET' || method === 'DELETE' ? undefined : await req.text();
+  let body: string | undefined;
+  if (method !== 'GET' && method !== 'DELETE') {
+    const rawBody = await req.text();
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (parsed?.config?.source_selection_strategy != null) {
+        await ensureSelectionStrategyVersions();
+        const sourceId = Number(parsed.config.source_selection_strategy.id);
+        const sourceVersion = Number(parsed.config.source_selection_strategy.version_no);
+        if (!Number.isInteger(sourceId) || sourceId <= 0 || !Number.isInteger(sourceVersion) || sourceVersion <= 0) {
+          return NextResponse.json({ error: '来源选股策略引用无效' }, { status: 400 });
+        }
+
+        const sourceStrategy = await sql`
+          SELECT id, name, formula, timeframe
+          FROM strategies
+          WHERE id = ${sourceId} AND user_id = ${result.user.userId}
+          LIMIT 1
+        `;
+        if (!sourceStrategy.rows[0]) {
+          return NextResponse.json({ error: '来源选股策略不存在或无权访问' }, { status: 400 });
+        }
+
+        const sourceVersionRow = await sql`
+          SELECT version_no, name, formula, timeframe
+          FROM strategy_versions
+          WHERE strategy_id = ${sourceId} AND version_no = ${sourceVersion}
+          LIMIT 1
+        `;
+        if (!sourceVersionRow.rows[0]) {
+          return NextResponse.json({ error: '来源选股策略版本不存在或无权访问' }, { status: 400 });
+        }
+
+        const version = sourceVersionRow.rows[0];
+        parsed.config.source_selection_strategy = {
+          id: sourceId,
+          version_no: Number(version.version_no),
+          name: String(version.name),
+          formula: String(version.formula),
+          timeframe: String(version.timeframe),
+        };
+      }
+      body = JSON.stringify(parsed);
+    } catch {
+      return NextResponse.json({ error: '请求格式无效' }, { status: 400 });
+    }
+  }
   const url = new URL('/api/v1/backtest-strategy-templates', BACKTEST_NODE);
   if (method === 'PUT' || method === 'DELETE') {
     const id = req.nextUrl.searchParams.get('id');
