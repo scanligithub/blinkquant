@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { label: '选股', href: '/select', enabled: true },
   { label: '股票研究', href: '/stocks', enabled: true },
   { label: '自选股', href: '/watchlists', enabled: true },
-  { label: '策略库', href: '/strategies', enabled: false },
+  { label: '策略库', href: '/strategies', enabled: true },
   { label: '回测研究', href: '/backtests', enabled: false },
   { label: '成果库', href: '/artifacts', enabled: false },
   { label: '任务中心', href: '/tasks', enabled: false },
@@ -112,7 +112,7 @@ export default function MainNav({
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    onOpenStrategies?.();
+                    router.push('/strategies');
                   }}
                   className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                 >
