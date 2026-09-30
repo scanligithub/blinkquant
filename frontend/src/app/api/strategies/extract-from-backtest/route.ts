@@ -46,10 +46,7 @@ export async function POST(req: NextRequest) {
     const response = await fetch(
       new URL('/api/v1/backtest-strategy-templates/' + strategyId + '/versions', BACKTEST_NODE),
       {
-        headers: {
-          Accept: 'application/json',
-          Cookie: cookie,
-        },
+        headers: { Accept: 'application/json', Cookie: cookie },
         signal: AbortSignal.timeout(10000),
       },
     );
@@ -84,37 +81,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '选股策略名称无效（最多 80 个字符）' }, { status: 400 });
     }
 
-    const inserted = await sql`
-      INSERT INTO strategies (
-        user_id, name, formula, timeframe,
-        source_backtest_strategy_id, source_backtest_strategy_version,
-        source_backtest_strategy_name, source_backtest_strategy_trigger
+    // The source version is owner-verified by Node1 above. Create the strategy and
+    // its first immutable version in one statement to prevent partial records.
+    const result = await sql`
+      WITH new_strategy AS (
+        INSERT INTO strategies (
+          user_id, name, formula, timeframe,
+          source_backtest_strategy_id, source_backtest_strategy_version,
+          source_backtest_strategy_name, source_backtest_strategy_trigger
+        )
+        VALUES (
+          ${auth.user.userId}, ${name}, ${formula}, ${timeframe},
+          ${strategyId}, ${Number(version.version_no)},
+          ${String(version.name || '')}, ${trigger}
+        )
+        RETURNING id, name, formula, timeframe, created_at, updated_at,
+          source_backtest_strategy_id, source_backtest_strategy_version,
+          source_backtest_strategy_name, source_backtest_strategy_trigger
+      ),
+      new_version AS (
+        INSERT INTO strategy_versions (
+          strategy_id, version_no, name, formula, timeframe,
+          source_backtest_strategy_id, source_backtest_strategy_version,
+          source_backtest_strategy_name, source_backtest_strategy_trigger
+        )
+        SELECT id, 1, name, formula, timeframe,
+          source_backtest_strategy_id, source_backtest_strategy_version,
+          source_backtest_strategy_name, source_backtest_strategy_trigger
+        FROM new_strategy
+        RETURNING strategy_id, version_no
       )
-      VALUES (
-        ${auth.user.userId}, ${name}, ${formula}, ${timeframe},
-        ${strategyId}, ${Number(version.version_no)},
-        ${String(version.name || '')}, ${trigger}
-      )
-      RETURNING id, name, formula, timeframe, created_at, updated_at,
-        source_backtest_strategy_id, source_backtest_strategy_version,
-        source_backtest_strategy_name, source_backtest_strategy_trigger
+      SELECT s.*, v.version_no
+      FROM new_strategy s
+      JOIN new_version v ON v.strategy_id = s.id
     `;
 
-    const strategy = inserted.rows[0];
-    if (!strategy) throw new Error('strategy insert returned no row');
-
-    await sql`
-      INSERT INTO strategy_versions (
-        strategy_id, version_no, name, formula, timeframe,
-        source_backtest_strategy_id, source_backtest_strategy_version,
-        source_backtest_strategy_name, source_backtest_strategy_trigger
-      )
-      VALUES (
-        ${strategy.id}, 1, ${name}, ${formula}, ${timeframe},
-        ${strategyId}, ${Number(version.version_no)},
-        ${String(version.name || '')}, ${trigger}
-      )
-    `;
+    const strategy = result.rows[0];
+    if (!strategy) throw new Error('strategy and initial version insert returned no row');
 
     return NextResponse.json({
       strategy,
