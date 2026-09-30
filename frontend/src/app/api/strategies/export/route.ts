@@ -12,12 +12,18 @@ export async function GET(req: NextRequest) {
 
   const [strategies, versions] = await Promise.all([
     sql`
-      SELECT id, name, formula, timeframe, created_at, updated_at
+      SELECT id, name, formula, timeframe,
+             source_backtest_strategy_id, source_backtest_strategy_version,
+             source_backtest_strategy_name, source_backtest_strategy_trigger,
+             created_at, updated_at
       FROM strategies WHERE user_id = ${auth.user.userId}
       ORDER BY id ASC
     `,
     sql`
-      SELECT strategy_id, version_no, name, formula, timeframe, created_at
+      SELECT strategy_id, version_no, name, formula, timeframe,
+             source_backtest_strategy_id, source_backtest_strategy_version,
+             source_backtest_strategy_name, source_backtest_strategy_trigger,
+             created_at
       FROM strategy_versions
       WHERE strategy_id IN (SELECT id FROM strategies WHERE user_id = ${auth.user.userId})
       ORDER BY strategy_id ASC, version_no ASC
@@ -33,10 +39,25 @@ export async function GET(req: NextRequest) {
       timeframe: strategy.timeframe,
       created_at: strategy.created_at,
       updated_at: strategy.updated_at,
+      source_backtest: strategy.source_backtest_strategy_id != null ? {
+        strategy_id: strategy.source_backtest_strategy_id,
+        version_no: strategy.source_backtest_strategy_version,
+        name: strategy.source_backtest_strategy_name,
+        trigger: strategy.source_backtest_strategy_trigger,
+      } : null,
       versions: versions.rows
         .filter((version) => String(version.strategy_id) === String(strategy.id))
-        .map(({ version_no, name, formula, timeframe, created_at }) => ({
+        .map(({ version_no, name, formula, timeframe,
+                 source_backtest_strategy_id, source_backtest_strategy_version,
+                 source_backtest_strategy_name, source_backtest_strategy_trigger,
+                 created_at }) => ({
           version_no, name, formula, timeframe, created_at,
+          source_backtest: source_backtest_strategy_id != null ? {
+            strategy_id: source_backtest_strategy_id,
+            version_no: source_backtest_strategy_version,
+            name: source_backtest_strategy_name,
+            trigger: source_backtest_strategy_trigger,
+          } : null,
         })),
     })),
   };
