@@ -55,7 +55,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
       try {
         const id = Number(params.artifactId);
         if (!Number.isInteger(id) || id <= 0) throw new Error('invalid artifact id');
-        const res = await fetch('/api/v1/tasks/' + id, { cache: 'no-store' });
+        const res = await fetch('/api/artifacts/' + id, { cache: 'no-store' });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || '成果不存在');
         if (json.task_type !== kind || json.status !== 'done') throw new Error('artifact unavailable');
@@ -110,7 +110,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                 <h2 className="font-bold text-slate-800">来源信息</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
                   <div><div className="text-xs text-slate-400">成果类型</div><div className="mt-1 font-semibold">{labelTaskType(task.task_type)}</div></div>
-                  <div><div className="text-xs text-slate-400">来源任务</div><Link href={'/tasks/' + task.id} className="mt-1 inline-block font-mono text-blue-600 hover:underline">#{task.id}</Link></div>
+                  <div><div className="text-xs text-slate-400">来源任务</div><Link href={'/tasks/' + (task.task_id ?? task.id)} className="mt-1 inline-block font-mono text-blue-600 hover:underline">#{task.id}</Link></div>
                   <div><div className="text-xs text-slate-400">完成时间</div><div className="mt-1">{fmtTime(task.finished_at)}</div></div>
                   <div><div className="text-xs text-slate-400">执行节点</div><div className="mt-1 font-mono">{task.assigned_node || '—'}</div></div>
                 </div>
@@ -196,7 +196,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     <div className="text-xs text-slate-400 mt-1">大型结果文件仍由 Node1 结果存储提供，本页使用现有权限控制读取。</div>
                     <div className="flex flex-wrap gap-2 mt-4">
                       {(['equity_curve', 'trades', 'positions_daily'] as const).map(name => (
-                        <button key={name} type="button" onClick={() => void downloadArtifact(task.id, name)} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
+                        <button key={name} type="button" onClick={() => void downloadArtifact(task.id, name, { artifact: true })} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
                           {name === 'equity_curve' ? '下载权益曲线' : name === 'trades' ? '下载成交明细' : '下载持仓明细'}
                         </button>
                       ))}

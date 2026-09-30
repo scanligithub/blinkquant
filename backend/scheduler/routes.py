@@ -18,6 +18,7 @@ LIST_COLS = (
     "assigned_node, cluster_job_id, error, result_summary, result_uri, result_bytes, "
     "strategy_template_id, strategy_template_name, strategy_template_updated_at, strategy_template_version, source_task_id, "
     "progress_pct, progress_json, "
+    "(SELECT id FROM artifacts a WHERE a.task_id = task_queue.id) AS artifact_id, "
     "created_at, queued_at, started_at, finished_at, "
     "retry_count, max_retries, preempted_by, generation, timeout_sec"
 )
@@ -79,6 +80,7 @@ class TaskResponse(BaseModel):
     strategy_template_updated_at: Optional[str] = None
     strategy_template_version: Optional[int] = None
     source_task_id: Optional[int] = None
+    artifact_id: Optional[int] = None
     progress_pct: Optional[float] = None
     progress: Optional[dict] = None
     error: Optional[str]
@@ -141,6 +143,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         strategy_template_updated_at=row.get("strategy_template_updated_at"),
         strategy_template_version=row.get("strategy_template_version"),
         source_task_id=row.get("source_task_id"),
+        artifact_id=row.get("artifact_id"),
         progress_pct=row.get("progress_pct"),
         progress=progress,
         error=row.get("error"),
@@ -277,7 +280,12 @@ async def get_task(
     user_id: Optional[str] = None,
     role: Optional[str] = None,
 ) -> TaskResponse:
-    row = await fetchrow("SELECT * FROM task_queue WHERE id = ?", task_id)
+    row = await fetchrow("""
+        SELECT tq.*, a.id AS artifact_id
+        FROM task_queue tq
+        LEFT JOIN artifacts a ON a.task_id = tq.id
+        WHERE tq.id = ?
+    """, task_id)
     if not row:
         raise HTTPException(404, "Task not found")
     _assert_task_access(row, user_id, role)
@@ -361,6 +369,124 @@ async def rerun_task(
     }
 
 
+@router.get("/artifacts", dependencies=[Depends(verify_internal_token)])
+async def list_artifacts(
+    artifact_type: Optional[str] = None,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    if artifact_type not in (None, "selection", "backtest"):
+        raise HTTPException(400, "Invalid artifact_type")
+    if not _is_admin(role) and not user_id:
+        raise HTTPException(401, "user_id required")
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    query = """SELECT id, user_id, artifact_type, task_id, title, status, metadata,
+                      summary, result_json, result_uri, result_bytes, created_at, finished_at
+               FROM artifacts WHERE 1=1"""
+    params: list = []
+    if not _is_admin(role):
+        query += " AND user_id = ?"; params.append(user_id)
+    elif user_id:
+        query += " AND user_id = ?"; params.append(user_id)
+    if artifact_type:
+        query += " AND artifact_type = ?"; params.append(artifact_type)
+    query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    rows = await fetch(query, *params)
+    items = []
+    for row in rows:
+        try: metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        except (TypeError, json.JSONDecodeError): metadata = {}
+        try: summary = json.loads(row["summary"]) if row["summary"] else None
+        except (TypeError, json.JSONDecodeError): summary = None
+        try: result = json.loads(row["result_json"]) if row["result_json"] else None
+        except (TypeError, json.JSONDecodeError): result = None
+        task_exists = await fetchval("SELECT 1 FROM task_queue WHERE id = ?", row["task_id"])
+        payload = metadata.get("payload") if isinstance(metadata, dict) else {}
+        items.append({
+            "id": row["id"], "artifact_id": row["id"], "task_id": row["task_id"],
+            "user_id": row["user_id"], "artifact_type": row["artifact_type"],
+            "task_type": row["artifact_type"], "title": row["title"],
+            "status": "done", "payload": payload, "result": result,
+            "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
+            "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
+            "created_at": row["created_at"], "finished_at": row["finished_at"],
+            "task_exists": bool(task_exists),
+            "strategy_template_id": metadata.get("strategy_template_id"),
+            "strategy_template_name": metadata.get("strategy_template_name"),
+            "strategy_template_updated_at": metadata.get("strategy_template_updated_at"),
+            "strategy_template_version": metadata.get("strategy_template_version"),
+            "source_task_id": metadata.get("source_task_id"),
+        })
+    return {"artifacts": items, "total": len(items), "limit": limit, "offset": offset}
+
+@router.get("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
+async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Optional[str] = None) -> dict:
+    row = await fetchrow("SELECT * FROM artifacts WHERE id = ?", artifact_id)
+    if not row: raise HTTPException(404, "Artifact not found")
+    _assert_task_access(row, user_id, role)
+    try: metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+    except (TypeError, json.JSONDecodeError): metadata = {}
+    try: summary = json.loads(row["summary"]) if row["summary"] else None
+    except (TypeError, json.JSONDecodeError): summary = None
+    try: result = json.loads(row["result_json"]) if row["result_json"] else None
+    except (TypeError, json.JSONDecodeError): result = None
+    task_exists = await fetchval("SELECT 1 FROM task_queue WHERE id = ?", row["task_id"])
+    return {
+        "id": row["id"], "artifact_id": row["id"], "task_id": row["task_id"],
+        "user_id": row["user_id"], "artifact_type": row["artifact_type"],
+        "task_type": row["artifact_type"], "title": row["title"], "status": "done",
+        "payload": metadata.get("payload") or {}, "result": result,
+        "result_summary": summary, "summary": summary, "result_uri": row["result_uri"],
+        "result_bytes": row["result_bytes"] or 0, "metadata": metadata,
+        "created_at": row["created_at"], "finished_at": row["finished_at"],
+        "task_exists": bool(task_exists), "source_task_id": row["task_id"],
+        "strategy_template_id": metadata.get("strategy_template_id"),
+        "strategy_template_name": metadata.get("strategy_template_name"),
+        "strategy_template_updated_at": metadata.get("strategy_template_updated_at"),
+        "strategy_template_version": metadata.get("strategy_template_version"),
+    }
+
+@router.get("/artifacts/{artifact_id}/part", dependencies=[Depends(verify_internal_token)])
+async def get_artifact_part(
+    artifact_id: int, name: str = "equity_curve", fmt: str = "parquet",
+    limit: int | None = None, offset: int = 0, code: str | None = None,
+    side: str | None = None, date_from: str | None = None, date_to: str | None = None,
+    user_id: str | None = None, role: str | None = None,
+):
+    from .config import RESULT_DIR
+    from .result_store import ARTIFACT_NAMES, load_part
+    row = await fetchrow("SELECT result_uri, result_json, user_id, artifact_type FROM artifacts WHERE id = ?", artifact_id)
+    if not row: raise HTTPException(404, "Artifact not found")
+    _assert_task_access(row, user_id, role)
+    if row["artifact_type"] == "selection":
+        if name not in ("result", "selection_result"): raise HTTPException(400, "Selection Artifact only supports result")
+        try: return json.loads(row["result_json"]) if row["result_json"] else {}
+        except (TypeError, json.JSONDecodeError): raise HTTPException(500, "Stored selection result is invalid")
+    if not row["result_uri"]: raise HTTPException(404, "Artifact result files are unavailable")
+    if name not in ARTIFACT_NAMES: raise HTTPException(400, f"Unknown artifact: {name}")
+    df = load_part(row["result_uri"], name, RESULT_DIR)
+    if df is None: raise HTTPException(404, f"Artifact '{name}' not found")
+    import polars as pl
+    if code and "code" in df.columns: df = df.filter(pl.col("code").cast(pl.Utf8) == code)
+    if side and "side" in df.columns: df = df.filter(pl.col("side").cast(pl.Utf8).str.to_uppercase() == side.upper())
+    date_col = "execution_date" if "execution_date" in df.columns else ("date" if "date" in df.columns else None)
+    if date_col and date_from: df = df.filter(pl.col(date_col).cast(pl.Utf8) >= date_from)
+    if date_col and date_to: df = df.filter(pl.col(date_col).cast(pl.Utf8) <= date_to)
+    total = df.height; off = max(0, int(offset or 0))
+    if limit is not None: lim = max(1, min(int(limit), 5000)); df = df.slice(off, lim)
+    else: lim = total
+    if fmt == "json": return {"name": name, "total": total, "offset": off, "limit": lim, "rows": df.to_dicts()}
+    import io
+    from fastapi.responses import Response
+    buffer = io.BytesIO(); df.write_parquet(buffer, compression="zstd"); buffer.seek(0)
+    return Response(content=buffer.getvalue(), media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="artifact_{artifact_id}_{name}.parquet"',
+        "X-Result-Total-Rows": str(total), "X-Result-Offset": str(off), "X-Result-Limit": str(lim),
+    })
 @router.get("/tasks/{task_id}/artifact", dependencies=[Depends(verify_internal_token)])
 async def get_task_artifact(
     task_id: int,
@@ -542,7 +668,11 @@ async def delete_task(
                 "DELETE FROM task_queue WHERE id = ? AND user_id = ?",
                 task_id, user_id,
             )
-    return {"ok": True, "message": "Task and result files deleted"}
+    return {
+        "ok": True,
+        "artifact_id": artifact_id,
+        "message": "Task removed; historical artifact preserved" if artifact_id is not None else "Task and result files deleted",
+    }
 
 
 # ──────────────────────────────────────────────

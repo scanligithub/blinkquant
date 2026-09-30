@@ -264,6 +264,11 @@ class ClusterScheduler:
                 WHERE id = ? AND generation = ?
             """, json.dumps(result), task_id, generation)
             
+            try:
+                await self._register_task_artifact(task_id)
+            except Exception:
+                log.exception("artifact registration failed task=%s", task_id)
+
             # 释放 3 节点
             await self._release_selection_nodes(generation)
         except Exception as e:
@@ -747,10 +752,49 @@ class ClusterScheduler:
         """, generation, task_id, generation)
 
         try:
+            await self._register_task_artifact(task_id)
+        except Exception:
+            log.exception("artifact registration failed task=%s", task_id)
+
+        try:
             await self._enforce_user_quota(user_id, keep_task_id=task_id)
         except Exception:
             log.exception("quota enforce failed user=%s", user_id)
 
+    async def _register_task_artifact(self, task_id: int) -> int | None:
+        """Register one immutable Artifact row for a completed task."""
+        from .db import fetchrow, fetchval, acquire
+        row = await fetchrow("""
+            SELECT id, user_id, task_type, payload, result, result_summary, result_uri, result_bytes,
+                   strategy_template_id, strategy_template_name, strategy_template_updated_at,
+                   strategy_template_version, source_task_id, assigned_node, finished_at, status
+            FROM task_queue WHERE id = ?
+        """, task_id)
+        if not row or row.get("status") != "done" or row.get("task_type") not in ("selection", "backtest"): return None
+        existing = await fetchval("SELECT id FROM artifacts WHERE task_id = ?", task_id)
+        if existing is not None: return int(existing)
+        try: payload = json.loads(row["payload"]) if row.get("payload") else {}
+        except (TypeError, json.JSONDecodeError): payload = {}
+        source = payload.get("selection_strategy_snapshot") or {}
+        title = (f"{source.get("name")} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (row.get("strategy_template_name") or f"回测成果 #{task_id}")
+        metadata = json.dumps({
+            "payload": payload, "assigned_node": row.get("assigned_node"),
+            "strategy_template_id": row.get("strategy_template_id"),
+            "strategy_template_name": row.get("strategy_template_name"),
+            "strategy_template_updated_at": row.get("strategy_template_updated_at"),
+            "strategy_template_version": row.get("strategy_template_version"),
+            "source_task_id": row.get("source_task_id"),
+        }, ensure_ascii=False, separators=(",", ":"))
+        async with acquire() as conn:
+            await conn.execute("""
+                INSERT OR IGNORE INTO artifacts (
+                    user_id, artifact_type, task_id, title, status, metadata, summary, result_json,
+                    result_uri, result_bytes, created_at, finished_at
+                ) VALUES (?, ?, ?, ?, "ready", ?, ?, ?, ?, ?, datetime("now"), ?)
+            """, row["user_id"], row["task_type"], task_id, title, metadata, row.get("result_summary"),
+            row.get("result") if row["task_type"] == "selection" else None, row.get("result_uri"),
+            int(row.get("result_bytes") or 0), row.get("finished_at"))
+            return await conn.fetchval("SELECT id FROM artifacts WHERE task_id = ?", task_id)
     async def _fail_backtest(self, task_id: int, error: str, generation: int) -> None:
         from .db import execute
         log.warning("Failing task %s (gen=%s): %s", task_id, generation, error)
@@ -778,7 +822,8 @@ class ClusterScheduler:
 
         rows = await fetch(
             "SELECT COALESCE(SUM(result_bytes), 0) AS used FROM task_queue "
-            "WHERE user_id = ? AND result_uri IS NOT NULL",
+            "WHERE user_id = ? AND result_uri IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.task_id = task_queue.id)",
             user_id,
         )
         used = int(rows[0]["used"] if rows else 0)
@@ -789,6 +834,7 @@ class ClusterScheduler:
             """
             SELECT id, result_uri, result_bytes FROM task_queue
             WHERE user_id = ? AND result_uri IS NOT NULL AND id != ?
+              AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.task_id = task_queue.id)
             ORDER BY finished_at ASC NULLS LAST, id ASC
             """,
             user_id,

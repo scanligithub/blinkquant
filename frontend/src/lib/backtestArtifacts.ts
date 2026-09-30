@@ -182,11 +182,15 @@ export async function loadPositionsPage(
   };
 }
 
-export async function downloadArtifact(taskId: number, name: ArtifactName) {
-  const res = await fetch(
-    `/api/v1/tasks/${taskId}/artifact?name=${encodeURIComponent(name)}`,
-    { cache: 'no-store' }
-  );
+export async function downloadArtifact(
+  taskId: number,
+  name: ArtifactName,
+  options?: { artifact?: boolean }
+) {
+  const endpoint = options?.artifact
+    ? `/api/artifacts/${taskId}/part?name=${encodeURIComponent(name)}`
+    : `/api/v1/tasks/${taskId}/artifact?name=${encodeURIComponent(name)}`;
+  const res = await fetch(endpoint, { cache: 'no-store' });
   if (!res.ok) {
     alert('下载失败');
     return;

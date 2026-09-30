@@ -127,6 +127,49 @@ async def _migrate() -> None:
     if "source_task_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN source_task_id INTEGER")
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_tq_source_task ON task_queue (source_task_id)")
+    # Backfill the independent Artifact registry for completed historical tasks.
+    cursor = await _pool.execute("""
+        SELECT t.id, t.user_id, t.task_type, t.payload, t.result, t.result_summary,
+               t.result_uri, t.result_bytes, t.strategy_template_id,
+               t.strategy_template_name, t.strategy_template_updated_at,
+               t.strategy_template_version, t.source_task_id, t.assigned_node,
+               t.created_at, t.finished_at
+        FROM task_queue t
+        LEFT JOIN artifacts a ON a.task_id = t.id
+        WHERE t.status = "done"
+          AND t.task_type IN ("selection", "backtest")
+          AND a.id IS NULL
+        ORDER BY t.id ASC
+    """)
+    for row in await cursor.fetchall():
+        payload = {}
+        try:
+            payload = json.loads(row[3]) if row[3] else {}
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if row[2] == "selection":
+            source = payload.get("selection_strategy_snapshot") or {}
+            title = f"{source.get("name")} 选股成果" if source.get("name") else f"选股成果 #{row[0]}"
+            result_json = row[4]
+        else:
+            title = row[9] or f"回测成果 #{row[0]}"
+            result_json = None
+        metadata = json.dumps({
+            "payload": payload,
+            "assigned_node": row[13],
+            "strategy_template_id": row[8],
+            "strategy_template_name": row[9],
+            "strategy_template_updated_at": row[10],
+            "strategy_template_version": row[11],
+            "source_task_id": row[12],
+        }, ensure_ascii=False, separators=(",", ":"))
+        await _pool.execute("""
+            INSERT OR IGNORE INTO artifacts (
+                user_id, artifact_type, task_id, title, status, metadata,
+                summary, result_json, result_uri, result_bytes, created_at, finished_at
+            ) VALUES (?, ?, ?, ?, "ready", ?, ?, ?, ?, ?, ?, ?)
+        """, row[1], row[2], row[0], title, metadata, row[5], result_json,
+        row[6], int(row[7] or 0), row[14], row[15])
 
 
 async def close_pool() -> None:

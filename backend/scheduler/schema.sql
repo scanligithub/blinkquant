@@ -58,6 +58,27 @@ CREATE INDEX IF NOT EXISTS idx_tq_assigned_status
 CREATE INDEX IF NOT EXISTS idx_tq_generation
     ON task_queue (generation);
 
+CREATE TABLE IF NOT EXISTS artifacts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    artifact_type   TEXT NOT NULL CHECK (artifact_type IN ('selection', 'backtest')),
+    task_id         INTEGER NOT NULL UNIQUE,
+    title           TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'ready',
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    summary         TEXT,
+    result_json     TEXT,
+    result_uri      TEXT,
+    result_bytes    INTEGER DEFAULT 0,
+    created_at      TEXT DEFAULT (datetime('now')),
+    finished_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_user_type_created
+    ON artifacts (user_id, artifact_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task
+    ON artifacts (task_id);
+
 CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT NOT NULL,

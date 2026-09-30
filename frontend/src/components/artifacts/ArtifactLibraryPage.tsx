@@ -49,11 +49,10 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/v1/tasks', { cache: 'no-store' });
+      const res = await fetch('/api/artifacts', { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加载成果失败');
-      const done = (Array.isArray(json?.tasks) ? json.tasks : [])
-        .filter((task: Task) => task.status === 'done' && (task.task_type === 'selection' || task.task_type === 'backtest'));
+      const done = Array.isArray(json?.artifacts) ? json.artifacts : [];
       setTasks(done);
     } catch (e) {
       console.error('load artifacts failed', e);
