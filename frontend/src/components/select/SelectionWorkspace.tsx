@@ -9,7 +9,7 @@ import SelectionControls from './SelectionControls';
 import SelectionResultsSidebar from './SelectionResultsSidebar';
 import StockResearchPanel from './StockResearchPanel';
 import useStockResearch from '@/hooks/useStockResearch';
-import useSelection from '@/hooks/useSelection';
+import useSelection, { type SelectionStrategySnapshot } from '@/hooks/useSelection';
 import useBacktest from '@/hooks/useBacktest';
 
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
@@ -84,6 +84,7 @@ export default function SelectionWorkspace() {
   const [sidebarTab, setSidebarTab] = useState<'results' | 'watchlist' | 'backtest'>('results');
   const [backtestTemplateId, setBacktestTemplateId] = useState<number | null>(null);
   const [strategyName, setStrategyName] = useState('');
+  const [selectionStrategySource, setSelectionStrategySource] = useState<SelectionStrategySnapshot | undefined>(undefined);
   const {
     nodes: clusterNodes,
     queues,
@@ -192,6 +193,15 @@ export default function SelectionWorkspace() {
         if (typeof pending?.formula === 'string' && pending.formula.trim()) {
           setFormula(pending.formula);
           if (['D', 'W', 'M'].includes(pending.timeframe)) setTimeframe(pending.timeframe);
+          if (Number(pending.id) > 0) {
+            setSelectionStrategySource({
+              id: Number(pending.id),
+              version_no: Number(pending.version_no) || 1,
+              name: String(pending.name || ''),
+              formula: String(pending.formula).trim(),
+              timeframe: pending.timeframe === 'W' || pending.timeframe === 'M' ? pending.timeframe : 'D',
+            });
+          }
         }
       }
     } catch (e) {
@@ -267,11 +277,19 @@ export default function SelectionWorkspace() {
     }
   }, [strategyName, formula, timeframe]);
 
+  const handleFormulaChange = useCallback((nextFormula: string) => {
+    if (selectionStrategySource && nextFormula.trim() !== selectionStrategySource.formula.trim()) {
+      setSelectionStrategySource(undefined);
+    }
+    setFormula(nextFormula);
+  }, [selectionStrategySource, setFormula]);
+
   const handleApplyStrategy = useCallback((strategyFormula: string, strategyTimeframe: string) => {
+    setSelectionStrategySource(undefined);
     setFormula(strategyFormula);
     setTimeframe(strategyTimeframe);
     setShowStrategies(false);
-  }, []);
+  }, [setFormula, setTimeframe]);
 
   if (authLoading) {
     return (
