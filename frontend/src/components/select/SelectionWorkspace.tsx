@@ -15,8 +15,8 @@ const KLineChart = dynamic(() => import('../KLineChart'), {
   loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-100 rounded-xl animate-pulse text-slate-400">加载图表引擎...</div>
 });
 
-const Watchlist = dynamic(() => import('../components/Watchlist'), { ssr: false });
-const StrategyList = dynamic(() => import('../components/StrategyList'), { ssr: false });
+const Watchlist = dynamic(() => import('../Watchlist'), { ssr: false });
+const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
 
 import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
