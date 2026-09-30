@@ -5,6 +5,7 @@ import BacktestStrategyTemplates, { type BacktestTemplateConfig, type SelectionS
 
 export interface BacktestParams {
   formula: string;
+  source_selection_strategy?: SelectionStrategySource;
   start_date: string;
   end_signal_date: string;
   initial_cash: number;
@@ -265,6 +266,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
         } : {}),
       },
       strategy,
+      ...(sourceSelectionStrategy ? { source_selection_strategy: sourceSelectionStrategy } : {}),
     });
   };
 
