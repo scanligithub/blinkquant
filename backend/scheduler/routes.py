@@ -401,7 +401,19 @@ async def list_artifacts(
         params.append(artifact_type)
 
     where_sql = " AND ".join(where)
-    total = int(await fetchval(f"SELECT COUNT(*) FROM artifacts WHERE {where_sql}") or 0)
+    stats = await fetchrow(f"""
+        SELECT
+            COUNT(*) AS total,
+            COALESCE(SUM(result_bytes), 0) AS used_bytes,
+            COALESCE(SUM(CASE WHEN artifact_type = 'selection' THEN 1 ELSE 0 END), 0) AS selection_total,
+            COALESCE(SUM(CASE WHEN artifact_type = 'backtest' THEN 1 ELSE 0 END), 0) AS backtest_total
+        FROM artifacts
+        WHERE {where_sql}
+    """, *params)
+    total = int(stats["total"] or 0) if stats else 0
+    used_bytes = int(stats["used_bytes"] or 0) if stats else 0
+    selection_total = int(stats["selection_total"] or 0) if stats else 0
+    backtest_total = int(stats["backtest_total"] or 0) if stats else 0
 
     query = f"""SELECT id, user_id, artifact_type, task_id, title, status, metadata,
                        summary, result_json, result_uri, result_bytes, created_at, finished_at, updated_at,
@@ -436,7 +448,17 @@ async def list_artifacts(
             "strategy_template_version": metadata.get("strategy_template_version"),
             "source_task_id": metadata.get("source_task_id"),
         })
-    return {"artifacts": items, "total": total, "limit": limit, "offset": offset}
+    from .config import ARTIFACT_QUOTA_BYTES_PER_USER
+    return {
+        "artifacts": items,
+        "total": total,
+        "selection_total": selection_total,
+        "backtest_total": backtest_total,
+        "used_bytes": used_bytes,
+        "quota_bytes": int(ARTIFACT_QUOTA_BYTES_PER_USER),
+        "limit": limit,
+        "offset": offset,
+    }
 
 @router.get("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
 async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Optional[str] = None) -> dict:

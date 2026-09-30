@@ -131,7 +131,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <Link href="/artifacts" className="text-sm text-blue-600 hover:underline">← 返回成果库</Link>
-              <h1 className="text-2xl font-black mt-2">{kind === 'selection' ? '选股成果' : (task?.strategy_template_name || '回测成果')} #{task?.id || params?.artifactId}</h1>
+              <h1 className="text-2xl font-black mt-2">{task?.title || (kind === 'selection' ? '选股成果' : (task?.strategy_template_name || '回测成果'))} #{task?.id || params?.artifactId}</h1>
               <div className="text-xs text-slate-400 mt-1">这是任务完成时形成的结果快照；本页不读取当前策略的最新内容作为历史结果。</div>
             </div>
             {task && <div className="flex items-center gap-2">

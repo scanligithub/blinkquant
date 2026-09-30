@@ -45,7 +45,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const [authLoading, setAuthLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number }>({ usedBytes: 0, quotaBytes: 0, total: 0 });
+  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number; selectionTotal: number; backtestTotal: number }>({ usedBytes: 0, quotaBytes: 0, total: 0, selectionTotal: 0, backtestTotal: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,10 +59,13 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
         usedBytes: Number(json?.used_bytes || 0),
         quotaBytes: Number(json?.quota_bytes || 0),
         total: Number(json?.total || done.length),
+        selectionTotal: Number(json?.selection_total || 0),
+        backtestTotal: Number(json?.backtest_total || 0),
       });
     } catch (e) {
       console.error('load artifacts failed', e);
       setTasks([]);
+      setStorage({ usedBytes: 0, quotaBytes: 0, total: 0, selectionTotal: 0, backtestTotal: 0 });
     } finally {
       setLoading(false);
     }
@@ -100,8 +103,8 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   }
 
   const filtered = kind === 'all' ? tasks : tasks.filter(task => task.task_type === kind);
-  const selectionCount = tasks.filter(t => t.task_type === 'selection').length;
-  const backtestCount = tasks.filter(t => t.task_type === 'backtest').length;
+  const selectionCount = storage.selectionTotal;
+  const backtestCount = storage.backtestTotal;
 
   const storagePct = storage.quotaBytes > 0 ? Math.min(100, (storage.usedBytes / storage.quotaBytes) * 100) : 0;
   const fmtBytes = (n: number) => n < 1024 * 1024
@@ -180,7 +183,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                       <div key={task.id} className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Link href={'/artifacts/selections/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">选股成果 #{task.id}</Link>
+                            <Link href={'/artifacts/selections/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">{(task as any).title || ('选股成果 #' + task.id)}</Link>
                             <span className="text-[10px] px-2 py-1 rounded-full bg-blue-50 text-blue-700">选股成果</span>
                             {meta.source && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600">策略 v{meta.source.version_no}</span>}
                           </div>
@@ -212,7 +215,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <Link href={'/artifacts/backtests/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">
-                            {task.strategy_template_name || ('回测成果 #' + task.id)}
+                            {(task as any).title || task.strategy_template_name || ('回测成果 #' + task.id)}
                           </Link>
                           <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">回测成果</span>
                           {task.strategy_template_version && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600">策略 v{task.strategy_template_version}</span>}
