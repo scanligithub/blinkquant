@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const cleanVersions = [...byVersion.values()].sort((a, b) => a.version_no - b.version_no);
+    const cleanVersions = Array.from(byVersion.values()).sort((a, b) => a.version_no - b.version_no);
     if (cleanVersions.length === 0) {
       cleanVersions.push({ version_no: 1, name, formula, timeframe });
     }
