@@ -78,6 +78,17 @@ export default function SelectionStrategyPage() {
     finally { setSaving(false); }
   };
 
+  const createBacktestFromVersion = (version: Pick<Version, 'name' | 'formula' | 'timeframe' | 'version_no'>) => {
+    sessionStorage.setItem('bq-pending-backtest-from-selection', JSON.stringify({
+      id: Number(strategyId),
+      version_no: version.version_no,
+      name: version.name,
+      formula: version.formula,
+      timeframe: version.timeframe,
+    }));
+    router.push('/select?tab=backtest');
+  };
+
   const useVersion = (version: Pick<Version, 'name' | 'formula' | 'timeframe' | 'version_no'>) => {
     sessionStorage.setItem('bq-pending-selection-strategy', JSON.stringify({
       id: strategyId, name: version.name, formula: version.formula, timeframe: version.timeframe, version_no: version.version_no,
@@ -108,15 +119,29 @@ export default function SelectionStrategyPage() {
             <div>
               <Link href="/strategies" className="text-sm font-semibold text-slate-500 hover:text-blue-600">← 策略库</Link>
               <h1 className="text-2xl font-black mt-2">{strategy?.name || '选股策略'}</h1>
-              <p className="text-sm text-slate-500 mt-1">选股策略 · 当前版本 {strategy?.version_no || versions[0]?.version_no || 1}</p>
+              <p className="text-sm text-slate-500 mt-1">选股策略 · 当前版本 {strategy?.version_no || versions[0]?.version_no || 1}{strategy?.source_backtest_strategy_id ? ' · 提取自回测策略' : ''}</p>
             </div>
             <div className="flex gap-2">
               {strategy && <button type="button" onClick={() => useVersion({ name: strategy.name, formula: strategy.formula, timeframe: strategy.timeframe, version_no: strategy.version_no || versions[0]?.version_no || 1 })} className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">运行选股</button>}
+              {strategy && <button type="button" onClick={() => createBacktestFromVersion({ name: strategy.name, formula: strategy.formula, timeframe: strategy.timeframe, version_no: strategy.version_no || versions[0]?.version_no || 1 })} className="px-4 py-2.5 rounded-xl bg-white border border-blue-200 text-blue-600 text-sm font-bold hover:bg-blue-50">用于创建回测策略</button>}
               {strategy && <button type="button" onClick={() => void deleteStrategy()} className="px-3 py-2.5 rounded-xl bg-white border border-red-200 text-red-500 text-sm font-bold hover:bg-red-50">删除</button>}
             </div>
           </div>
 
           {loading ? <div className="bg-white rounded-2xl border p-12 text-center text-slate-400">加载中...</div> : error && !strategy ? <div className="bg-white rounded-2xl border border-red-200 p-8 text-red-600">{error}</div> : strategy ? <>
+            {strategy?.source_backtest_strategy_id && (
+              <section className="bg-white rounded-2xl border border-amber-200 shadow-sm p-5">
+                <div className="text-xs font-bold text-amber-700">来源回测策略</div>
+                <div className="mt-1 text-sm text-slate-700">
+                  <Link href={'/strategies/backtest/' + strategy.source_backtest_strategy_id} className="font-semibold text-blue-600 hover:underline">
+                    {strategy.source_backtest_strategy_name || ('回测策略 #' + strategy.source_backtest_strategy_id)}
+                  </Link>
+                  {' · v' + (strategy.source_backtest_strategy_version || 1)}
+                </div>
+                {strategy.source_backtest_strategy_trigger && <div className="mt-1 text-xs text-slate-400">Entry 触发：{strategy.source_backtest_strategy_trigger}</div>}
+              </section>
+            )}
+
             <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-bold text-slate-800">当前策略</div>
@@ -153,7 +178,10 @@ export default function SelectionStrategyPage() {
                     <div className="mt-1 text-sm font-mono text-slate-500 break-all">{version.formula}</div>
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className="text-xs text-slate-400">周期：{version.timeframe}</span>
-                      <button type="button" onClick={() => useVersion(version)} className="px-3 py-1.5 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">用此版本运行</button>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => useVersion(version)} className="px-3 py-1.5 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">用此版本运行</button>
+                        <button type="button" onClick={() => createBacktestFromVersion(version)} className="px-3 py-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">以此版本创建回测</button>
+                      </div>
                     </div>
                   </div>)}
                 </div>}
