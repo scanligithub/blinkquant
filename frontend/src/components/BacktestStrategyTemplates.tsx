@@ -8,7 +8,7 @@ export interface BacktestTemplateConfig {
   min_listing_days: number;
   exclude_st: boolean;
 }
-interface Template {
+export interface BacktestStrategyTemplate {
   id: number;
   name: string;
   description?: string | null;
@@ -22,7 +22,7 @@ interface Props {
   onTemplateSelected?: (templateId: number | null) => void;
 }
 
-const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string; config: BacktestTemplateConfig }> = [
+export const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string; config: BacktestTemplateConfig }> = [
   {
     id: 'ma20-trend',
     name: 'MA20 趋势',
@@ -99,7 +99,7 @@ const BUILT_IN_TEMPLATES: Array<{ id: string; name: string; description: string;
 
 export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTemplateSelected }: Props) {
   const [open, setOpen] = useState(false);
-  const [templates, setTemplates] = useState<Template[]>([]);
+  const [templates, setTemplates] = useState<BacktestStrategyTemplate[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -163,7 +163,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
     }
   };
 
-  const edit = (template: Template) => {
+  const edit = (template: BacktestStrategyTemplate) => {
     selectTemplate(template.id);
     setEditingId(template.id);
     setName(template.name);
@@ -172,7 +172,7 @@ export default function BacktestStrategyTemplates({ currentConfig, onLoad, onTem
     onLoad(template.config);
   };
 
-  const copy = (template: Template) => {
+  const copy = (template: BacktestStrategyTemplate) => {
     selectTemplate(null);
     setEditingId(null);
     setName(`${template.name} 副本`);
