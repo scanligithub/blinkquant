@@ -17,6 +17,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const result = await sql`
     SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at,
+      s.source_backtest_strategy_id, s.source_backtest_strategy_version,
+      s.source_backtest_strategy_name, s.source_backtest_strategy_trigger,
       COALESCE((SELECT MAX(v.version_no) FROM strategy_versions v WHERE v.strategy_id = s.id), 1)::int AS version_no
     FROM strategies s
     WHERE s.id = ${id} AND s.user_id = ${auth.user.userId}
@@ -38,7 +40,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const body = await req.json();
 
   const existing = await sql`
-    SELECT id, name, formula, timeframe FROM strategies
+    SELECT id, name, formula, timeframe, source_backtest_strategy_id,
+           source_backtest_strategy_version, source_backtest_strategy_name,
+           source_backtest_strategy_trigger FROM strategies
     WHERE id = ${id} AND user_id = ${auth.user.userId} LIMIT 1
   `;
   if (existing.rows.length === 0) {
@@ -78,8 +82,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (!strategy) return NextResponse.json({ error: '策略不存在' }, { status: 404 });
 
     await sql`
-      INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe)
-      VALUES (${id}, ${nextVersion}, ${name}, ${formula}, ${timeframe})
+      INSERT INTO strategy_versions (
+        strategy_id, version_no, name, formula, timeframe,
+        source_backtest_strategy_id, source_backtest_strategy_version,
+        source_backtest_strategy_name, source_backtest_strategy_trigger
+      )
+      VALUES (${id}, ${nextVersion}, ${name}, ${formula}, ${timeframe},
+              ${current.source_backtest_strategy_id ?? null},
+              ${current.source_backtest_strategy_version ?? null},
+              ${current.source_backtest_strategy_name ?? null},
+              ${current.source_backtest_strategy_trigger ?? null})
     `;
 
     return NextResponse.json({ strategy: { ...strategy, version_no: nextVersion } });
