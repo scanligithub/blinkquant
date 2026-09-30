@@ -39,7 +39,6 @@ interface StockResearchPanelProps {
   sectors: { code: string; name: string; type: string }[];
   expandedSectors: Record<string, boolean>;
   chartLoading: boolean;
-  sectorDataCache: any[];
   chartTimeframe: string;
   onChangeChartTimeframe: (value: string) => void;
   subChartType: string;
@@ -63,17 +62,16 @@ interface StockResearchPanelProps {
   onToggleFullscreen: () => Promise<void>;
   backtestResult: any;
   backtestLoading: boolean;
-  backtestEmptyText?: string;
 }
 
 export default function StockResearchPanel({
   sidebarTab, selectedStock, stockList, sectors, expandedSectors, chartLoading,
-  sectorDataCache, chartTimeframe, onChangeChartTimeframe,
+  chartTimeframe, onChangeChartTimeframe,
   subChartType, onChangeSubChartType, mainChartType, onChangeMainChartType, isFullScreen,
   chartWrapperRef, adjustMode, adjustMenuOpen, adjustMenuRef, onChangeAdjustMode,
   onChangeAdjustMenuOpen, onChangeSectorsExpanded, onViewStock, onViewSector,
   onToggleWatchlist, watchlistCodes, lastStockRef, onReturnToStock, onToggleFullscreen,
-  backtestResult, backtestLoading, backtestEmptyText
+  backtestResult, backtestLoading
 }: StockResearchPanelProps) {
   return (
       <section className="lg:col-span-3 order-2 lg:order-2">
