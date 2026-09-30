@@ -9,7 +9,7 @@ export function toCSV(headers: string[], rows: (string | number | null | undefin
   return '\uFEFF' + lines.join('\r\n');
 }
 
-export function buildUserExport(user: any, watchlist: any[], strategies: any[]): object {
+export function buildUserExport(user: any, watchlist: any[], strategies: any[], watchlists: any[] = []): object {
   return {
     exported_at: new Date().toISOString(),
     user: {
@@ -21,6 +21,14 @@ export function buildUserExport(user: any, watchlist: any[], strategies: any[]):
       last_login_at: user.last_login_at ?? null,
     },
     watchlist: watchlist.map((w) => ({ code: w.code, created_at: w.created_at })),
+    watchlists: watchlists.map((list) => ({
+      id: list.id,
+      name: list.name,
+      is_default: !!list.is_default,
+      created_at: list.created_at,
+      updated_at: list.updated_at,
+      items: (list.items || []).map((w: any) => ({ code: w.code, created_at: w.created_at })),
+    })),
     strategies: strategies.map((s) => ({
       name: s.name, formula: s.formula, timeframe: s.timeframe,
       created_at: s.created_at, updated_at: s.updated_at,
