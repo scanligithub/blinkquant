@@ -223,6 +223,9 @@ export default function TaskCenterPage() {
 
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
                         <Link href={'/tasks/' + task.id} className="px-3 py-2 text-xs font-bold border border-slate-200 rounded-lg text-slate-600 hover:bg-white">详情</Link>
+                        {task.status === 'done' && (
+                          <Link href={task.task_type === 'selection' ? '/artifacts/selections/' + task.id : '/artifacts/backtests/' + task.id} className="px-3 py-2 text-xs font-bold border border-blue-200 rounded-lg text-blue-600 hover:bg-blue-50">成果</Link>
+                        )}
                         {['pending', 'queued', 'running'].includes(task.status) && (
                           <button type="button" disabled={busyId === task.id} onClick={() => void cancel(task.id)} className="px-3 py-2 text-xs font-bold border border-red-200 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50">取消</button>
                         )}
