@@ -434,12 +434,14 @@ async def list_artifacts(
     counts = await fetchrow(f"""
         SELECT
             COUNT(*) AS global_total,
+            COALESCE(SUM(result_bytes), 0) AS global_used_bytes,
             COALESCE(SUM(CASE WHEN artifact_type = 'selection' THEN 1 ELSE 0 END), 0) AS selection_total,
             COALESCE(SUM(CASE WHEN artifact_type = 'backtest' THEN 1 ELSE 0 END), 0) AS backtest_total
         FROM artifacts
         WHERE {base_where_sql}
     """, *base_params)
     global_total = int(counts["global_total"] or 0) if counts else 0
+    global_used_bytes = int(counts["global_used_bytes"] or 0) if counts else 0
     selection_total = int(counts["selection_total"] or 0) if counts else 0
     backtest_total = int(counts["backtest_total"] or 0) if counts else 0
 
@@ -481,6 +483,7 @@ async def list_artifacts(
         "artifacts": items,
         "total": total,
         "global_total": global_total,
+        "global_used_bytes": global_used_bytes,
         "selection_total": selection_total,
         "backtest_total": backtest_total,
         "used_bytes": used_bytes,
