@@ -110,6 +110,20 @@ async def _migrate() -> None:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN strategy_template_updated_at TEXT")
     if "strategy_template_version" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN strategy_template_version INTEGER")
+
+    # Existing user templates predate version history; preserve them as immutable v1 snapshots.
+    await _pool.execute("""
+        INSERT INTO backtest_strategy_versions (
+            strategy_template_id, version_no, name, description, config, created_at
+        )
+        SELECT t.id, 1, t.name, t.description, t.config, COALESCE(t.created_at, datetime('now'))
+        FROM backtest_strategy_templates t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM backtest_strategy_versions v
+            WHERE v.strategy_template_id = t.id
+        )
+    """)
+
     if "source_task_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN source_task_id INTEGER")
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_tq_source_task ON task_queue (source_task_id)")
