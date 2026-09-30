@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import AISelectModal from '../AISelectModal';
@@ -9,13 +9,10 @@ import AppShell from '../app/AppShell';
 import SelectionControls from './SelectionControls';
 import SelectionResultsSidebar from './SelectionResultsSidebar';
 import StockResearchPanel from './StockResearchPanel';
+import useStockResearch from '@/hooks/useStockResearch';
 
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
 
-import { parquetReadObjects } from 'hyparquet';
-import { compressors } from 'hyparquet-compressors';
-import { applyAdjust } from '@/utils/applyAdjust';
-import { parseParquetRecords } from '@/utils/parquet';
 
 // 板块分组显示配置：行业常驻，概念/地域超过阈值折叠
 function nodeIdFromHealthCard(node: any, idx: number): "node1" | "node2" | "node3" {
@@ -70,134 +67,37 @@ export default function SelectionWorkspace() {
   const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
   const [selectDate, setSelectDate] = useState('');
   const [timeframe, setTimeframe] = useState('D');
-  const [chartTimeframe, setChartTimeframe] = useState('D');
-  const [subChartType, setSubChartType] = useState('MACD');
-  const [mainChartType, setMainChartType] = useState('MA'); // 新增：主图指标切换状态
+  const {
+    chartTimeframe,
+    subChartType,
+    mainChartType,
+    setSubChartType,
+    setMainChartType,
+    changeChartTimeframe,
+    isFullScreen,
+    chartWrapperRef,
+    adjustMode,
+    adjustMenuOpen,
+    adjustMenuRef,
+    changeAdjustMode,
+    setAdjustMenuOpen,
+    selectedStock,
+    clearSelectedStock,
+    chartLoading,
+    dailyDataCache,
+    adjustedDaily,
+    sectorDataCache,
+    sectors,
+    expandedSectors,
+    setExpandedSectors,
+    lastStockRef,
+    stockList,
+    viewStock,
+    viewSector,
+    toggleFullscreen,
+    returnToStock,
+  } = useStockResearch();
 
-  // 集群状态管理
-  const { 
-    nodes: clusterNodes, 
-    queues,
-    myTasks, 
-    submitTask,
-    cancelTask,
-    deleteTask,
-  } = useCluster();
-  
-  const [isFullScreen, setIsFullScreen] = useState(false);
-  const [showRotateHint, setShowRotateHint] = useState(false);
-  const chartWrapperRef = useRef<HTMLDivElement>(null);
-const [adjustMode, setAdjustMode] = useState<'none'|'qfq'|'hfq'>('none');
-const [adjustMenuOpen, setAdjustMenuOpen] = useState(false);
-const adjustMenuRef = useRef<HTMLDivElement>(null);
-
-// Load saved adjust mode from localStorage on mount
-useEffect(() => {
-  const saved = localStorage.getItem('klineAdjustMode');
-  if (saved === 'none' || saved === 'qfq' || saved === 'hfq') {
-    setAdjustMode(saved as any);
-  }
-}, []);
-
-// Close adjust dropdown when clicking outside
-useEffect(() => {
-  const handleClickOutside = (e: MouseEvent) => {
-    if (adjustMenuOpen && adjustMenuRef.current && !adjustMenuRef.current.contains(e.target as Node)) {
-      setAdjustMenuOpen(false);
-    }
-  };
-  document.addEventListener('mousedown', handleClickOutside);
-  return () => document.removeEventListener('mousedown', handleClickOutside);
-}, [adjustMenuOpen]);
-
-
-  
-  // 检测是否为iOS设备
-  const isIOS = () => {
-    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  };
-  
-  // 检测是否为移动端
-  const isMobile = () => {
-    return window.innerWidth < 768;
-  };
-  
-  useEffect(() => {
-    const handler = () => {
-      const isFullscreen = !!document.fullscreenElement;
-      setIsFullScreen(isFullscreen);
-      
-      // 退出全屏时隐藏横屏提示
-      if (!isFullscreen) {
-        setShowRotateHint(false);
-        // 释放屏幕方向锁定
-        if (screen.orientation && screen.orientation.unlock) {
-          screen.orientation.unlock();
-        }
-      }
-    };
-    document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
-  }, []);
-  
-  // 监听屏幕方向变化
-  useEffect(() => {
-    const handleOrientationChange = () => {
-      // 如果是横屏，隐藏提示
-      if (window.innerWidth > window.innerHeight) {
-        setShowRotateHint(false);
-      }
-    };
-    
-    window.addEventListener('resize', handleOrientationChange);
-    window.addEventListener('orientationchange', handleOrientationChange);
-    
-    return () => {
-      window.removeEventListener('resize', handleOrientationChange);
-      window.removeEventListener('orientationchange', handleOrientationChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const checkSession = async () => {
-      try {
-        const res = await fetch('/api/auth/session', { cache: 'no-store' });
-        const json = await res.json();
-        if (!mounted) return;
-        if (json.user) {
-          setUser(json.user);
-          setAuthLoading(false);
-        } else {
-          // Not logged in: clear any stale backtest state
-          localStorage.removeItem('backtestJobId');
-          localStorage.removeItem('backtestNode');
-          localStorage.removeItem('backtestTime');
-          router.replace('/login');
-        }
-      } catch (e) {
-        if (mounted) router.replace('/login');
-      }
-    };
-    checkSession();
-    return () => { mounted = false; };
-  }, [router]);
-
-  const [results, setResults] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectMeta, setSelectMeta] = useState<{ date?: string | null; degraded?: boolean } | null>(null);
-  const [selectedStock, setSelectedStock] = useState<{kind: 'stock' | 'sector'; code: string; name?: string; data: any} | null>(null);
-  const [chartLoading, setChartLoading] = useState(false);
-  const [dailyDataCache, setDailyDataCache] = useState<any[]>([]);
-  const [sectorDataCache, setSectorDataCache] = useState<any[]>([]);
-  const [sectors, setSectors] = useState<{ code: string; name: string; type: string }[]>([]);
-  const [expandedSectors, setExpandedSectors] = useState<Record<string, boolean>>({});
-  const lastStockRef = useRef<{ code: string; name: string } | null>(null);
-
-  const adjustedDaily = useMemo(() => applyAdjust(dailyDataCache, adjustMode), [dailyDataCache, adjustMode]); 
-
-  const [stockList, setStockList] = useState<Array<{code: string; name: string}>>([]);
   const [clusterStatus, setClusterStatus] = useState<any>(null);
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
 
@@ -213,38 +113,6 @@ useEffect(() => {
     fetchStatus();
     const timer = setInterval(fetchStatus, 5000); 
     return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const loadStockList = async () => {
-      const CACHE_KEY = 'stockListCache_v1';
-      const CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 小时过期
-      const cachedStr = localStorage.getItem(CACHE_KEY);
-      if (cachedStr) {
-        try {
-          const cachedData = JSON.parse(cachedStr);
-          // 检查是否在有效期内
-          if (Date.now() - cachedData.timestamp < CACHE_EXPIRY_MS) {
-            setStockList(cachedData.list);
-            return;
-          }
-        } catch (e) {
-          // 解析失败或格式不对，直接跳过走网络请求
-          console.warn('Cache parse failed, fetching fresh list');
-        }
-      }
-      try {
-        const res = await fetch('/api/stock-list');
-        if (!res.ok) throw new Error('Failed to load stock list');
-        const data = await res.json();
-        setStockList(data);
-        // 存入带时间戳的对象
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), list: data }));
-      } catch (err) {
-        console.error('Failed to load stock list', err);
-      }
-    };
-    loadStockList();
   }, []);
 
   const refreshWatchlist = useCallback(async () => {
@@ -484,7 +352,7 @@ const POLL_TIMEOUT = 60000;
   }, []);
 
   const handleSelect = async (overrides?: { formula?: string; timeframe?: string; date?: string }) => {
-    setLoading(true); setResults([]); setSelectedStock(null); setSelectMeta(null);
+    setLoading(true); setResults([]); clearSelectedStock(); setSelectMeta(null);
     const f = overrides?.formula ?? formula;
     const t = overrides?.timeframe ?? timeframe;
     const d = overrides?.date;
@@ -551,105 +419,6 @@ const POLL_TIMEOUT = 60000;
     }
     setLoading(false);
   };
-
-  const resampleData = useCallback((dailyData: any[], targetTimeframe: string) => {
-    if (targetTimeframe === 'D') return dailyData;
-    const grouped = new Map<string, any[]>();
-    
-    dailyData.forEach(item => {
-      const date = new Date(item.time * 1000);
-      let key: string;
-      if (targetTimeframe === 'W') {
-        const dayOfWeek = date.getDay();
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - dayOfWeek);
-        key = weekStart.toISOString().split('T')[0];
-      } else {
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
-      }
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(item);
-    });
-    
-    const resampled: any[] = [];
-    grouped.forEach((items) => {
-      const sortedItems = items.sort((a, b) => a.time - b.time);
-      const first = sortedItems[0];
-      const last = sortedItems[sortedItems.length - 1];
-resampled.push({
-  time: first.time,
-  open: first.open,
-  high: Math.max(...sortedItems.map(i => i.high)),
-  low: Math.min(...sortedItems.map(i => i.low)),
-  close: last.close,
-  volume: sortedItems.reduce((sum, i) => sum + i.volume, 0),
-  amount: sortedItems.reduce((sum, i) => sum + (i.amount || 0), 0),
-  turn: last.turn,
-  peTTM: last.peTTM,
-  total_mv: last.total_mv,
-  float_mv: last.float_mv,
-  main_net: sortedItems.reduce((sum, i) => sum + (i.main_net || 0), 0), // 聚合资金流数据
-});
-    });
-    return resampled.sort((a, b) => a.time - b.time);
-  }, []);
-
-  const viewStock = useCallback(async (code: string) => {
-    setChartLoading(true);
-    try {
-      const res = await fetch(`/api/kline?code=${code}&timeframe=D`);
-      if (!res.ok) throw new Error('Fetch failed');
-      const buffer = await res.arrayBuffer();
-      if (buffer.byteLength === 0) throw new Error('Empty buffer');
-      
-      const records = await parquetReadObjects({ file: buffer, compressors });
-      if (!records || records.length === 0) throw new Error('Empty records');
-
-      const dailyData = parseParquetRecords(records);
-
-setDailyDataCache(dailyData);
-       const adjusted = applyAdjust(dailyData, adjustMode);
-       const resampledData = resampleData(adjusted, chartTimeframe);
-       const stock = stockList.find(s => s.code === code);
-       setSelectedStock({ kind: 'stock', code, name: stock?.name || code, data: resampledData });
-       // 懒加载该股票的板块标签（失败静默）
-       try {
-         const sectorRes = await fetch(`/api/stock-sectors?code=${encodeURIComponent(code)}`);
-         if (sectorRes.ok) {
-           const sectorJson = await sectorRes.json();
-           setSectors(sectorJson.sectors || []);
-           setExpandedSectors({});
-         } else {
-           setSectors([]);
-         }
-       } catch (e) {
-         console.warn('Failed to load stock sectors:', e);
-         setSectors([]);
-       }
-    } catch (err: any) { alert(`Failed: ${err.message}`); } 
-    finally { setChartLoading(false); }
-  }, [chartTimeframe, stockList, resampleData, adjustMode]);
-
-  const viewSector = useCallback(async (sectorCode: string, sectorName: string) => {
-    setChartLoading(true);
-    try {
-      const res = await fetch(`/api/sector-kline?code=${encodeURIComponent(sectorCode)}&timeframe=D`);
-      if (!res.ok) throw new Error('Fetch failed');
-      const buffer = await res.arrayBuffer();
-      if (buffer.byteLength === 0) throw new Error('Empty buffer');
-
-      const records = await parquetReadObjects({ file: buffer, compressors });
-      if (!records || records.length === 0) throw new Error('Empty records');
-
-      const sectorDaily = parseParquetRecords(records);
-      setSectorDataCache(sectorDaily);
-      setSelectedStock({ kind: 'sector', code: sectorCode, name: sectorName, data: resampleData(sectorDaily, chartTimeframe) });
-    } catch (err: any) {
-      alert(`Failed: ${err.message}`);
-    } finally {
-      setChartLoading(false);
-    }
-  }, [chartTimeframe, resampleData]);
 
   if (authLoading) {
     return (
@@ -783,16 +552,7 @@ setDailyDataCache(dailyData);
             expandedSectors={expandedSectors}
             chartLoading={chartLoading}
             chartTimeframe={chartTimeframe}
-            onChangeChartTimeframe={(value) => {
-              setChartTimeframe(value);
-              if (selectedStock?.kind === 'sector') {
-                if (sectorDataCache.length > 0) {
-                  setSelectedStock({ ...selectedStock, data: resampleData(sectorDataCache, value) });
-                }
-              } else if (adjustedDaily.length > 0) {
-                setSelectedStock({ ...selectedStock, data: resampleData(adjustedDaily, value) });
-              }
-            }}
+            onChangeChartTimeframe={changeChartTimeframe}
             subChartType={subChartType}
             onChangeSubChartType={setSubChartType}
             mainChartType={mainChartType}
@@ -802,15 +562,7 @@ setDailyDataCache(dailyData);
             adjustMode={adjustMode}
             adjustMenuOpen={adjustMenuOpen}
             adjustMenuRef={adjustMenuRef}
-            onChangeAdjustMode={(value) => {
-              setAdjustMode(value);
-              localStorage.setItem('klineAdjustMode', value);
-              setAdjustMenuOpen(false);
-              if (selectedStock?.kind === 'stock' && dailyDataCache.length > 0) {
-                const adjusted = applyAdjust(dailyDataCache, value);
-                setSelectedStock(prev => prev ? { ...prev, data: resampleData(adjusted, chartTimeframe) } : prev);
-              }
-            }}
+            onChangeAdjustMode={changeAdjustMode}
             onChangeAdjustMenuOpen={setAdjustMenuOpen}
             onChangeSectorsExpanded={setExpandedSectors}
             onViewStock={viewStock}
@@ -818,41 +570,8 @@ setDailyDataCache(dailyData);
             onToggleWatchlist={toggleWatchlist}
             watchlistCodes={watchlistCodes}
             lastStockRef={lastStockRef}
-            onReturnToStock={() => {
-              const last = lastStockRef.current;
-              if (!last) return;
-              setSelectedStock({ kind: 'stock', code: last.code, name: last.name, data: resampleData(adjustedDaily, chartTimeframe) });
-            }}
-            onToggleFullscreen={async () => {
-              if (!document.fullscreenElement) {
-                try {
-                  await chartWrapperRef.current?.requestFullscreen();
-                  if (isMobile()) {
-                    if (isIOS()) {
-                      setShowRotateHint(true);
-                    } else {
-                      try {
-                        await (screen.orientation as any).lock('landscape');
-                      } catch (e) {
-                        console.log('Orientation lock not supported:', e);
-                      }
-                    }
-                  }
-                } catch (e) {
-                  console.log('Fullscreen request failed:', e);
-                }
-              } else {
-                try {
-                  await document.exitFullscreen();
-                  setShowRotateHint(false);
-                  if (screen.orientation && screen.orientation.unlock) {
-                    screen.orientation.unlock();
-                  }
-                } catch (e) {
-                  console.log('Exit fullscreen failed:', e);
-                }
-              }
-            }}
+            onReturnToStock={returnToStock}
+            onToggleFullscreen={toggleFullscreen}
             backtestResult={backtestResult}
             backtestLoading={backtestLoading}
           />
