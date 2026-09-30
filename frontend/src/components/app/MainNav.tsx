@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { downloadFromResponse } from '@/lib/download';
 
@@ -21,7 +21,7 @@ interface MainNavProps {
 const NAV_ITEMS = [
   { label: '选股', href: '/select', enabled: true },
   { label: '股票研究', href: '/stocks', enabled: true },
-  { label: '自选股', href: '/watchlists', enabled: false },
+  { label: '自选股', href: '/watchlists', enabled: true },
   { label: '策略库', href: '/strategies', enabled: false },
   { label: '回测研究', href: '/backtests', enabled: false },
   { label: '成果库', href: '/artifacts', enabled: false },
@@ -36,6 +36,7 @@ export default function MainNav({
   onOpenStrategies,
 }: MainNavProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const renderNavItem = (item: typeof NAV_ITEMS[number]) => {
@@ -101,7 +102,7 @@ export default function MainNav({
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    onOpenWatchlist?.();
+                    router.push('/watchlists');
                   }}
                   className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                 >
