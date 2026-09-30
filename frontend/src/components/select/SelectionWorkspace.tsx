@@ -156,6 +156,24 @@ export default function SelectionWorkspace() {
     if (user) refreshWatchlist();
   }, [user, refreshWatchlist]);
 
+  // 从策略库进入选股时，读取一次待运行的策略并清理会话标记。
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const raw = sessionStorage.getItem('bq-pending-selection-strategy');
+      if (!raw) return;
+      const pending = JSON.parse(raw);
+      if (typeof pending?.formula === 'string' && pending.formula.trim()) {
+        setFormula(pending.formula);
+        if (['D', 'W', 'M'].includes(pending.timeframe)) setTimeframe(pending.timeframe);
+      }
+    } catch (e) {
+      console.error('Failed to restore selection strategy', e);
+    } finally {
+      sessionStorage.removeItem('bq-pending-selection-strategy');
+    }
+  }, [user, setFormula, setTimeframe]);
+
   // Listen for openBacktestResult from TaskList
   useEffect(() => {
     const handler = (e: Event) => {
