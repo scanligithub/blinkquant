@@ -65,10 +65,7 @@ export default function SelectionWorkspace() {
   const {
     nodes: clusterNodes,
     queues,
-    myTasks,
     submitTask,
-    cancelTask,
-    deleteTask,
   } = useCluster();
 
   const {
