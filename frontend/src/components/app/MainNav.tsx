@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { downloadFromResponse } from '@/lib/download';
 
@@ -19,7 +20,7 @@ interface MainNavProps {
 
 const NAV_ITEMS = [
   { label: '选股', href: '/select', enabled: true },
-  { label: '股票研究', href: '/stocks', enabled: false },
+  { label: '股票研究', href: '/stocks', enabled: true },
   { label: '自选股', href: '/watchlists', enabled: false },
   { label: '策略库', href: '/strategies', enabled: false },
   { label: '回测研究', href: '/backtests', enabled: false },
@@ -34,18 +35,23 @@ export default function MainNav({
   onOpenWatchlist,
   onOpenStrategies,
 }: MainNavProps) {
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const renderNavItem = (item: typeof NAV_ITEMS[number]) =>
-    item.enabled ? (
-      <Link
-        key={item.href}
-        href={item.href}
-        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-blue-700 bg-blue-50"
-      >
-        {item.label}
-      </Link>
-    ) : (
+  const renderNavItem = (item: typeof NAV_ITEMS[number]) => {
+    if (item.enabled) {
+      const active = pathname === item.href || pathname.startsWith(item.href + '/');
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold ${active ? 'text-blue-700 bg-blue-50' : 'text-slate-600 hover:bg-slate-50'}`}
+        >
+          {item.label}
+        </Link>
+      );
+    }
+    return (
       <span
         key={item.href}
         aria-disabled="true"
@@ -54,7 +60,8 @@ export default function MainNav({
       >
         {item.label}
       </span>
-    );
+      );
+  };
 
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
