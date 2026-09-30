@@ -10,6 +10,7 @@ import SelectionControls from './SelectionControls';
 import SelectionResultsSidebar from './SelectionResultsSidebar';
 import StockResearchPanel from './StockResearchPanel';
 import useStockResearch from '@/hooks/useStockResearch';
+import useSelection from '@/hooks/useSelection';
 
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
 
@@ -64,9 +65,6 @@ export default function SelectionWorkspace() {
   const [backtestTemplateId, setBacktestTemplateId] = useState<number | null>(null);
   const backtestLoadingRef = useRef(false);
   const [strategyName, setStrategyName] = useState('');
-  const [formula, setFormula] = useState('CLOSE > MA(CLOSE, 20)');
-  const [selectDate, setSelectDate] = useState('');
-  const [timeframe, setTimeframe] = useState('D');
   const {
     chartTimeframe,
     subChartType,
@@ -94,6 +92,23 @@ export default function SelectionWorkspace() {
     toggleFullscreen,
     returnToStock,
   } = useStockResearch();
+
+
+  const {
+    formula,
+    setFormula,
+    selectDate,
+    setSelectDate,
+    timeframe,
+    setTimeframe,
+    results,
+    loading,
+    selectMeta,
+    handleSelect,
+  } = useSelection({
+    submitTask,
+    onClearSelectedStock: clearSelectedStock,
+  });
 
   const [clusterStatus, setClusterStatus] = useState<any>(null);
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
@@ -347,75 +362,6 @@ const POLL_TIMEOUT = 60000;
     setTimeframe(strategyTimeframe);
     setShowStrategies(false);
   }, []);
-
-  const handleSelect = async (overrides?: { formula?: string; timeframe?: string; date?: string }) => {
-    setLoading(true); setResults([]); clearSelectedStock(); setSelectMeta(null);
-    const f = overrides?.formula ?? formula;
-    const t = overrides?.timeframe ?? timeframe;
-    const d = overrides?.date;
-    try {
-      // 使用新的任务队列 API 进行选股
-      const taskId = await submitTask('selection', { formula: f, timeframe: t, ...(d ? { date: d } : {}) });
-      
-      // 轮询选股任务状态
-      const pollSelection = async (taskId: number) => {
-        while (true) {
-          await new Promise((r) => setTimeout(r, 2000));
-          try {
-            const res = await fetch(`/api/v1/tasks/${taskId}`, { cache: 'no-store' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const task = await res.json();
-            
-            if (task.status === 'done') {
-              // 选股结果直接在 task.result 中
-              // 支持两种格式：
-              // 1. 调度器格式：{ nodes: {...}, codes: [...] }
-              // 2. 直连节点格式：{ success: true, data: [...], date, meta }
-              let codes: string[] | null = null;
-              let signalDate: string | null = null;
-              let degraded = false;
-
-              if (Array.isArray(task.result?.codes)) {
-                // 调度器格式
-                codes = task.result.codes;
-                signalDate = task.result.nodes?.node1?.signal_date ?? null;
-              } else if (task.result?.success && Array.isArray(task.result?.data)) {
-                // 直连节点格式
-                codes = task.result.data;
-                signalDate = task.result.date ?? null;
-                degraded = !!task.result.meta?.degraded;
-              }
-
-              if (codes) {
-                setResults(codes);
-                setSelectMeta({ date: signalDate, degraded });
-              } else {
-                alert(`Selection failed: ${task.result?.error || '未知错误'}`);
-              }
-              return;
-            }
-            if (task.status === 'failed') {
-              alert(`Selection failed: ${task.error || '未知错误'}`);
-              return;
-            }
-            if (task.status === 'cancelled') {
-              alert('选股任务已取消');
-              return;
-            }
-            // queued/running -> continue
-          } catch (e: any) {
-            console.error('Selection poll error:', e);
-            // 继续重试
-          }
-        }
-      };
-      
-      await pollSelection(taskId);
-    } catch (err) { 
-      alert('Gateway connection failed'); 
-    }
-    setLoading(false);
-  };
 
   if (authLoading) {
     return (
