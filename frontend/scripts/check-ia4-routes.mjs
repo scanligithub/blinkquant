@@ -37,6 +37,10 @@ assert.match(home, /SelectionWorkspace/, 'Home must keep the selection workspace
 assert.match(select, /SelectionWorkspace/, '/select must reuse the same selection workspace');
 assert.ok(!existsSync(resolve(root, 'src/app/page.tsx.working')), 'Obsolete aggregate page backup must be removed');
 
+const legacyWatchlist = resolve(root, 'src/app/watchlist/page.tsx');
+assert.ok(existsSync(legacyWatchlist), 'Legacy /watchlist alias must exist');
+assert.match(readFileSync(legacyWatchlist, 'utf8'), /redirect\(['"]\/watchlists['"]\)/, 'Legacy /watchlist must redirect to canonical /watchlists');
+
 const nav = readFileSync(resolve(root, 'src/components/app/MainNav.tsx'), 'utf8');
 for (const [label, href] of [
   ['选股', '/select'],
@@ -51,4 +55,4 @@ for (const [label, href] of [
   assert.ok(nav.includes(`{ label: '${label}', href: '${href}', enabled: true }`), `Navigation item must be enabled: ${label}`);
 }
 
-console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, no obsolete aggregate backup.`);
+console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, /watchlist compatibility redirect, no obsolete aggregate backup.`);
