@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import AISelectModal from '../AISelectModal';
-import type { BacktestParams } from '../BacktestPanel';
 import { useCluster } from '@/hooks/useCluster';
 import AppShell from '../app/AppShell';
 import SelectionControls from './SelectionControls';
@@ -11,6 +10,7 @@ import SelectionResultsSidebar from './SelectionResultsSidebar';
 import StockResearchPanel from './StockResearchPanel';
 import useStockResearch from '@/hooks/useStockResearch';
 import useSelection from '@/hooks/useSelection';
+import useBacktest from '@/hooks/useBacktest';
 
 const StrategyList = dynamic(() => import('../StrategyList'), { ssr: false });
 
@@ -60,10 +60,7 @@ export default function SelectionWorkspace() {
   const [saveStrategyOpen, setSaveStrategyOpen] = useState(false);
   const [showAISelect, setShowAISelect] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'results' | 'watchlist' | 'backtest'>('results');
-  const [backtestResult, setBacktestResult] = useState<any>(null);
-  const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestTemplateId, setBacktestTemplateId] = useState<number | null>(null);
-  const backtestLoadingRef = useRef(false);
   const [strategyName, setStrategyName] = useState('');
   const {
     nodes: clusterNodes,
@@ -119,6 +116,16 @@ export default function SelectionWorkspace() {
     onClearSelectedStock: clearSelectedStock,
   });
 
+  const {
+    backtestResult,
+    backtestLoading,
+    handleBacktest,
+    clearBacktestState,
+  } = useBacktest({
+    submitTask,
+    strategyTemplateId: backtestTemplateId,
+  });
+
   const [clusterStatus, setClusterStatus] = useState<any>(null);
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
 
@@ -152,102 +159,17 @@ export default function SelectionWorkspace() {
     if (user) refreshWatchlist();
   }, [user, refreshWatchlist]);
 
-  // 刷新恢复：检查localStorage中的未完成回测任务
-  useEffect(() => {
-    const savedJobId = localStorage.getItem('backtestJobId');
-    const savedNode = localStorage.getItem('backtestNode');
-    // 清理超过 1 小时的旧记录，防止卡死
-    const savedTime = localStorage.getItem('backtestTime');
-    if (savedTime && Date.now() - parseInt(savedTime) > 3600000) {
-      localStorage.removeItem('backtestJobId');
-      localStorage.removeItem('backtestNode');
-      localStorage.removeItem('backtestTime');
-    }
-    if (savedJobId && savedNode) {
-      const pollSavedJob = async () => {
-        setBacktestLoading(true);
-        let retries = 0;
-        const maxRetries = 20; // 最多重试 20 次（约 1 分钟）
-        try {
-          while (retries < maxRetries) {
-            await new Promise((r) => setTimeout(r, 3000));
-            retries++;
-            try {
-              const pollRes = await fetch(`${savedNode}/api/v1/backtest/async/${savedJobId}`, {
-                signal: AbortSignal.timeout(60000),
-              });
-              if (!pollRes.ok) {
-                const text = await pollRes.text();
-                throw new Error(`HTTP ${pollRes.status}: ${text.slice(0, 200)}`);
-              }
-              const result = await pollRes.json();
-              if (result.status === 'done') {
-                setBacktestResult(result.data);
-                localStorage.removeItem('backtestJobId');
-                localStorage.removeItem('backtestNode');
-                localStorage.removeItem('backtestTime');
-                return;
-              }
-              if (result.status === 'failed' || result.status === 'cancelled' || result.status === 'expired') {
-                localStorage.removeItem('backtestJobId');
-                localStorage.removeItem('backtestNode');
-                localStorage.removeItem('backtestTime');
-                return;
-              }
-              // queued/running -> continue
-            } catch (e) {
-              console.error('Poll error (retry', retries, '):', e);
-              // 继续重试
-            }
-          }
-          alert('恢复回测超时，请重新运行');
-        } catch (e) {
-          console.error('Failed to poll saved job:', e);
-        } finally {
-          localStorage.removeItem('backtestJobId');
-          localStorage.removeItem('backtestNode');
-          localStorage.removeItem('backtestTime');
-          setBacktestLoading(false);
-        }
-      };
-      pollSavedJob();
-    }
-  }, []);
-
-  // Clear any stale backtest state on mount (e.g., from previous sessions)
-  useEffect(() => {
-    localStorage.removeItem('backtestJobId');
-    localStorage.removeItem('backtestNode');
-    localStorage.removeItem('backtestTime');
-  }, []);
-
   // Listen for openBacktestResult from TaskList
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.taskId) {
         setSidebarTab('backtest');
-        setBacktestResult({ taskId: detail.taskId, summary: detail.summary });
       }
     };
     window.addEventListener('openBacktestResult', handler);
     return () => window.removeEventListener('openBacktestResult', handler);
   }, []);
-
-  // Safety: force reset backtestLoading if stuck > 2 minutes
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (backtestLoading) {
-      timer = setTimeout(() => {
-        console.warn('backtestLoading stuck > 2min, force reset');
-        setBacktestLoading(false);
-        localStorage.removeItem('backtestJobId');
-        localStorage.removeItem('backtestNode');
-        localStorage.removeItem('backtestTime');
-      }, 120000);
-    }
-    return () => { if (timer) clearTimeout(timer); };
-  }, [backtestLoading]);
 
   const toggleWatchlist = useCallback(async (code: string) => {
     const exists = watchlistCodes.includes(code);
@@ -275,11 +197,9 @@ export default function SelectionWorkspace() {
       console.error('Logout failed', e);
     }
     // Clear any stale backtest state on logout
-    localStorage.removeItem('backtestJobId');
-    localStorage.removeItem('backtestNode');
-    localStorage.removeItem('backtestTime');
+    clearBacktestState();
     router.replace('/login');
-  }, [router]);
+  }, [clearBacktestState, router]);
 
   const handleSaveStrategy = useCallback(async () => {
     if (!strategyName.trim()) return;
@@ -300,71 +220,6 @@ export default function SelectionWorkspace() {
       alert('保存失败');
     }
   }, [strategyName, formula, timeframe]);
-
-  // HF 节点配置 (兼容旧逻辑，逐步迁移到新 API)
-const HF_NODES = [
-  'https://scanli-blinkquant-node1.hf.space',
-  'https://scanli-blinkquant-node2.hf.space',
-  'https://scanli-blinkquant-node3.hf.space',
-];
-
-const SUBMIT_TIMEOUT = 240000; // 240s for cold start
-const POLL_TIMEOUT = 60000;
-
-  const handleBacktest = async (params: BacktestParams) => {
-    setBacktestLoading(true);
-    setBacktestResult(null);
-    try {
-      // 使用新的任务队列 API
-      const taskId = await submitTask('backtest', params, {
-        strategyTemplateId: backtestTemplateId,
-      });
-      
-      // 轮询任务状态
-      const pollTaskStatus = async (taskId: number) => {
-        while (true) {
-          await new Promise((r) => setTimeout(r, 3000));
-          try {
-            const res = await fetch(`/api/v1/tasks/${taskId}`, { cache: 'no-store' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const task = await res.json();
-            
-            if (task.status === 'done') {
-              if (task.result) {
-                setBacktestResult({ legacy: task.result });
-              } else if (task.result_uri) {
-                setBacktestResult({ taskId: task.id, summary: task.result_summary });
-              } else {
-                setBacktestResult({ taskId: task.id, summary: task.result_summary });
-              }
-              return;
-            }
-            if (task.status === 'failed') {
-              alert(`回测失败: ${task.error || '未知错误'}`);
-              return;
-            }
-            if (task.status === 'cancelled') {
-              alert('回测任务已取消');
-              return;
-            }
-            if (task.status === 'preempted') {
-              alert('回测被选股任务抢占，已自动重新排队');
-              return;
-            }
-            // queued/running -> continue
-          } catch (e: any) {
-            console.error('Poll error:', e);
-            // 继续重试
-          }
-        };
-};
-      await pollTaskStatus(taskId);
-    } catch (e: any) {
-      alert(`回测失败: ${e.message}`);
-    } finally {
-      setBacktestLoading(false);
-    }
-  };
 
   const handleApplyStrategy = useCallback((strategyFormula: string, strategyTimeframe: string) => {
     setFormula(strategyFormula);
