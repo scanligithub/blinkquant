@@ -239,6 +239,7 @@ async def create_task(task: TaskCreate) -> dict:
         "strategy_template_id": row["strategy_template_id"],
         "strategy_template_name": row["strategy_template_name"],
         "strategy_template_updated_at": row["strategy_template_updated_at"],
+        "strategy_template_version": row["strategy_template_version"],
     }
 
 
@@ -338,7 +339,7 @@ async def rerun_task(
             )
             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
             RETURNING id, status, created_at, strategy_template_id,
-                      strategy_template_name, strategy_template_updated_at,
+                      strategy_template_name, strategy_template_updated_at, strategy_template_version,
                       source_task_id
         """,
         task.user_id, task.task_type, json.dumps(task.payload), task.priority, timeout_sec,
