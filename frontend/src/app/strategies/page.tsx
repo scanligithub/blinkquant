@@ -253,6 +253,11 @@ export default function StrategiesPage() {
                         <div className="text-xs text-slate-400 mt-2">
                           {universe.type === 'index' ? '指数 ' + (universe.index_id || '') : '全 A'} · {entry.timeframe || 'D'} · {s.mode === 'event_driven' ? '事件驱动' : '目标组合'} · 更新：{new Date(template.updated_at).toLocaleString()}
                         </div>
+                        {template.config?.source_selection_strategy && (
+                          <div className="text-xs text-blue-600 mt-1">
+                            基于选股策略：{template.config.source_selection_strategy.name} · v{template.config.source_selection_strategy.version_no}
+                          </div>
+                        )}
                         {template.description && <div className="text-xs text-slate-500 mt-1 truncate">{template.description}</div>}
                       </div>
                       <div className="flex flex-wrap gap-2 shrink-0">
