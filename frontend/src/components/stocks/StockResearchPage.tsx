@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import AppShell from '../app/AppShell';
 import StockSearch from '../StockSearch';
+import WatchlistPicker from '../WatchlistPicker';
 import useStockResearch from '@/hooks/useStockResearch';
 
 const KLineChart = dynamic(() => import('../KLineChart'), {
@@ -37,7 +38,6 @@ export default function StockResearchPage() {
 
   const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
   const [adjustMenuOpen, setAdjustMenuOpen] = useState(false);
 
   const research = useStockResearch();
@@ -63,22 +63,6 @@ export default function StockResearchPage() {
     return () => { mounted = false; };
   }, [router]);
 
-  const refreshWatchlist = useCallback(async () => {
-    try {
-      const res = await fetch('/api/watchlist', { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        setWatchlistCodes(json.codes || []);
-      }
-    } catch (e) {
-      console.error('Failed to load watchlist', e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (user) void refreshWatchlist();
-  }, [user, refreshWatchlist]);
-
   useEffect(() => {
     if (symbol && research.stockList.length > 0) {
       void research.viewStock(decodeURIComponent(symbol));
@@ -95,23 +79,6 @@ export default function StockResearchPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [adjustMenuOpen]);
-
-  const toggleWatchlist = useCallback(async (code: string) => {
-    const exists = watchlistCodes.includes(code);
-    try {
-      const res = exists
-        ? await fetch(`/api/watchlist?code=${encodeURIComponent(code)}`, { method: 'DELETE' })
-        : await fetch('/api/watchlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code }),
-          });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setWatchlistCodes((prev) => exists ? prev.filter((c) => c !== code) : [...prev, code]);
-    } catch (e) {
-      console.error('Failed to toggle watchlist', e);
-    }
-  }, [watchlistCodes]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -171,12 +138,7 @@ export default function StockResearchPage() {
               </div>
               {selected?.kind === 'stock' && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => void toggleWatchlist(selected.code)}
-                    className="px-3 py-1.5 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-lg hover:bg-amber-100"
-                  >
-                    {watchlistCodes.includes(selected.code) ? '★ 已自选' : '☆ 加自选'}
-                  </button>
+                  <WatchlistPicker code={selected.code} />
                   <div id="stock-research-adjust-menu" className="relative">
                     <button
                       onClick={() => setAdjustMenuOpen((v) => !v)}
