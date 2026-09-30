@@ -130,6 +130,22 @@ export default function TaskDetailPage() {
                 </section>
               )}
 
+              {task.status === 'done' && task.task_type === 'selection' && (
+                <section className="bg-white rounded-2xl border border-blue-100 shadow-sm p-5">
+                  <h2 className="font-bold text-slate-800">选股成果</h2>
+                  <p className="text-xs text-slate-400 mt-1">本任务已形成历史选股成果快照。</p>
+                  <Link href={'/artifacts/selections/' + task.id} className="inline-block mt-3 px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看选股成果</Link>
+                </section>
+              )}
+
+              {task.status === 'done' && task.task_type === 'backtest' && (
+                <section className="bg-white rounded-2xl border border-blue-100 shadow-sm p-5">
+                  <h2 className="font-bold text-slate-800">回测成果</h2>
+                  <p className="text-xs text-slate-400 mt-1">本任务已形成历史回测成果快照。</p>
+                  <Link href={'/artifacts/backtests/' + task.id} className="inline-block mt-3 px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看回测成果</Link>
+                </section>
+              )}
+
               {task.result_summary && (
                 <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                   <h2 className="font-bold text-slate-800">结果摘要</h2>
