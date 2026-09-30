@@ -168,6 +168,10 @@ export default function SelectionWorkspace() {
     return () => window.removeEventListener('openBacktestResult', handler);
   }, []);
 
+  const handleViewStock = useCallback((code: string) => {
+    router.push(`/stocks/${encodeURIComponent(code)}`);
+  }, [router]);
+
   const toggleWatchlist = useCallback(async (code: string) => {
     const exists = watchlistCodes.includes(code);
     try {
@@ -339,7 +343,7 @@ export default function SelectionWorkspace() {
             watchlistCodes={watchlistCodes}
             selectedCode={selectedStock?.code}
             stockList={stockList}
-            onViewStock={viewStock}
+            onViewStock={handleViewStock}
             onRemoveWatchlist={toggleWatchlist}
             formula={formula}
             backtestLoading={backtestLoading}
@@ -369,7 +373,7 @@ export default function SelectionWorkspace() {
             onChangeAdjustMode={changeAdjustMode}
             onChangeAdjustMenuOpen={setAdjustMenuOpen}
             onChangeSectorsExpanded={setExpandedSectors}
-            onViewStock={viewStock}
+            onViewStock={handleViewStock}
             onViewSector={viewSector}
             onToggleWatchlist={toggleWatchlist}
             watchlistCodes={watchlistCodes}
