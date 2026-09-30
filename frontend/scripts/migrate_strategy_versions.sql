@@ -17,3 +17,21 @@ INSERT INTO strategy_versions (strategy_id, version_no, name, formula, timeframe
 SELECT id, 1, name, formula, timeframe, COALESCE(created_at, NOW())
 FROM strategies s
 WHERE NOT EXISTS (SELECT 1 FROM strategy_versions v WHERE v.strategy_id = s.id);
+
+ALTER TABLE strategies
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_id BIGINT;
+ALTER TABLE strategies
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_version INTEGER;
+ALTER TABLE strategies
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_name TEXT;
+ALTER TABLE strategies
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT;
+
+ALTER TABLE strategy_versions
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_id BIGINT;
+ALTER TABLE strategy_versions
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_version INTEGER;
+ALTER TABLE strategy_versions
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_name TEXT;
+ALTER TABLE strategy_versions
+    ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT;
