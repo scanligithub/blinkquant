@@ -48,8 +48,7 @@ for (const [label, href] of [
   ['任务中心', '/tasks'],
   ['系统状态', '/system'],
 ]) {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(nav, new RegExp(`label: '${escaped}', href: '${href.replaceAll('/', '\\/')}', enabled: true`), `Navigation item must be enabled: ${label}`);
+  assert.ok(nav.includes(`{ label: '${label}', href: '${href}', enabled: true }`), `Navigation item must be enabled: ${label}`);
 }
 
 console.log(`IA4 route regression PASS: ${routeFiles.length} routes, shared selection workspace, 8 enabled navigation items, no obsolete aggregate backup.`);
