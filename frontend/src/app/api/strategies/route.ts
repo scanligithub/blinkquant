@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
+import { ensureSelectionStrategyVersions } from '@/lib/strategy-versions';
 
 export const runtime = 'edge';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  await ensureSelectionStrategyVersions();
 
   const result = await sql`
     SELECT s.id, s.name, s.formula, s.timeframe, s.created_at, s.updated_at,
@@ -21,6 +23,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  await ensureSelectionStrategyVersions();
 
   const body = await req.json();
   const name = String(body?.name || '').trim();
