@@ -25,7 +25,7 @@ const NAV_ITEMS = [
   { label: '策略库', href: '/strategies', enabled: true },
   { label: '回测研究', href: '/backtests', enabled: false },
   { label: '成果库', href: '/artifacts', enabled: false },
-  { label: '任务中心', href: '/tasks', enabled: false },
+  { label: '任务中心', href: '/tasks', enabled: true },
   { label: '系统状态', href: '/system', enabled: false },
 ] as const;
 
