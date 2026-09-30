@@ -4,7 +4,6 @@ import type { MutableRefObject, RefObject, Dispatch, SetStateAction } from 'reac
 import dynamic from 'next/dynamic';
 import StockSearch from '../StockSearch';
 import BacktestResults from '../BacktestResults';
-import { applyAdjust } from '@/utils/applyAdjust';
 import { formatMoney, formatVolume } from '@/utils/format';
 
 const KLineChart = dynamic(() => import('../KLineChart'), {
@@ -40,8 +39,6 @@ interface StockResearchPanelProps {
   sectors: { code: string; name: string; type: string }[];
   expandedSectors: Record<string, boolean>;
   chartLoading: boolean;
-  dailyDataCache: any[];
-  adjustedDaily: any[];
   sectorDataCache: any[];
   chartTimeframe: string;
   onChangeChartTimeframe: (value: string) => void;
@@ -67,18 +64,16 @@ interface StockResearchPanelProps {
   backtestResult: any;
   backtestLoading: boolean;
   backtestEmptyText?: string;
-  onSetSelectedStock: (stock: SelectedStock) => void;
-  onSetSelectedStockData: (data: any[]) => void;
 }
 
 export default function StockResearchPanel({
   sidebarTab, selectedStock, stockList, sectors, expandedSectors, chartLoading,
-  dailyDataCache, adjustedDaily, sectorDataCache, chartTimeframe, onChangeChartTimeframe,
+  sectorDataCache, chartTimeframe, onChangeChartTimeframe,
   subChartType, onChangeSubChartType, mainChartType, onChangeMainChartType, isFullScreen,
   chartWrapperRef, adjustMode, adjustMenuOpen, adjustMenuRef, onChangeAdjustMode,
   onChangeAdjustMenuOpen, onChangeSectorsExpanded, onViewStock, onViewSector,
   onToggleWatchlist, watchlistCodes, lastStockRef, onReturnToStock, onToggleFullscreen,
-  backtestResult, backtestLoading, backtestEmptyText, onSetSelectedStock, onSetSelectedStockData
+  backtestResult, backtestLoading, backtestEmptyText
 }: StockResearchPanelProps) {
   return (
       <section className="lg:col-span-3 order-2 lg:order-2">
@@ -194,7 +189,7 @@ export default function StockResearchPanel({
                       )}
                       {selectedStock?.kind === 'stock' && (
                         <button
-                          onClick={() => toggleWatchlist(selectedStock.code)}
+                          onClick={() => onToggleWatchlist(selectedStock.code)}
                           className="px-3 py-1 text-xs font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md mr-2 hover:bg-amber-100 transition-colors"
                         >
                           {watchlistCodes.includes(selectedStock.code) ? '★ 已自选' : '☆ 加自选'}
@@ -219,10 +214,6 @@ export default function StockResearchPanel({
                 onChangeAdjustMode(opt.value);
                 localStorage.setItem('klineAdjustMode', opt.value);
                 onChangeAdjustMenuOpen(false);
-                if (selectedStock?.kind === 'stock' && dailyDataCache.length > 0) {
-                  const adjusted = applyAdjust(dailyDataCache, opt.value);
-                  onSetSelectedStockData(resampleData(adjusted, chartTimeframe));
-                }
               }}
               className={`w-full text-left px-3 py-1 text-xs ${adjustMode === opt.value ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}
             >
@@ -234,56 +225,13 @@ export default function StockResearchPanel({
     </div>
     )}
                         <button
-                          onClick={async () => {
-                            if (!document.fullscreenElement) {
-                              // 进入全屏
-                              try {
-                                await chartWrapperRef.current?.requestFullscreen();
-                                
-                                // 移动端处理
-                                if (isMobile()) {
-                                  if (isIOS()) {
-                                    // iOS：显示横屏提示
-                                    setShowRotateHint(true);
-                                  } else {
-                                    // Android：强制横屏
-                                    try {
-                                      await (screen.orientation as any).lock('landscape');
-                                    } catch (e) {
-                                      console.log('Orientation lock not supported:', e);
-                                    }
-                                  }
-                                }
-                              } catch (e) {
-                                console.log('Fullscreen request failed:', e);
-                              }
-                            } else {
-                              // 退出全屏
-                              try {
-                                await onToggleFullscreen();
-                                setShowRotateHint(false);
-                                // 释放屏幕方向锁定
-                                if (screen.orientation && screen.orientation.unlock) {
-                                  screen.orientation.unlock();
-                                }
-                              } catch (e) {
-                                console.log('Exit fullscreen failed:', e);
-                              }
-                            }
-                          }}
+                          onClick={() => { void onToggleFullscreen(); }}
                           className="px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200 bg-white rounded-md mr-2 hover:bg-slate-100 transition-colors"
                         >
                           {isFullScreen ? '退出全屏' : '全屏'}
                         </button>
                         {TIMEFRAMES.map((tf) => (
-                          <button key={tf.value} onClick={() => {
-                              onChangeChartTimeframe(tf.value);
-                              if (selectedStock?.kind === 'sector') {
-                                if (sectorDataCache.length > 0) onChangeChartTimeframe(tf.value);
-                              } else if (adjustedDaily && adjustedDaily.length > 0) {
-                                onChangeChartTimeframe(tf.value);
-                              }
-                            }}
+                          <button key={tf.value} onClick={() => onChangeChartTimeframe(tf.value)}
                             className={`px-3 py-1 text-xs font-bold rounded-md ${chartTimeframe === tf.value ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200/50'}`}
                           >
                             {tf.label}
@@ -302,9 +250,9 @@ export default function StockResearchPanel({
                     code={selectedStock.code}
                     data={selectedStock.data}
                     subChartType={subChartType}
-                    onSubChartTypeChange={setSubChartType}
+                    onSubChartTypeChange={onChangeSubChartType}
                     mainChartType={mainChartType}
-                    onMainChartTypeChange={setMainChartType}
+                    onMainChartTypeChange={onChangeMainChartType}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-slate-400 bg-slate-50">选择股票查看图表</div>
