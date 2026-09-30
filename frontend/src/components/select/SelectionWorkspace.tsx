@@ -66,6 +66,15 @@ export default function SelectionWorkspace() {
   const backtestLoadingRef = useRef(false);
   const [strategyName, setStrategyName] = useState('');
   const {
+    nodes: clusterNodes,
+    queues,
+    myTasks,
+    submitTask,
+    cancelTask,
+    deleteTask,
+  } = useCluster();
+
+  const {
     chartTimeframe,
     subChartType,
     mainChartType,
