@@ -753,12 +753,11 @@ async def delete_task(
     user_id: Optional[str] = None,
     role: Optional[str] = None,
 ) -> dict:
-    """真删除：先 cancel（若非终态）→ 删磁盘 → 删 DB 行。"""
-    from .config import RESULT_DIR
-    from .result_store import delete_result_dir
+    """删除任务记录，但不删除已经注册的历史成果。"""
 
     row = await fetchrow(
-        "SELECT id, status, user_id, result_uri, assigned_node, cluster_job_id, task_type "
+        "SELECT id, status, user_id, assigned_node, cluster_job_id, task_type, "
+        "(SELECT id FROM artifacts WHERE task_id = task_queue.id) AS artifact_id "
         "FROM task_queue WHERE id = ?",
         task_id,
     )
@@ -771,12 +770,10 @@ async def delete_task(
         await cancel_task(task_id, user_id=user_id, role=role)
 
     row2 = await fetchrow(
-        "SELECT result_uri, user_id FROM task_queue WHERE id = ?", task_id
+        "SELECT id, user_id FROM task_queue WHERE id = ?", task_id
     )
     if not row2:
         return {"ok": True, "message": "Task already removed"}
-
-    delete_result_dir(row2.get("result_uri"), RESULT_DIR)
 
     async with acquire() as conn:
         if _is_admin(role):
@@ -786,10 +783,11 @@ async def delete_task(
                 "DELETE FROM task_queue WHERE id = ? AND user_id = ?",
                 task_id, user_id,
             )
+    artifact_id = row.get("artifact_id")
     return {
         "ok": True,
         "artifact_id": artifact_id,
-        "message": "Task removed; historical artifact preserved" if artifact_id is not None else "Task and result files deleted",
+        "message": "Task removed; historical artifact preserved" if artifact_id is not None else "Task and result files removed",
     }
 
 
