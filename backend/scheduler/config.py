@@ -18,6 +18,7 @@ INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
 # SQLite 调度库：Node1 本地 SQLite；通过 checkpoint 持久化到 HF Dataset
 # P4.1: strategy templates share the same scheduler SQLite and checkpoint lifecycle.
+# IA5.2.3: /data is the restart-durable root for scheduler metadata and result artifacts.
 SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/data/scheduler.db")
 SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
 SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
@@ -95,6 +96,7 @@ class TaskStatus(str, Enum):
     FAILED     = "failed"
     CANCELLED  = "cancelled"
     PREEMPTED  = "preempted"
+
 
 RESULT_DIR = os.getenv("RESULT_DIR", "/data/results")
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
