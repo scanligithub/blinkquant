@@ -94,7 +94,7 @@ class TaskStatus(str, Enum):
     DONE       = "done"
     FAILED     = "failed"
     CANCELLED  = "cancelled"
-    PREEMPTED  = "preempted
+    PREEMPTED  = "preempted"
 
 RESULT_DIR = os.getenv("RESULT_DIR", "/data/results")
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
