@@ -18,7 +18,7 @@ INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "internal-secret-change-me")
 
 # SQLite 调度库：Node1 本地 SQLite；通过 checkpoint 持久化到 HF Dataset
 # P4.1: strategy templates share the same scheduler SQLite and checkpoint lifecycle.
-SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/tmp/scheduler.db")
+SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/data/scheduler.db")
 SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
 SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
 CHECKPOINT_INTERVAL_SEC = int(os.getenv("CHECKPOINT_INTERVAL_SEC", "600"))
@@ -96,7 +96,7 @@ class TaskStatus(str, Enum):
     CANCELLED  = "cancelled"
     PREEMPTED  = "preempted"
 
-RESULT_DIR = os.getenv("RESULT_DIR", os.path.join(os.path.dirname(SCHEDULER_DB_PATH), "results"))
+RESULT_DIR = os.getenv("RESULT_DIR", "/data/results")
 RESULT_ZSTD_LEVEL = int(os.getenv("RESULT_ZSTD_LEVEL", "6"))
 RESULT_QUOTA_BYTES_PER_USER = int(os.getenv("RESULT_QUOTA_BYTES_PER_USER", str(2 * 1024**3)))
 # Artifact lifecycle quota is independent from task lifecycle. Keep the same 2GB default
