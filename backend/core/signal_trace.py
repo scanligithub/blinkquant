@@ -314,6 +314,7 @@ class SignalTraceCollector:
                     "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
                     "formula": pl.Utf8, "execution_date": pl.Date,
                     "exec_price": pl.Float64, "exec_side": pl.Utf8, "exec_qty": pl.Int64,
+                    "exec_fee": pl.Float64,
                 }),
                 pl.DataFrame(schema={
                     "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
