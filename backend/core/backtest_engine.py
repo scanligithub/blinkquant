@@ -727,12 +727,14 @@ class BacktestEngine:
 
         # First describe exits. ExecutionEngine executes all SELL intents before BUYs.
         exit_value = 0.0
+        executable_exit_codes: set[str] = set()
         for code in exits:
             pos = self.portfolio.positions.get(code)
             price = execution_prices.get(code, {}).get("open", 0)
             if pos is None or pos.available_qty <= 0 or price <= 0:
                 continue
             exit_value += pos.available_qty * price
+            executable_exit_codes.add(code)
             intents.append(OrderIntent(
                 code=code,
                 side="SELL",
