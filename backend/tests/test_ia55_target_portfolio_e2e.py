@@ -50,18 +50,19 @@ class FakeRawPriceStore:
 
 
 def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
-    """A 100% A -> 100% B rebalance must not require spare cash.
+    """A 90% A -> 90% B rebalance must reuse sale proceeds without overspending.
 
     The signal on Feb 1 executes on Feb 2. The existing A position is sold
     before the B purchase, so the sale proceeds become available to the
-    subsequent buy in the same execution cycle.
+    subsequent buy in the same execution cycle. The 10% cash buffer also
+    leaves room for execution fees.
     """
     calendar = TradingCalendar()
     calendar.set_trade_dates(DATES)
 
     events = {
-        dt.date(2024, 2, 1): {"AAA": 1.0},
-        dt.date(2024, 2, 2): {"BBB": 1.0},
+        dt.date(2024, 2, 1): {"AAA": 0.9},
+        dt.date(2024, 2, 2): {"BBB": 0.9},
     }
 
     def select(strategy, date, backtest_mode=True):
@@ -120,7 +121,7 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     assert feb2["side"].to_list() == ["SELL", "BUY"]
     assert feb2["code"].to_list() == ["AAA", "BBB"]
 
-    # The next cycle switches fully to BBB; no capital is created by planning.
+    # The next cycle switches to BBB; no capital is created by planning.
     final = (
         result.positions_daily
         .filter(pl.col("date") == dt.date(2024, 2, 6))
