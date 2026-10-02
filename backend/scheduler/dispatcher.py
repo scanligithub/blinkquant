@@ -86,8 +86,75 @@ async def dispatch_selection(payload: Union[dict, str], timeout: int = 60) -> di
     for node_data in success.values():
         codes = node_data.get("codes", [])
         all_codes.update(codes)
-    
-    return {"nodes": success, "codes": list(all_codes)}
+
+    # IA5.6.6: selection SignalTrace must follow the same shard-union
+    # semantics as the selected codes. Keep the existing per-node payload
+    # intact, while exposing one deterministic cluster-level trace artifact.
+    trace_by_code = {}
+    trace_meta = None
+    trace_dates = set()
+    any_trace = False
+    for node_id in sorted(success):
+        node_trace = success[node_id].get("signal_trace")
+        if not isinstance(node_trace, dict):
+            continue
+        any_trace = True
+        if trace_meta is None:
+            trace_meta = {
+                key: node_trace.get(key)
+                for key in ("schema_version", "engine_version", "signal_date", "formula")
+                if node_trace.get(key) is not None
+            }
+        node_traces = node_trace.get("traces")
+        if isinstance(node_traces, list):
+            trace_dates.add(str(node_trace.get("signal_date") or ""))
+            for code_trace in node_traces:
+                if not isinstance(code_trace, dict) or not code_trace.get("code"):
+                    continue
+                trace_by_code.setdefault(str(code_trace["code"]), code_trace)
+        elif isinstance(node_traces, dict):
+            # Compatibility with multi-date trace payloads.
+            for date, date_trace in node_traces.items():
+                trace_dates.add(str(date))
+                if not isinstance(date_trace, dict):
+                    continue
+                if trace_meta is None:
+                    trace_meta = {
+                        key: date_trace.get(key)
+                        for key in ("schema_version", "engine_version", "signal_date", "formula")
+                        if date_trace.get(key) is not None
+                    }
+                for code_trace in date_trace.get("traces", []) if isinstance(date_trace.get("traces"), list) else []:
+                    if not isinstance(code_trace, dict) or not code_trace.get("code"):
+                        continue
+                    trace_by_code.setdefault(str(code_trace["code"]), code_trace)
+
+    result = {"nodes": success, "codes": sorted(all_codes)}
+    if any_trace:
+        signal_trace = dict(trace_meta or {})
+        signal_trace["traces"] = [trace_by_code[code] for code in sorted(trace_by_code)]
+        if trace_dates and len(trace_dates) > 1:
+            # Selection is single-date today, but retain an explicit date map
+            # when a legacy multi-date payload is ever encountered.
+            signal_trace = {
+                "schema_version": signal_trace.get("schema_version", "1.0.0"),
+                "traces": {
+                    date: {
+                        "signal_date": date,
+                        "formula": signal_trace.get("formula", ""),
+                        "traces": [
+                            trace_by_code[code]
+                            for code in sorted(trace_by_code)
+                            if date == signal_trace.get("signal_date", date)
+                        ],
+                        "decisions": [],
+                    }
+                    for date in sorted(trace_dates)
+                },
+            }
+        result["signal_trace"] = signal_trace
+
+    return result
 
 async def cancel_task(
     node_id: str,
