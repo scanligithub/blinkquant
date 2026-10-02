@@ -48,3 +48,21 @@ test('watchlist UI exposes create, rename, delete and per-list stock management'
   assert.match(detailPage, /\/api\/watchlist/);
   assert.match(detailPage, /\/api\/watchlists/);
 });
+
+
+test('IA5.4.2 watchlist backtest universe snapshots and authorizes ownership', () => {
+  const taskRoute = read('src/app/api/v1/tasks/route.ts');
+  const panel = read('src/components/BacktestPanel.tsx');
+  const strategy = read('../backend/core/strategy.py');
+  const selector = read('../backend/core/strategy_selector.py');
+
+  assert.match(taskRoute, /watchlist_id/);
+  assert.match(taskRoute, /WHERE id = \$\{watchlistId\} AND user_id = \$\{userId\}/);
+  assert.match(taskRoute, /watchlist_codes/);
+  assert.match(taskRoute, /watchlist_name/);
+  assert.match(panel, /value="watchlist"/);
+  assert.match(panel, /\/api\/watchlists/);
+  assert.match(strategy, /Literal\[["]all_a["], [" ]index["], [" ]watchlist[" ]\]/);
+  assert.match(strategy, /watchlist_codes/);
+  assert.match(selector, /strategy\.universe\.watchlist_codes/);
+});
