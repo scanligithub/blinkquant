@@ -328,6 +328,7 @@ def test_signal_trace_json_round_trip_preserves_multiple_executions_and_decision
             CodeTrace(
                 code="AAA",
                 passed=True,
+                execution=ExecutionTrace(dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0),
                 executions=[
                     ExecutionTrace(dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0),
                     ExecutionTrace(dt.date(2024, 1, 4), 10.0, "BUY", 100, 1.0),
