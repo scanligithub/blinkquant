@@ -80,6 +80,15 @@ def test_selection_trace_is_wired_and_cache_safe():
         assert atom.threshold == 11.5
         assert atom.passed is True
         assert atom.source
+
+        # Execution enrichment mutates the returned trace; a subsequent cache hit
+        # must receive a clean copy rather than the already-enriched run object.
+        traced.signal_trace.traces[0].execution = ExecutionTrace(
+            execution_date=dt.date(2024, 1, 5), price=13.0, side="BUY", qty=100, fee=1.0
+        )
+        traced_again = selector.select(strategy, dt.date(2024, 1, 4), trace=True)
+        assert traced_again.signal_trace is not traced.signal_trace
+        assert traced_again.signal_trace.traces[0].execution is None
     finally:
         (
             data_manager.df_daily,
