@@ -824,7 +824,6 @@ class SelectionEngine:
         else:
             frame = data_manager.build_asof_frame(timeframe, signal_date)
         if frame is None or frame.is_empty():
-        if frame is None or frame.is_empty():
             return AtomTrace(
                 atom_id=atom_id, field=field, window=str(window),
                 value=float("nan"), operator=None, threshold=None, passed=False
