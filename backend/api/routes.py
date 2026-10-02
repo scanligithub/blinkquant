@@ -525,6 +525,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             initial_cash=config.initial_cash,
             fee_schedule=fee_schedule,
             universe_filter=universe_filter,
+            collect_signal_trace=req.signal_trace,
         )
 
         valuation_end_date = None
