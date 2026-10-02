@@ -371,6 +371,188 @@ def _validate_template_config(config: dict) -> dict:
     return config
 
 
+@router.get("/backtest-strategy-templates/export")
+async def export_backtest_strategy_templates(cookie: Optional[str] = Header(None)):
+    from scheduler.db import fetch, json_loads
+
+    user_id = await _template_user_id(cookie)
+    templates = await fetch(
+        "SELECT t.id,t.name,t.description,t.config,t.created_at,t.updated_at, "
+        "(SELECT MAX(v.version_no) FROM backtest_strategy_versions v "
+        " WHERE v.strategy_template_id=t.id) AS version_no "
+        "FROM backtest_strategy_templates t WHERE t.user_id=$1 ORDER BY t.id ASC",
+        user_id,
+    )
+    versions = await fetch(
+        "SELECT strategy_template_id,version_no,name,description,config,created_at "
+        "FROM backtest_strategy_versions "
+        "WHERE strategy_template_id IN ("
+        "SELECT id FROM backtest_strategy_templates WHERE user_id=$1"
+        ") ORDER BY strategy_template_id ASC,version_no ASC",
+        user_id,
+    )
+
+    by_template: dict[int, list[dict]] = {}
+    for version in versions:
+        tid = int(version["strategy_template_id"])
+        by_template.setdefault(tid, []).append({
+            "version_no": int(version["version_no"]),
+            "name": str(version["name"]),
+            "description": version.get("description"),
+            "config": json_loads(version["config"]),
+            "created_at": version["created_at"],
+        })
+
+    payload = []
+    for template in templates:
+        payload.append({
+            "name": str(template["name"]),
+            "description": template.get("description"),
+            "config": json_loads(template["config"]),
+            "created_at": template["created_at"],
+            "updated_at": template["updated_at"],
+            "version_no": int(template["version_no"] or 1),
+            "versions": by_template.get(int(template["id"]), []),
+        })
+
+    return {
+        "format": "blinkquant-backtest-strategies-v1",
+        "exported_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "templates": payload,
+    }
+
+
+@router.post("/backtest-strategy-templates/import")
+async def import_backtest_strategy_templates(payload: dict, cookie: Optional[str] = Header(None)):
+    from scheduler.db import acquire, json_dumps
+
+    user_id = await _template_user_id(cookie)
+    items = payload.get("templates") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="no backtest strategies to import")
+    if len(items) > 100:
+        raise HTTPException(status_code=400, detail="maximum 100 backtest strategies per import")
+
+    imported = 0
+    skipped: list[str] = []
+
+    for item in items:
+        name = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+        description = item.get("description") if isinstance(item, dict) else None
+        config = item.get("config") if isinstance(item, dict) else None
+        if not name or len(name) > 100:
+            skipped.append(name or "(unnamed)")
+            continue
+        try:
+            clean_config = dict(_validate_template_config(config))
+        except HTTPException:
+            skipped.append(name)
+            continue
+
+        # Cross-user provenance IDs are untrusted. The imported config may still
+        # be used as a strategy, but a source selection strategy is not persisted
+        # unless it is re-established by an authenticated user action later.
+        clean_config.pop("source_selection_strategy", None)
+
+        raw_versions = item.get("versions") if isinstance(item, dict) else None
+        if raw_versions is None:
+            raw_versions = []
+        if not isinstance(raw_versions, list) or len(raw_versions) > 100:
+            skipped.append(name)
+            continue
+
+        clean_versions: dict[int, dict] = {}
+        for version in raw_versions:
+            if not isinstance(version, dict):
+                continue
+            try:
+                version_no = int(version.get("version_no"))
+            except (TypeError, ValueError):
+                continue
+            version_name = str(version.get("name") or name).strip()
+            version_description = version.get("description")
+            version_config = version.get("config")
+            if version_no <= 0 or not version_name or len(version_name) > 100:
+                continue
+            try:
+                clean_version_config = dict(_validate_template_config(version_config))
+            except HTTPException:
+                continue
+            clean_version_config.pop("source_selection_strategy", None)
+            clean_versions[version_no] = {
+                "version_no": version_no,
+                "name": version_name,
+                "description": version_description,
+                "config": clean_version_config,
+                "created_at": version.get("created_at"),
+            }
+
+        if not clean_versions:
+            clean_versions[1] = {
+                "version_no": 1,
+                "name": name,
+                "description": description,
+                "config": clean_config,
+                "created_at": None,
+            }
+
+        ordered = [clean_versions[n] for n in sorted(clean_versions)]
+        # The latest imported version becomes the current template snapshot.
+        latest = ordered[-1]
+
+        try:
+            async with acquire() as conn:
+                existing = await conn.fetchrow(
+                    "SELECT id FROM backtest_strategy_templates WHERE user_id=$1 AND name=$2",
+                    user_id, name,
+                )
+                if existing:
+                    skipped.append(name)
+                    continue
+
+                row = await conn.fetchrow(
+                    "INSERT INTO backtest_strategy_templates "
+                    "(user_id,name,description,config) VALUES ($1,$2,$3,$4) "
+                    "RETURNING id",
+                    user_id, name, description, json_dumps(latest["config"]),
+                )
+
+                template_id = int(row["id"])
+                for version in ordered:
+                    created_at = version.get("created_at")
+                    if not created_at:
+                        await conn.execute(
+                            "INSERT INTO backtest_strategy_versions "
+                            "(strategy_template_id,version_no,name,description,config,created_at) "
+                            "VALUES ($1,$2,$3,$4,$5,datetime('now'))",
+                            template_id,
+                            version["version_no"],
+                            version["name"],
+                            version.get("description"),
+                            json_dumps(version["config"]),
+                        )
+                    else:
+                        await conn.execute(
+                            "INSERT INTO backtest_strategy_versions "
+                            "(strategy_template_id,version_no,name,description,config,created_at) "
+                            "VALUES ($1,$2,$3,$4,$5,$6)",
+                            template_id,
+                            version["version_no"],
+                            version["name"],
+                            version.get("description"),
+                            json_dumps(version["config"]),
+                            created_at,
+                        )
+            imported += 1
+        except Exception as exc:
+            logger.exception("Failed to import backtest strategy %s: %s", name, exc)
+            skipped.append(name)
+
+    if imported:
+        await _checkpoint_template_mutation()
+    return {"imported": imported, "skipped": skipped}
+
+
 @router.get("/backtest-strategy-templates")
 async def list_backtest_strategy_templates(cookie: Optional[str] = Header(None)):
     from scheduler.db import fetch, json_loads
