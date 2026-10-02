@@ -120,6 +120,28 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
   const backtestStrategy = payload.strategy || {};
   const backtestEntry = backtestStrategy.entry || {};
   const backtestUniverse = backtestStrategy.universe || {};
+  const extractSelectionStrategy = async () => {
+    if (!task) return;
+    const defaultName = ((task as any).title || '回测成果') + ' · 选股策略';
+    const name = window.prompt('新选股策略名称', defaultName);
+    if (!name || !name.trim()) return;
+    const res = await fetch('/api/artifacts/' + task.id + '/extract-selection-strategy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || '提取选股策略失败');
+      return;
+    }
+    const strategyId = Number(data?.strategy?.id);
+    if (Number.isInteger(strategyId) && strategyId > 0) {
+      router.push('/strategies/selection/' + strategyId);
+    } else {
+      alert('策略已创建，但无法打开策略详情');
+    }
+  };
 
   return (
     <AppShell user={user} onLogout={async () => {
@@ -193,6 +215,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                         <div className="text-xs font-bold text-blue-700">策略版本快照</div>
                         <div className="mt-1 text-sm text-blue-900">{selectionSource.name} · v{selectionSource.version_no}</div>
                         <div className="mt-1 text-xs font-mono text-blue-700 break-all">{selectionSource.formula} · {selectionSource.timeframe}</div>
+                        {selectionSource.id && <Link href={'/strategies/selection/' + selectionSource.id} className="inline-block mt-2 text-xs font-bold text-blue-700 hover:underline">查看来源策略 v{selectionSource.version_no} →</Link>}
                       </div>
                     )}
                   </section>
@@ -251,8 +274,10 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     </div>
                     {task.strategy_template_id && (
                       <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+
                         <div className="text-xs font-bold text-amber-700">回测策略版本</div>
                         <div className="mt-1 text-sm text-amber-900">{task.strategy_template_name || ('#' + task.strategy_template_id)} · v{task.strategy_template_version || 1}</div>
+                        <Link href="/strategies" className="inline-block mt-2 text-xs font-bold text-amber-700 hover:underline">查看策略库 →</Link>
                       </div>
                     )}
                     {backtestSource && (
@@ -260,8 +285,12 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                         <div className="text-xs font-bold text-blue-700">基础选股策略快照</div>
                         <div className="mt-1 text-sm text-blue-900">{backtestSource.name} · v{backtestSource.version_no}</div>
                         <div className="mt-1 text-xs font-mono text-blue-700 break-all">{backtestSource.formula} · {backtestSource.timeframe}</div>
+                        {backtestSource.id && <Link href={'/strategies/selection/' + backtestSource.id} className="inline-block mt-2 text-xs font-bold text-blue-700 hover:underline">查看基础选股策略 v{backtestSource.version_no} →</Link>}
                       </div>
                     )}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => void extractSelectionStrategy()} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">提取为选股策略</button>
+                    </div>
                   </section>
 
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
