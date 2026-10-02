@@ -22,10 +22,22 @@ def _weekdays(n, start=datetime.date(2025, 12, 1)):   # 跨 2025-12 → 2026-01
 
 
 def _fixture(days):
+    """Two-stock fixture with a deterministic post-checkpoint target switch.
+
+    The split happens after AAA's T+1 execution: A holds AAA through days[7],
+    then B's first signal (days[7]) switches the target to BBB, which executes
+    on days[8]. This makes the B segment contain a real trade while preserving
+    a clean C1/C2 equivalence boundary.
+    """
+    aaa_close = [10.0, 11.0, 12.0, 13.0, 14.0, 11.0, 12.0, 9.0, 9.0, 9.0]
+    bbb_close = [9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 11.0, 12.0, 13.0]
+
     rows = []
     for i, d in enumerate(days):
-        c = 10.0 + (i % 5)
-        rows.append((d, "sh.AAA", c - 0.1, c, c + 0.2, c - 0.2))
+        for code, closes in (("sh.AAA", aaa_close), ("sh.BBB", bbb_close)):
+            c = closes[i]
+            rows.append((d, code, c - 0.1, c, c + 0.2, c - 0.2))
+
     return pl.DataFrame({
         "date": [r[0] for r in rows], "code": [r[1] for r in rows],
         "open": [r[2] for r in rows], "close": [r[3] for r in rows],
@@ -112,8 +124,8 @@ def test_checkpoint_restore_equivalence_c1_equals_c2():
       A.equity + B.equity == C1.equity（日期不重叠、拼接完整）
       positions_daily 同理
 
-    分段点选在持仓非空、且存在 T+1 冻结跨越分段点的位置，
-    同时验证 last_close 注入与 daily_thaw 的跨段行为。
+    分段点落在持仓非空的边界：A 完成 days[6] 信号并在 days[7] 执行，
+    B 从 days[7] 开始产生新的目标，验证 last_close 注入与 daily_thaw 的跨段行为。
     """
     days = _weekdays(10)                    # 12/01..12/12 工作日
     split_idx = 7
