@@ -112,7 +112,23 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
     return () => { mounted = false; };
   }, [artifactId]);
 
-  const rows = Array.isArray(trace?.traces) ? trace!.traces! : [];
+  const rows = useMemo(() => {
+    if (Array.isArray(trace?.traces)) return trace.traces;
+    if (trace?.traces && typeof trace.traces === 'object') {
+      const merged: CodeTrace[] = [];
+      for (const value of Object.values(trace.traces as Record<string, any>)) {
+        if (value && Array.isArray(value.traces)) merged.push(...value.traces);
+      }
+      const seen = new Set<string>();
+      return merged.filter((row) => {
+        if (!row?.code || seen.has(row.code)) return false;
+        seen.add(row.code);
+        return true;
+      });
+    }
+    return [];
+  }, [trace]);
+
   const summary = useMemo(() => rows.reduce((acc, row) => {
     acc.total += 1;
     if (row.passed) acc.passed += 1;
