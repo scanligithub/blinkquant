@@ -435,6 +435,8 @@ def test_backtest_engine_restore_keeps_t1_signal_trace_provenance():
         raw_price_store=object(),
         fee_config=FeeConfig(),
     )
+    from core.portfolio import Portfolio
+    engine.portfolio = Portfolio(initial_cash=100_000.0)
     engine._restore_from_checkpoint(cp)
 
     restored = engine._signal_traces["2025-12-31"]
