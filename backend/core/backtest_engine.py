@@ -765,6 +765,9 @@ class BacktestEngine:
             if code not in self.portfolio.positions
             and execution_prices.get(code, {}).get("open", 0) > 0
         ]
+        if max_positions is not None:
+            new_entries = new_entries[:available_slots]
+
         if not new_entries or available_for_entries <= 0:
             return intents
 
