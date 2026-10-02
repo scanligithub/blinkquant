@@ -82,13 +82,15 @@ export async function DELETE(req: NextRequest) {
   let removedCount = 0;
   for (let i = 0; i < codes.length; i += 50) {
     const chunk = codes.slice(i, i + 50);
-    const result = await sql`
-      DELETE FROM watchlist_items
-      WHERE watchlist_id = ${listId}
-        AND code = ANY(${chunk})
-      RETURNING code
-    `;
-    removedCount += result.rows.length;
+    const results = await Promise.all(
+      chunk.map((code) => sql`
+        DELETE FROM watchlist_items
+        WHERE watchlist_id = ${listId}
+          AND code = ${code}
+        RETURNING code
+      `)
+    );
+    removedCount += results.reduce((count, result) => count + result.rows.length, 0);
   }
   if (removedCount > 0) {
     await sql`UPDATE watchlists SET updated_at = NOW() WHERE id = ${listId} AND user_id = ${auth.user.userId}`;
