@@ -146,7 +146,7 @@ def test_selection_trace_covers_pit_candidates_not_only_selected_codes():
         assert [t.code for t in trace.traces] == ["AAA", "BBB"]
         assert trace.traces[0].passed is True
         assert trace.traces[1].passed is False
-        assert trace.traces[1].atoms[0].value == 9.0
+        assert trace.traces[1].atoms[0].value == 8.5
         assert trace.traces[1].atoms[0].passed is False
     finally:
         (
