@@ -53,7 +53,7 @@ function BulkWatchlistBar({ codes, onChanged }: { codes: string[]; onChanged?: (
     try {
       const res = await fetch('/api/watchlist', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listId, codes: [...selected] }),
+        body: JSON.stringify({ listId, codes: Array.from(selected) }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加入自选股失败');
