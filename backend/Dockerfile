@@ -31,5 +31,6 @@ RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 7860
 
+# Deployment trigger: keep production Node Spaces restartable from a backend push.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
