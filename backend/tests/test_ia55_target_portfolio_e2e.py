@@ -108,7 +108,7 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     result = engine.run(
         start_date=dt.date(2024, 2, 1),
         end_signal_date=dt.date(2024, 2, 2),
-        initial_cash=10_000.0,
+        initial_cash=1_000_000.0,
         strategy=strategy,
     )
 
