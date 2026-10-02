@@ -172,6 +172,27 @@ Ranking, Top-N allocation, and event-trigger post-filtering are downstream selec
 semantics. They do not redefine `CodeTrace.passed`. The candidate universe is resolved
 as-of the signal date and must not include future universe membership.
 
+
+## IA5.6.3 Selection / Allocation Provenance
+
+For each traced PIT candidate, downstream strategy selection is recorded separately from formula evaluation:
+
+- `passed` remains the formula-level result and is never changed by trigger or allocation.
+- `triggered` indicates whether the configured Entry trigger fired for that traced candidate.
+- `targeted` indicates whether the candidate entered the final target portfolio produced by the sizing allocator.
+- `target_weight` records the resulting target weight when `targeted=true`; otherwise it is null.
+- `selection_reason` is one of `FORMULA_REJECTED`, `TRIGGER_NOT_FIRED`, `TOP_N_EXCLUDED`, or `TARGET_SELECTED`.
+
+This makes a complete explanation possible without conflating formula truth with downstream trigger or Top-N allocation semantics.
+
+```
+# Candidate formula false -> FORMULA_REJECTED
+# Formula true + cross condition not fired -> TRIGGER_NOT_FIRED
+# Formula true + trigger fired but outside Top-N -> TOP_N_EXCLUDED
+# Formula true + trigger fired + allocated -> TARGET_SELECTED
+```
+
+The fields are additive and older artifacts without them remain readable with their default values.
 ## Generation Rules
 
 1. **During Selection**: Each PIT candidate code's formula evaluation produces a trace entry
