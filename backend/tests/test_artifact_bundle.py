@@ -3,7 +3,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from backend.scheduler.result_store import (
+from scheduler.result_store import (
     build_artifact_bundle,
     validate_artifact_bundle,
 )
