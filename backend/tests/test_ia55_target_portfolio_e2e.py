@@ -126,10 +126,10 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     assert feb5["side"].to_list() == ["SELL", "BUY"]
     assert feb5["code"].to_list() == ["AAA", "BBB"]
 
-    # The next cycle switches to BBB; no capital is created by planning.
+    # After the Feb 2 signal executes on Feb 5, the replacement holding is BBB.
     final = (
         result.positions_daily
-        .filter(pl.col("date") == dt.date(2024, 2, 6))
+        .filter(pl.col("date") == dt.date(2024, 2, 5))
         .select("code")
         .sort("code")["code"]
         .to_list()
