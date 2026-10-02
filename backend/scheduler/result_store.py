@@ -395,6 +395,8 @@ ALLOWED_BUNDLE_FILES = frozenset({
 def validate_artifact_bundle(zf: zipfile.ZipFile) -> dict:
     """Validate and return the portable manifest before filesystem mutation."""
     names = zf.namelist()
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate artifact bundle members")
     if "manifest.json" not in names:
         raise ValueError("artifact bundle is missing manifest.json")
     if any(name not in ALLOWED_BUNDLE_FILES for name in names):
