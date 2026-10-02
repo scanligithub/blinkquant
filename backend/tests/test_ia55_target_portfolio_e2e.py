@@ -1,6 +1,7 @@
-"""IA5.5.4 deterministic target-portfolio capital/rebalance contract."""
+"""IA5.5 target-portfolio deterministic capital/state contracts."""
 
 import datetime as dt
+import tempfile
 from types import SimpleNamespace
 
 import polars as pl
@@ -142,6 +143,152 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
 
     # The executed Feb 2 target order must not survive as a pending checkpoint event.
     assert engine.export_state()["pending"] is None
+
+
+
+def test_target_portfolio_checkpoint_preserves_pending_t1_order():
+    """A checkpoint taken after valuation must preserve the next-open target order."""
+    dates = [
+        dt.date(2024, 2, 1),
+        dt.date(2024, 2, 2),
+        dt.date(2024, 2, 5),
+        dt.date(2024, 2, 6),
+        dt.date(2024, 2, 7),
+        dt.date(2024, 2, 8),
+        dt.date(2024, 2, 9),
+        dt.date(2024, 2, 12),
+    ]
+    events = {
+        dates[0]: {"AAA": 0.9},
+        dates[1]: {"AAA": 0.9},
+        dates[2]: {"AAA": 0.9},
+        dates[3]: {"BBB": 0.9},
+        dates[4]: {"BBB": 0.9},
+        dates[5]: {"CCC": 0.9},
+        dates[6]: {"CCC": 0.9},
+    }
+
+    calendar = TradingCalendar()
+    calendar.set_trade_dates(dates)
+
+    def select(strategy, date, backtest_mode=True):
+        return SimpleNamespace(
+            signal_date=date,
+            target_codes=list(events[date]),
+            entry_codes=[],
+            exit_codes=[],
+            target_weights=events[date],
+        )
+
+    def build_engine():
+        return BacktestEngine(
+            calendar=calendar,
+            selection_engine=None,
+            raw_price_store=FakeRawPriceStore(),
+            fee_config=FeeConfig(),
+            execution_config=MVP_EXECUTION_CONFIG,
+            strategy_selector=SimpleNamespace(
+                select=select,
+                _qfq_data_provider=None,
+                _latest_adj={},
+            ),
+        )
+
+    strategy = StrategyDefinition(
+        universe=UniverseDefinition(type="all_a"),
+        entry=SignalDefinition(
+            condition="MA(CLOSE,5) > MA(CLOSE,60)",
+            trigger="cross_above",
+            timeframe="D",
+        ),
+        exit=SignalDefinition(
+            condition="MA(CLOSE,5) < MA(CLOSE,20)",
+            trigger="cross_below",
+            timeframe="D",
+        ),
+        sizing=PositionSizingDefinition(method="equal_weight", max_positions=None),
+        rebalance=RebalanceDefinition(frequency="daily"),
+        mode="target_portfolio",
+    )
+
+    # C1: continuous run through the day-6 signal and day-7 execution.
+    c1_engine = build_engine()
+    c1 = c1_engine.run(
+        start_date=dates[0],
+        end_signal_date=dates[5],
+        initial_cash=1_000_000.0,
+        strategy=strategy,
+    )
+
+    with tempfile.TemporaryDirectory() as cp_dir:
+        checkpoint_dir = f"{cp_dir}/day6"
+        seen = {"saved": False}
+
+        def save_at_day6(progress):
+            current = dt.date.fromisoformat(progress["current_date"])
+            if (
+                progress["stage"] == "running"
+                and current == dates[5]
+                and not seen["saved"]
+            ):
+                c1_engine.save_checkpoint(
+                    checkpoint_dir,
+                    dates[5],
+                    "IA5.5.5 day-6 pending T+1",
+                )
+                seen["saved"] = True
+
+        # Save immediately after the day-6 valuation checkpoint, before day-7.
+        source_engine = build_engine()
+        source_engine.run(
+            start_date=dates[0],
+            end_signal_date=dates[5],
+            initial_cash=1_000_000.0,
+            strategy=strategy,
+            on_progress=save_at_day6,
+        )
+        assert seen["saved"]
+
+        from core.checkpoint import load_checkpoint
+        cp = load_checkpoint(checkpoint_dir)
+        assert cp.pending_signal_date == dates[5].isoformat()
+        assert cp.pending_execution_date == dates[6].isoformat()
+        assert cp.pending_intents
+        assert any(
+            i["code"] == "CCC" and i["side"] == "BUY"
+            for i in cp.pending_intents
+        )
+
+        # C2: resume on the exact T+1 execution day. The restored pending order
+        # executes before any new signal is generated.
+        resume_engine = build_engine()
+        c2 = resume_engine.run(
+            start_date=dates[6],
+            end_signal_date=dates[6],
+            initial_cash=1_000_000.0,
+            initial_state=cp,
+            strategy=strategy,
+        )
+
+    c1_day7 = c1.trades.filter(
+        pl.col("execution_date") == dates[6]
+    ).sort(["code", "side"])
+    c2_day7 = c2.trades.filter(
+        pl.col("execution_date") == dates[6]
+    ).sort(["code", "side"])
+    assert c2_day7.to_dicts() == c1_day7.to_dicts()
+    assert c2_day7.height == 2
+    assert c2_day7["code"].to_list() == ["BBB", "CCC"]
+
+    c1_pos = c1.positions_daily.filter(pl.col("date") == dates[6]).sort("code")
+    c2_pos = c2.positions_daily.filter(pl.col("date") == dates[6]).sort("code")
+    assert c2_pos.to_dicts() == c1_pos.to_dicts()
+
+    c1_eq = c1.equity_curve.filter(pl.col("date") == dates[6]).drop("signal_date")
+    c2_eq = c2.equity_curve.filter(pl.col("date") == dates[6]).drop("signal_date")
+    assert c2_eq.to_dicts() == c1_eq.to_dicts()
+    assert c2_eq["cash"].min() >= -1e-6
+    assert resume_engine.export_state()["pending"] is None
 
 
 def test_target_portfolio_can_schedule_sell_while_position_is_t1_frozen():
