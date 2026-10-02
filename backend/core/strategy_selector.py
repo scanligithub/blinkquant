@@ -99,6 +99,10 @@ class StrategySelector:
     ) -> Optional[list[str]]:
         if strategy.universe.type == "all_a":
             codes = None
+        elif strategy.universe.type == "watchlist":
+            # Watchlist is a task-time snapshot. It must never be re-read from
+            # mutable user state while a historical backtest is running.
+            codes = self._map_codes_to_data_format(strategy.universe.watchlist_codes or [])
         else:
             if self.universe_resolver is None:
                 raise ValueError(
