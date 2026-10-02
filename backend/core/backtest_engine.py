@@ -707,7 +707,8 @@ class BacktestEngine:
         return top_n_equal_weight_allocator(strategy.sizing.max_positions)
 
     def _generate_event_intents(
-        self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict
+        self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict,
+        max_positions: Optional[int] = None,
     ) -> list:
         """Generate deterministic Entry/Exit orders for event-driven strategies.
 
@@ -726,12 +727,14 @@ class BacktestEngine:
 
         # First describe exits. ExecutionEngine executes all SELL intents before BUYs.
         exit_value = 0.0
+        executable_exit_codes: set[str] = set()
         for code in exits:
             pos = self.portfolio.positions.get(code)
             price = execution_prices.get(code, {}).get("open", 0)
             if pos is None or pos.available_qty <= 0 or price <= 0:
                 continue
             exit_value += pos.available_qty * price
+            executable_exit_codes.add(code)
             intents.append(OrderIntent(
                 code=code,
                 side="SELL",
@@ -747,11 +750,24 @@ class BacktestEngine:
 
         # Only cash plus this cycle's valid exits is available for new entries.
         available_for_entries = self.portfolio.cash + exit_value
+        retained_count = sum(
+            1 for code, pos in self.portfolio.positions.items()
+            if pos.total_qty > 0 and code not in executable_exit_codes
+        )
+        available_slots = None
+        if max_positions is not None:
+            available_slots = max(0, max_positions - retained_count)
+            if available_slots <= 0:
+                return intents
+
         new_entries = [
             code for code in entries
             if code not in self.portfolio.positions
             and execution_prices.get(code, {}).get("open", 0) > 0
         ]
+        if max_positions is not None:
+            new_entries = new_entries[:available_slots]
+
         if not new_entries or available_for_entries <= 0:
             return intents
 
@@ -899,7 +915,14 @@ class BacktestEngine:
                 new_intents = self._generate_intents(weights, new_prices)
             else:
                 new_intents = self._generate_event_intents(
-                    result.target_codes, result.exit_codes, new_prices
+                    result.target_codes,
+                    result.exit_codes,
+                    new_prices,
+                    max_positions=(
+                        strategy.sizing.max_positions
+                        if strategy.sizing.method == "top_n_equal_weight"
+                        else None
+                    ),
                 )
             diag["intents_total"] += len(new_intents)
             if strategy.mode == "target_portfolio" and weights:
