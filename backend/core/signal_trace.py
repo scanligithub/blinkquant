@@ -95,12 +95,74 @@ class ExecutionTrace:
 
 
 @dataclass
+@dataclass
+class DecisionTrace:
+    """One strategy decision / order intent and its eventual execution outcome.
+
+    This is intentionally separate from CodeTrace: a code may have no selection
+    trace (for example, a target-portfolio SELL of a previously-held code), and
+    one code may legitimately produce both BUY and SELL intents in the same
+    signal cycle. Keeping decisions at signal level prevents execution data from
+    being overwritten by a code-level single-value field.
+    """
+    code: str
+    side: str
+    target_qty: int
+    target_weight: float
+    execution_date: Optional[datetime.date] = None
+    decision_type: str = "ORDER_INTENT"
+    status: str = "PENDING"  # PENDING / FILLED / PARTIAL / REJECTED
+    executed_qty: int = 0
+    execution_price: Optional[float] = None
+    fee: float = 0.0
+    rejection_reason: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "code": self.code,
+            "side": self.side,
+            "target_qty": self.target_qty,
+            "target_weight": self.target_weight,
+            "execution_date": self.execution_date.isoformat() if self.execution_date else None,
+            "decision_type": self.decision_type,
+            "status": self.status,
+            "executed_qty": self.executed_qty,
+            "execution_price": self.execution_price,
+            "fee": self.fee,
+            "rejection_reason": self.rejection_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DecisionTrace":
+        return cls(
+            code=data["code"],
+            side=data["side"],
+            target_qty=int(data.get("target_qty", 0)),
+            target_weight=float(data.get("target_weight", 0.0)),
+            execution_date=(
+                datetime.date.fromisoformat(data["execution_date"])
+                if data.get("execution_date") else None
+            ),
+            decision_type=data.get("decision_type", "ORDER_INTENT"),
+            status=data.get("status", "PENDING"),
+            executed_qty=int(data.get("executed_qty", 0)),
+            execution_price=(
+                float(data["execution_price"])
+                if data.get("execution_price") is not None else None
+            ),
+            fee=float(data.get("fee", 0.0)),
+            rejection_reason=data.get("rejection_reason"),
+        )
+
+
+@dataclass
 class CodeTrace:
     """Complete trace for one code on one signal date."""
     code: str
     passed: bool
     atoms: List[AtomTrace] = field(default_factory=list)
-    execution: Optional[ExecutionTrace] = None
+    execution: Optional[ExecutionTrace] = None  # legacy single-execution projection
+    executions: List[ExecutionTrace] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -108,15 +170,24 @@ class CodeTrace:
             "passed": self.passed,
             "atoms": [a.to_dict() for a in self.atoms],
             "execution": self.execution.to_dict() if self.execution else None,
+            "executions": [e.to_dict() for e in self.executions],
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CodeTrace":
+        executions = [ExecutionTrace.from_dict(e) for e in data.get("executions", [])]
+        legacy_execution = (
+            ExecutionTrace.from_dict(data["execution"])
+            if data.get("execution") else None
+        )
+        if legacy_execution is not None and not executions:
+            executions = [legacy_execution]
         return cls(
             code=data["code"],
             passed=bool(data["passed"]),
             atoms=[AtomTrace.from_dict(a) for a in data.get("atoms", [])],
-            execution=ExecutionTrace.from_dict(data["execution"]) if data.get("execution") else None,
+            execution=legacy_execution or (executions[0] if executions else None),
+            executions=executions,
         )
 
 
@@ -128,6 +199,7 @@ class SignalTraceData:
     signal_date: str = ""  # YYYY-MM-DD
     formula: str = ""
     traces: List[CodeTrace] = field(default_factory=list)
+    decisions: List[DecisionTrace] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.signal_date:
@@ -140,6 +212,10 @@ class SignalTraceData:
             "signal_date": self.signal_date,
             "formula": self.formula,
             "traces": [t.to_dict() for t in self.traces],
+            "decisions": [d.to_dict() for d in sorted(
+                self.decisions,
+                key=lambda x: (x.code, x.side, x.execution_date.isoformat() if x.execution_date else "", x.target_qty),
+            )],
         }
 
     def to_json(self) -> str:
@@ -155,6 +231,7 @@ class SignalTraceData:
         return replace(
             self,
             traces=[trace for trace in self.traces if trace.code in wanted],
+            decisions=[decision for decision in self.decisions if decision.code in wanted],
         )
 
     def to_parquet(self) -> tuple[pl.DataFrame, pl.DataFrame]:
