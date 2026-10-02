@@ -570,7 +570,7 @@ async def import_artifact_bundle(
             if "result.json" in manifest["files"]:
                 try:
                     result_json_bytes = zf.read("result.json")
-                result_json = json.loads(result_json_bytes.decode("utf-8"))
+                    result_json = json.loads(result_json_bytes.decode("utf-8"))
                 except (TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise ValueError(f"invalid result.json: {exc}") from exc
                 if not isinstance(result_json, dict):
@@ -622,12 +622,13 @@ async def import_artifact_bundle(
         summary_text = json.dumps(summary, ensure_ascii=False, separators=(",", ":")) if summary is not None else None
         metadata_text = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
 
+        total_result_bytes = extracted_bytes + result_json_size
         async with acquire() as conn:
             used = await conn.fetchval(
                 "SELECT COALESCE(SUM(result_bytes), 0) FROM artifacts WHERE user_id = ?",
                 user_id,
             )
-            if int(used or 0) + extracted_bytes > ARTIFACT_QUOTA_BYTES_PER_USER:
+            if int(used or 0) + total_result_bytes > ARTIFACT_QUOTA_BYTES_PER_USER:
                 raise HTTPException(413, "Artifact import exceeds the user's artifact quota")
 
             task = await conn.fetchrow(
@@ -643,7 +644,7 @@ async def import_artifact_bundle(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 result_text,
                 summary_text,
-                extracted_bytes + result_json_size,
+                total_result_bytes,
             )
             task_id = int(task["id"])
             result_uri = None
@@ -689,7 +690,7 @@ async def import_artifact_bundle(
             "task_id": task_id,
             "artifact_type": artifact_type,
             "title": title,
-            "result_bytes": extracted_bytes,
+            "result_bytes": total_result_bytes,
         }
     except HTTPException:
         raise
