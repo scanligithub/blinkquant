@@ -681,6 +681,7 @@ class SelectionEngine:
             qfq_data_provider=qfq_data_provider, latest_adj=latest_adj,
         )
         return CodeTrace(code=code, passed=True, atoms=atoms, execution=None)
+
     @staticmethod
     def _comparison_nodes(node) -> list:
         """Flatten comparison leaves while preserving deterministic AST order."""
@@ -691,6 +692,11 @@ class SelectionEngine:
             for child in node.values:
                 result.extend(SelectionEngine._comparison_nodes(child))
             return result
+        if isinstance(node, ast.BinOp) and type(node.op) in (ast.BitAnd, ast.BitOr):
+            return (
+                SelectionEngine._comparison_nodes(node.left)
+                + SelectionEngine._comparison_nodes(node.right)
+            )
         return []
 
     @staticmethod
