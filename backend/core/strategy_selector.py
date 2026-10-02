@@ -315,7 +315,9 @@ class StrategySelector:
         if not isinstance(target_date, dt.date):
             raise TypeError("target_date must be datetime.date")
 
-        cache_key = (repr(strategy.to_dict()), target_date, backtest_mode)
+        # Trace collection changes the returned result, so it must participate in
+        # the cache key; otherwise a prior non-traced selection would mask trace=True.
+        cache_key = (repr(strategy.to_dict()), target_date, backtest_mode, trace)
         cached = self._selection_cache.get(cache_key)
         if cached is not None:
             return cached
