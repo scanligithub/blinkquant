@@ -50,6 +50,11 @@ class BacktestCheckpoint:
     selected_thru: Optional[str] = None
     random_seed: int = 42
 
+    # Optional SignalTrace state. Kept in the checkpoint so a resumed run can
+    # preserve T -> T+1 provenance and produce the same trace history as a
+    # continuous run. Empty for normal backtests.
+    signal_traces: Dict[str, Dict[str, Any]] = None
+
     def __post_init__(self):
         if self.positions is None:
             self.positions = []
@@ -65,6 +70,8 @@ class BacktestCheckpoint:
             self.diagnostics = {}
         if self.last_close is None:
             self.last_close = []
+        if self.signal_traces is None:
+            self.signal_traces = {}
         if not self.created_at:
             self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -94,6 +101,7 @@ class BacktestCheckpoint:
             "thru_thaw": self.thru_thaw,
             "selected_thru": self.selected_thru,
             "random_seed": self.random_seed,
+            "signal_traces": self._sort_signal_traces(self.signal_traces),
         }
 
     def _sort_positions(self, positions: List[Dict]) -> List[Dict]:
@@ -136,6 +144,9 @@ class BacktestCheckpoint:
         return sorted([{**lc, "close": round(lc.get("close", 0), 10)} for lc in last_close],
                       key=lambda x: x["code"])
 
+    def _sort_signal_traces(self, traces: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        return {k: traces[k] for k in sorted(traces)}
+
     def to_json(self) -> str:
         """Deterministic JSON string (sorted keys, no whitespace)."""
         return json.dumps(self.to_json_dict(), sort_keys=True, separators=(',', ':'))
@@ -166,6 +177,7 @@ class BacktestCheckpoint:
             thru_thaw=data.get("thru_thaw"),
             selected_thru=data.get("selected_thru"),
             random_seed=int(data.get("random_seed", 42)),
+            signal_traces=data.get("signal_traces", {}),
         )
 
     @classmethod
@@ -252,6 +264,13 @@ def save_checkpoint(checkpoint: BacktestCheckpoint, directory: Union[str, Path])
         json.dumps(engine_data, sort_keys=True, separators=(',', ':')), encoding="utf-8"
     )
 
+    # signal_trace.json (optional; absent/empty for normal backtests)
+    if checkpoint.signal_traces:
+        (dir_path / "signal_trace.json").write_text(
+            json.dumps(checkpoint._sort_signal_traces(checkpoint.signal_traces),
+                       sort_keys=True, separators=(',', ':')), encoding="utf-8"
+        )
+
 
 def load_checkpoint(directory: Union[str, Path]) -> BacktestCheckpoint:
     """Load checkpoint from directory."""
@@ -267,6 +286,11 @@ def load_checkpoint(directory: Union[str, Path]) -> BacktestCheckpoint:
     diagnostics = json.loads((dir_path / "diagnostics.json").read_text(encoding="utf-8"))
     last_close = BacktestCheckpoint.last_close_from_parquet(dir_path / "last_close.parquet")
     engine_state = json.loads((dir_path / "engine_state.json").read_text(encoding="utf-8"))
+    signal_trace_path = dir_path / "signal_trace.json"
+    signal_traces = (
+        json.loads(signal_trace_path.read_text(encoding="utf-8"))
+        if signal_trace_path.exists() else {}
+    )
 
     return BacktestCheckpoint(
         schema_version=meta["schema_version"],
@@ -289,6 +313,7 @@ def load_checkpoint(directory: Union[str, Path]) -> BacktestCheckpoint:
         thru_thaw=engine_state["thru_thaw"],
         selected_thru=engine_state["selected_thru"],
         random_seed=engine_state["random_seed"],
+        signal_traces=signal_traces,
     )
 
 
