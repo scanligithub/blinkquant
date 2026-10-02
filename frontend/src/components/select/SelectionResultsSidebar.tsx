@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { BacktestParams } from '../BacktestPanel';
 import BacktestPanel from '../BacktestPanel';
@@ -76,7 +77,8 @@ function BulkWatchlistBar({ codes, onChanged }: { codes: string[]; onChanged?: (
     {codes.length > 200 && <div className="mt-1 text-[10px] text-slate-400">仅显示前 200 只股票的勾选项；“全选”仍作用于全部结果。</div>}
   </div>;
 }
-\ninterface SelectionResultsSidebarProps {
+
+interface SelectionResultsSidebarProps {
   sidebarTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
   selectMeta: { date?: string | null; degraded?: boolean } | null;
@@ -85,7 +87,8 @@ function BulkWatchlistBar({ codes, onChanged }: { codes: string[]; onChanged?: (
   selectedCode: string | null | undefined;
   stockList: Array<{ code: string; name: string }>;
   onViewStock: (code: string) => void;
-  onRemoveWatchlist: (code: string) => void;\n  onWatchlistChanged?: () => void | Promise<void>;
+  onRemoveWatchlist: (code: string) => void;
+  onWatchlistChanged?: () => void | Promise<void>;
   formula: string;
   backtestLoading: boolean;
   backtestResult: any;
