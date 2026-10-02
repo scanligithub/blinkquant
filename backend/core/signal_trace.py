@@ -220,6 +220,18 @@ class SignalTraceData:
             )],
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SignalTraceData":
+        """Reconstruct SignalTraceData from its canonical JSON-compatible dict."""
+        return cls(
+            schema_version=data.get("schema_version", "1.0.0"),
+            engine_version=data.get("engine_version", "unknown"),
+            signal_date=data.get("signal_date", ""),
+            formula=data.get("formula", ""),
+            traces=[CodeTrace.from_dict(item) for item in data.get("traces", [])],
+            decisions=[DecisionTrace.from_dict(item) for item in data.get("decisions", [])],
+        )
+
     def to_json(self) -> str:
         import json
         return json.dumps(self.to_dict(), sort_keys=True, separators=(',', ':'))
