@@ -143,6 +143,36 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     assert engine.export_state()["pending"] is None
 
 
+def test_target_portfolio_can_schedule_sell_while_position_is_t1_frozen():
+    """A same-day target exit is planned for T+1 even when today's buy is frozen."""
+    engine = BacktestEngine(
+        calendar=None,
+        selection_engine=None,
+        raw_price_store=None,
+        fee_config=FeeConfig(),
+        execution_config=MVP_EXECUTION_CONFIG,
+    )
+
+    engine.portfolio.cash = 100_000.0
+    engine.portfolio.positions["AAA"] = SimpleNamespace(
+        code="AAA",
+        total_qty=1_000,
+        available_qty=0,
+        frozen_qty=1_000,
+        avg_cost=10.0,
+        market_value=10_000.0,
+    )
+
+    intents = engine._generate_intents(
+        target_weights={},
+        execution_prices={"AAA": {"open": 10.0, "close": 10.0}},
+    )
+
+    assert [(i.code, i.side, i.target_qty) for i in intents] == [
+        ("AAA", "SELL", 1_000),
+    ]
+
+
 def test_target_portfolio_planner_is_deterministic_under_cash_limited_buys():
     """Multiple target buys must be planned in stable code order."""
     engine = BacktestEngine(
