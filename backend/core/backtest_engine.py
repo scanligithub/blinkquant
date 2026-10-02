@@ -915,7 +915,14 @@ class BacktestEngine:
                 new_intents = self._generate_intents(weights, new_prices)
             else:
                 new_intents = self._generate_event_intents(
-                    result.target_codes, result.exit_codes, new_prices
+                    result.target_codes,
+                    result.exit_codes,
+                    new_prices,
+                    max_positions=(
+                        strategy.sizing.max_positions
+                        if strategy.sizing.method == "top_n_equal_weight"
+                        else None
+                    ),
                 )
             diag["intents_total"] += len(new_intents)
             if strategy.mode == "target_portfolio" and weights:
