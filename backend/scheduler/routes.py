@@ -553,6 +553,7 @@ async def import_artifact_bundle(
 
     temp_dir = None
     final_dir = None
+    committed = False
     try:
         temp_dir = tempfile.mkdtemp(prefix="artifact-import-", dir=RESULT_DIR)
         with zipfile.ZipFile(file.file) as zf:
@@ -568,12 +569,14 @@ async def import_artifact_bundle(
             result_json = None
             if "result.json" in manifest["files"]:
                 try:
-                    result_json = json.loads(zf.read("result.json").decode("utf-8"))
+                    result_json_bytes = zf.read("result.json")
+                result_json = json.loads(result_json_bytes.decode("utf-8"))
                 except (TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise ValueError(f"invalid result.json: {exc}") from exc
                 if not isinstance(result_json, dict):
                     raise ValueError("result.json must contain a JSON object")
 
+        result_json_size = len(result_json_bytes) if "result_json_bytes" in locals() else 0
         for name in ("equity_curve.parquet", "trades.parquet", "positions_daily.parquet"):
             path = os.path.join(temp_dir, name)
             if os.path.exists(path):
@@ -640,7 +643,7 @@ async def import_artifact_bundle(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 result_text,
                 summary_text,
-                extracted_bytes,
+                extracted_bytes + result_json_size,
             )
             task_id = int(task["id"])
             result_uri = None
@@ -675,9 +678,10 @@ async def import_artifact_bundle(
                 summary_text,
                 result_text,
                 result_uri,
-                extracted_bytes,
+                extracted_bytes + result_json_size,
             )
             artifact_id_new = int(row["id"])
+            committed = True
 
         return {
             "ok": True,
@@ -698,9 +702,8 @@ async def import_artifact_bundle(
             pass
         if temp_dir and os.path.isdir(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        if final_dir and not os.path.isdir(final_dir):
-            # No-op; keep the branch explicit for failure cleanup after DB rollback.
-            final_dir = None
+        if final_dir and not committed and os.path.isdir(final_dir):
+            shutil.rmtree(final_dir, ignore_errors=True)
 
 
 @router.get("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
