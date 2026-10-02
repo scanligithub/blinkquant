@@ -707,7 +707,8 @@ class BacktestEngine:
         return top_n_equal_weight_allocator(strategy.sizing.max_positions)
 
     def _generate_event_intents(
-        self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict
+        self, entry_codes: list[str], exit_codes: list[str], execution_prices: dict,
+        max_positions: Optional[int] = None,
     ) -> list:
         """Generate deterministic Entry/Exit orders for event-driven strategies.
 
