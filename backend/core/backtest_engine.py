@@ -1063,6 +1063,16 @@ class BacktestEngine:
                                         code_trace.execution = exec_map[code_trace.code][side]
                                         break  # Use first match (BUY preferred)
 
+            # A scheduled T+1 order is a one-shot event. Once its execution
+            # date is reached, the state must be consumed regardless of whether
+            # the order fully fills, partially fills, or is rejected. Keeping an
+            # already-executed intent in checkpoint state would make a later
+            # resume treat historical work as still pending.
+            self._pend_sig = None
+            self._pend_exec = None
+            self._pend_intents = []
+            self._pend_prices = {}
+
         return fills, cur_signal_date, cur_prices
 
     def _phase_market_close(
