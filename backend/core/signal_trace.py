@@ -40,6 +40,7 @@ class AtomTrace:
     operator: Optional[str]  # ">", "<", ">=", "<=", "==", "!=", "cross_up", "cross_down"
     threshold: Optional[float]
     passed: bool
+    source: str = ""  # canonical source expression for this atomic comparison
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class AtomTrace:
             "operator": self.operator if self.operator is not None else "",
             "threshold": self.threshold if self.threshold is not None else None,
             "passed": self.passed,
+            "source": self.source,
         }
 
     @classmethod
@@ -62,6 +64,7 @@ class AtomTrace:
             operator=data.get("operator") if data.get("operator") else None,
             threshold=float(data["threshold"]) if data.get("threshold") is not None else None,
             passed=bool(data["passed"]),
+            source=data.get("source", ""),
         )
 
 
@@ -264,6 +267,7 @@ class SignalTraceData:
                     "operator": atom.operator if atom.operator is not None else "",
                     "threshold": atom.threshold if atom.threshold is not None else float("nan"),
                     "passed": atom.passed,
+                    "source": atom.source,
                 })
 
         traces_df = pl.DataFrame(trace_rows) if trace_rows else pl.DataFrame(schema={
@@ -276,6 +280,7 @@ class SignalTraceData:
             "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
             "field": pl.Utf8, "window": pl.Utf8, "value": pl.Float64,
             "operator": pl.Utf8, "threshold": pl.Float64, "passed": pl.Boolean,
+            "source": pl.Utf8,
         })
 
         return traces_df, atoms_df
@@ -301,6 +306,7 @@ class SignalTraceData:
                 operator=row["operator"] if row["operator"] else None,
                 threshold=float(row["threshold"]) if row["threshold"] == row["threshold"] else None,
                 passed=bool(row["passed"]),
+                source=row.get("source", ""),
             )
             atoms_by_code.setdefault(code, []).append(atom)
 
@@ -396,6 +402,7 @@ class SignalTraceCollector:
                     "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
                     "field": pl.Utf8, "window": pl.Utf8, "value": pl.Float64,
                     "operator": pl.Utf8, "threshold": pl.Float64, "passed": pl.Boolean,
+                    "source": pl.Utf8,
                 }),
             )
 
