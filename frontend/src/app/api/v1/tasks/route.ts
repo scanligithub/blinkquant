@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
+import { sql } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -43,11 +44,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid task_type' }, { status: 400 });
   }
 
+  // Snapshot an authenticated user's watchlist before the task leaves Vercel.
+  const normalizedPayload = payload && typeof payload === 'object'
+    ? JSON.parse(JSON.stringify(payload))
+    : payload;
+  if (task_type === 'backtest' && normalizedPayload?.strategy?.universe?.type === 'watchlist') {
+    const universe = normalizedPayload.strategy.universe;
+    const watchlistId = Number(universe.watchlist_id);
+    if (!Number.isInteger(watchlistId) || watchlistId <= 0) {
+      return NextResponse.json({ error: '无效的自选股列表' }, { status: 400 });
+    }
+    const list = await sql`
+      SELECT id, name FROM watchlists
+      WHERE id = ${watchlistId} AND user_id = ${userId}
+    `;
+    if (!list.rows.length) {
+      return NextResponse.json({ error: '自选股列表不存在或无权访问' }, { status: 404 });
+    }
+    const items = await sql`
+      SELECT code FROM watchlist_items
+      WHERE watchlist_id = ${watchlistId}
+      ORDER BY created_at ASC, id ASC
+    `;
+    const codes = items.rows.map((row) => String(row.code).trim()).filter(Boolean);
+    if (!codes.length) return NextResponse.json({ error: '自选股列表为空，无法回测' }, { status: 400 });
+    if (codes.length > 5000) return NextResponse.json({ error: '自选股列表超过回测允许的 5000 只股票上限' }, { status: 400 });
+    normalizedPayload.strategy.universe = {
+      type: 'watchlist',
+      watchlist_id: watchlistId,
+      watchlist_name: String(list.rows[0].name),
+      watchlist_codes: codes,
+    };
+    normalizedPayload.universe_type = 'watchlist';
+  }
+
   // Forward to Node1 internal API
   const node1Body = {
     user_id: userId,
     task_type,
-    payload,
+    payload: normalizedPayload,
     priority,
     ...(strategy_template_id != null ? { strategy_template_id } : {}),
   };

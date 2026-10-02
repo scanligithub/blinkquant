@@ -9,7 +9,7 @@ export interface BacktestParams {
   start_date: string;
   end_signal_date: string;
   initial_cash: number;
-  universe_type: 'all_a' | 'index';
+  universe_type: 'all_a' | 'index' | 'watchlist';
   index_id?: string;
   min_listing_days: number;
   exclude_st: boolean;
@@ -23,7 +23,7 @@ export interface BacktestParams {
     transfer_fee_rate?: number;
   };
   strategy: {
-    universe: { type: 'all_a' | 'index'; index_id?: string };
+    universe: { type: 'all_a' | 'index' | 'watchlist'; index_id?: string; watchlist_id?: number };
     entry: { condition: string; trigger: 'condition' | 'cross_above' | 'cross_below'; timeframe: string };
     exit?: { condition: string; trigger: 'condition' | 'cross_above' | 'cross_below'; timeframe: string };
     sizing: { method: 'equal_weight' | 'top_n_equal_weight'; max_positions?: number };
@@ -31,6 +31,8 @@ export interface BacktestParams {
     mode: 'target_portfolio' | 'event_driven';
   };
 }
+
+interface WatchlistOption { id: number; name: string; item_count: number; is_default: boolean }
 
 interface BacktestPanelProps {
   initialFormula?: string;
@@ -48,7 +50,9 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
   const [entryTrigger, setEntryTrigger] = useState<typeof TRIGGERS[number]>('condition');
   const [exitTrigger, setExitTrigger] = useState<typeof TRIGGERS[number]>('condition');
   const [mode, setMode] = useState<'target_portfolio' | 'event_driven'>('target_portfolio');
-  const [universeType, setUniverseType] = useState<'all_a' | 'index'>('all_a');
+  const [universeType, setUniverseType] = useState<'all_a' | 'index' | 'watchlist'>('all_a');
+  const [watchlists, setWatchlists] = useState<WatchlistOption[]>([]);
+  const [watchlistId, setWatchlistId] = useState('');
   const [indexId, setIndexId] = useState('000300');
   const [sizingMethod, setSizingMethod] = useState<'equal_weight' | 'top_n_equal_weight'>('top_n_equal_weight');
   const [topN, setTopN] = useState('20');
@@ -69,11 +73,27 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
   const [transferFeeRate, setTransferFeeRate] = useState('0.00001');
   const [sourceSelectionStrategy, setSourceSelectionStrategy] = useState<SelectionStrategySource | undefined>();
 
+  useEffect(() => {
+    if (universeType !== 'watchlist') return;
+    let active = true;
+    fetch('/api/watchlists', { cache: 'no-store' }).then(async (res) => {
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || '加载自选股列表失败');
+      if (!active) return;
+      const next = Array.isArray(json.watchlists) ? json.watchlists : [];
+      setWatchlists(next);
+      if (!watchlistId && next.length) setWatchlistId(String(next[0].id));
+    }).catch((error) => { if (active) console.error(error); });
+    return () => { active = false; };
+  }, [universeType, watchlistId]);
+
   const templateConfig: BacktestTemplateConfig = {
     strategy: {
       universe: universeType === 'index'
         ? { type: 'index', index_id: indexId.trim() || '000300' }
-        : { type: 'all_a' },
+        : universeType === 'watchlist'
+          ? { type: 'watchlist', watchlist_id: Number(watchlistId) }
+          : { type: 'all_a' },
       entry: { condition: formula.trim(), trigger: entryTrigger, timeframe: entryTimeframe },
       ...(exitFormula.trim() ? {
         exit: { condition: exitFormula.trim(), trigger: exitTrigger, timeframe: exitTimeframe },
@@ -107,7 +127,8 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     const sizing = s.sizing || {};
     const fee = config.fee_policy || {};
     const benchmark = config.benchmark || {};
-    setUniverseType(u.type === 'index' ? 'index' : 'all_a');
+    setUniverseType(u.type === 'index' ? 'index' : u.type === 'watchlist' ? 'watchlist' : 'all_a');
+    setWatchlistId(String(u.watchlist_id || ''));
     setIndexId(String(u.index_id || '000300'));
     setFormula(String(entry.condition || ''));
     setEntryTrigger(entry.trigger || 'condition');
@@ -245,12 +266,15 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     const exitCondition = exitFormula.trim();
 
     if (!entryCondition || (mode === 'event_driven' && !exitCondition)) return;
+    if (universeType === 'watchlist' && (!Number.isInteger(Number(watchlistId)) || Number(watchlistId) <= 0)) return;
 
     const maxPositions = Math.max(1, parseInt(topN, 10) || 20);
     const strategy: BacktestParams['strategy'] = {
       universe: universeType === 'index'
         ? { type: 'index', index_id: indexId.trim() || '000300' }
-        : { type: 'all_a' },
+        : universeType === 'watchlist'
+          ? { type: 'watchlist', watchlist_id: Number(watchlistId) }
+          : { type: 'all_a' },
       entry: { condition: entryCondition, trigger: entryTrigger, timeframe: entryTimeframe },
       sizing: sizingMethod === 'equal_weight'
         ? { method: 'equal_weight' }
@@ -377,6 +401,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
           <select value={universeType} onChange={(e) => setUniverseType(e.target.value as typeof universeType)} className={selectClass}>
             <option value="all_a">全 A</option>
             <option value="index">指数成分股</option>
+            <option value="watchlist">自选股列表</option>
           </select>
         </div>
         <div>
@@ -389,13 +414,14 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
       </div>
 
       {universeType === 'index' && (
-        <input
-          value={indexId}
-          onChange={(e) => setIndexId(e.target.value)}
-          placeholder="指数代码，例如 000300"
-          className={inputClass}
-          required
-        />
+        <input value={indexId} onChange={(e) => setIndexId(e.target.value)} placeholder="指数代码，例如 000300" className={inputClass} required />
+      )}
+
+      {universeType === 'watchlist' && (
+        <select value={watchlistId} onChange={(e) => setWatchlistId(e.target.value)} className={selectClass} required>
+          <option value="">选择自选股列表</option>
+          {watchlists.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.item_count} 只股票</option>)}
+        </select>
       )}
 
       <div className="grid grid-cols-2 gap-2">
@@ -514,7 +540,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
 
       <button
         type="submit"
-        disabled={loading || !formula.trim() || (mode === 'event_driven' && !exitFormula.trim())}
+        disabled={loading || !formula.trim() || (mode === 'event_driven' && !exitFormula.trim()) || (universeType === 'watchlist' && !watchlistId)}
         className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? '回测中...' : '运行回测'}
