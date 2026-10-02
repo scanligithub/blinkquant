@@ -49,13 +49,11 @@ test('watchlist UI exposes create, rename, delete and per-list stock management'
   assert.match(detailPage, /\/api\/watchlists/);
 });
 
-
 test('IA5.4.2 watchlist backtest universe snapshots and authorizes ownership', () => {
   const taskRoute = read('src/app/api/v1/tasks/route.ts');
   const panel = read('src/components/BacktestPanel.tsx');
   const strategy = read('../backend/core/strategy.py');
   const selector = read('../backend/core/strategy_selector.py');
-
   assert.match(taskRoute, /watchlist_id/);
   assert.match(taskRoute, /WHERE id = \$\{watchlistId\} AND user_id = \$\{userId\}/);
   assert.match(taskRoute, /watchlist_codes/);
@@ -66,7 +64,6 @@ test('IA5.4.2 watchlist backtest universe snapshots and authorizes ownership', (
   assert.match(strategy, /watchlist_codes/);
   assert.match(selector, /strategy\.universe\.watchlist_codes/);
 });
-
 
 test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', () => {
   const route = read('src/app/api/watchlist/route.ts');
@@ -81,4 +78,20 @@ test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', 
   assert.match(sidebar, /body: JSON\.stringify\(\{ listId, codes: Array\.from\(selected\) \}\)/);
   assert.match(sidebar, /<BulkWatchlistBar codes=\{results\} onChanged=\{onWatchlistChanged\} \/>/);
   assert.match(workspace, /onWatchlistChanged=\{refreshWatchlist\}/);
+});
+
+test('IA5.4.4 watchlist detail supports owner-scoped bulk removal', () => {
+  const route = read('src/app/api/watchlist/route.ts');
+  const detail = read('src/app/watchlists/[watchlistId]/page.tsx');
+  const component = read('src/components/Watchlist.tsx');
+  assert.match(route, /Array\.isArray\(body\?\.codes\)/);
+  assert.match(route, /一次最多移除 5000 只股票/);
+  assert.match(route, /removed_count/);
+  assert.match(route, /DELETE FROM watchlist_items WHERE watchlist_id = \$\{listId\} AND code = \$\{item\}/);
+  assert.match(detail, /selectedCodes/);
+  assert.match(detail, /批量移除/);
+  assert.match(detail, /body: JSON\.stringify\(\{ listId: watchlistId, codes: Array\.from\(selectedCodes\) \}\)/);
+  assert.match(component, /selectable/);
+  assert.match(component, /全选自选股/);
+  assert.match(component, /selectedCodes/);
 });
