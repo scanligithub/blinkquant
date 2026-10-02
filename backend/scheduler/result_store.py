@@ -14,6 +14,8 @@ from .config import RESULT_ZSTD_LEVEL
 log = logging.getLogger("result_store")
 
 ARTIFACT_NAMES = ("equity_curve", "trades", "positions_daily")
+SIGNAL_TRACE_ARTIFACT = "signal_trace"
+
 _USER_ID_RE = re.compile(r"^[\w-]+$")
 
 
@@ -226,6 +228,20 @@ def persist_frames(
         })
     nbytes = dir_size(task_dir)
     return summary, uri, nbytes
+
+
+def load_signal_trace(result_uri: str, result_dir: str) -> Optional[dict]:
+    """Load the optional persisted SignalTrace JSON artifact."""
+    path = os.path.join(result_dir, result_uri, "signal_trace.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else None
+    except Exception:
+        log.exception("Failed to read signal_trace from %s", result_uri)
+        return None
 
 
 def load_part(result_uri: str, name: str, result_dir: str) -> Optional[pl.DataFrame]:
