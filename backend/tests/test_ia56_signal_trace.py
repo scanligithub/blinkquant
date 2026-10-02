@@ -6,9 +6,11 @@ import polars as pl
 
 from core.backtest_engine import BacktestEngine
 from core.backtest_types import FeeConfig
-from core.portfolio import Portfolio
+from core.checkpoint import BacktestCheckpoint, load_checkpoint, save_checkpoint
+from core.execution import OrderIntent
+from core.portfolio import Portfolio, Position
 from core.engine import SelectionEngine
-from core.signal_trace import CodeTrace, ExecutionTrace, SignalTraceData
+from core.signal_trace import CodeTrace, DecisionTrace, ExecutionTrace, SignalTraceData
 from core.strategy import StrategyDefinition
 from core.strategy_selector import StrategySelectionResult, StrategySelector
 from core.data_manager import data_manager
@@ -196,3 +198,135 @@ def test_signal_trace_data_is_json_serializable():
     payload = trace.to_dict()
     assert payload["schema_version"] == "1.0.0"
     assert payload["traces"][0]["code"] == "AAA"
+
+
+
+def test_decision_trace_preserves_buy_sell_rejection_and_partial_fill():
+    signal_date = dt.date(2024, 1, 3)
+    execution_date = dt.date(2024, 1, 4)
+    trace = SignalTraceData(
+        signal_date=signal_date.isoformat(),
+        formula="CLOSE > 10",
+        traces=[CodeTrace(code="AAA", passed=True)],
+        decisions=[
+            DecisionTrace("AAA", "BUY", 100, 0.5, execution_date=execution_date),
+            DecisionTrace("AAA", "SELL", 100, 0.5, execution_date=execution_date),
+            DecisionTrace("BBB", "SELL", 100, 0.5, execution_date=execution_date),
+            DecisionTrace("CCC", "SELL", 200, 0.5, execution_date=execution_date),
+        ],
+    )
+
+    class _Calendar:
+        def next_trade_day(self, date):
+            return execution_date
+
+    class _RawStore:
+        def load_limit_flags_for_date(self, date, codes):
+            return None
+
+    engine = BacktestEngine(
+        calendar=_Calendar(),
+        selection_engine=SelectionEngine(),
+        raw_price_store=_RawStore(),
+        fee_config=FeeConfig(),
+    )
+    engine.portfolio = Portfolio(initial_cash=100_000)
+    engine.portfolio.load_initial_positions({
+        "AAA": Position("AAA", total_qty=100, available_qty=100, frozen_qty=0),
+        "BBB": Position("BBB", total_qty=100, available_qty=0, frozen_qty=100),
+        "CCC": Position("CCC", total_qty=100, available_qty=100, frozen_qty=0),
+    })
+    engine.execution_engine = engine.execution_engine or __import__(
+        "core.execution", fromlist=["ExecutionEngine"]
+    ).ExecutionEngine(engine.execution_config, engine.fee_config)
+    engine.raw_price_store = _RawStore()
+    engine._signal_traces = {signal_date.isoformat(): trace}
+    engine._pend_sig = signal_date
+    engine._pend_exec = execution_date
+    engine._pend_intents = [
+        OrderIntent("AAA", "BUY", 100, 0.5),
+        OrderIntent("AAA", "SELL", 100, 0.5),
+        OrderIntent("BBB", "SELL", 100, 0.5),
+        OrderIntent("CCC", "SELL", 200, 0.5),
+    ]
+    engine._pend_prices = {
+        "AAA": {"open": 10.0, "close": 10.0},
+        "BBB": {"open": 10.0, "close": 10.0},
+        "CCC": {"open": 10.0, "close": 10.0},
+    }
+    diag = {
+        "rej_counters": {},
+        "partial_fill_count": 0,
+        "zero_price_trade_count": 0,
+        "intents_total": 4,
+    }
+
+    fills, cur_signal_date, _ = engine._phase_post_execution(execution_date, None, diag)
+    assert len(fills) == 3
+    assert cur_signal_date == signal_date
+
+    decisions = {(d.code, d.side): d for d in trace.decisions}
+    assert decisions[("AAA", "BUY")].status == "FILLED"
+    assert decisions[("AAA", "SELL")].status == "FILLED"
+    assert decisions[("BBB", "SELL")].status == "REJECTED"
+    assert decisions[("BBB", "SELL")].rejection_reason == "FROZEN"
+    assert decisions[("CCC", "SELL")].status == "PARTIAL"
+    assert decisions[("CCC", "SELL")].executed_qty == 100
+
+    code_trace = trace.traces[0]
+    assert sorted(e.side for e in code_trace.executions) == ["BUY", "SELL"]
+
+
+def test_signal_trace_checkpoint_round_trip_preserves_decisions(tmp_path):
+    trace = SignalTraceData(
+        signal_date="2024-01-03",
+        formula="CLOSE > 10",
+        traces=[CodeTrace(code="AAA", passed=True)],
+        decisions=[
+            DecisionTrace(
+                code="AAA",
+                side="BUY",
+                target_qty=100,
+                target_weight=0.5,
+                execution_date=dt.date(2024, 1, 4),
+                status="REJECTED",
+                rejection_reason="LIMIT_BLOCKED",
+            )
+        ],
+    )
+    checkpoint = BacktestCheckpoint(
+        current_date="2024-01-03",
+        cash=99_000.0,
+        signal_traces={"2024-01-03": trace.to_dict()},
+    )
+    directory = tmp_path / "cp"
+    save_checkpoint(checkpoint, directory)
+    restored = load_checkpoint(directory)
+
+    assert restored.signal_traces["2024-01-03"]["decisions"][0]["status"] == "REJECTED"
+    assert restored.signal_traces["2024-01-03"]["decisions"][0]["rejection_reason"] == "LIMIT_BLOCKED"
+
+
+def test_signal_trace_json_round_trip_preserves_multiple_executions_and_decisions():
+    trace = SignalTraceData(
+        signal_date="2024-01-03",
+        formula="CLOSE > 10",
+        traces=[
+            CodeTrace(
+                code="AAA",
+                passed=True,
+                executions=[
+                    ExecutionTrace(dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0),
+                    ExecutionTrace(dt.date(2024, 1, 4), 10.0, "BUY", 100, 1.0),
+                ],
+            )
+        ],
+        decisions=[
+            DecisionTrace("AAA", "SELL", 100, 0.0, dt.date(2024, 1, 4), status="FILLED", executed_qty=100),
+            DecisionTrace("AAA", "BUY", 100, 0.5, dt.date(2024, 1, 4), status="FILLED", executed_qty=100),
+        ],
+    )
+    restored = SignalTraceData.from_dict(trace.to_dict())
+
+    assert [e.side for e in restored.traces[0].executions] == ["SELL", "BUY"]
+    assert {(d.code, d.side) for d in restored.decisions} == {("AAA", "SELL"), ("AAA", "BUY")}
