@@ -66,3 +66,19 @@ test('IA5.4.2 watchlist backtest universe snapshots and authorizes ownership', (
   assert.match(strategy, /watchlist_codes/);
   assert.match(selector, /strategy\.universe\.watchlist_codes/);
 });
+
+
+test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', () => {
+  const route = read('src/app/api/watchlist/route.ts');
+  const sidebar = read('src/components/select/SelectionResultsSidebar.tsx');
+  const workspace = read('src/components/select/SelectionWorkspace.tsx');
+  assert.match(route, /Array\.isArray\(body\?\.codes\)/);
+  assert.match(route, /ON CONFLICT \(watchlist_id, code\) DO NOTHING/);
+  assert.match(route, /added_count/);
+  assert.match(sidebar, /BulkWatchlistBar/);
+  assert.match(sidebar, /已选/);
+  assert.match(sidebar, /批量加入/);
+  assert.match(sidebar, /body: JSON\.stringify\(\{ listId, codes: Array\.from\(selected\) \}\)/);
+  assert.match(sidebar, /<BulkWatchlistBar codes=\{results\} onChanged=\{onWatchlistChanged\} \/>/);
+  assert.match(workspace, /onWatchlistChanged=\{refreshWatchlist\}/);
+});

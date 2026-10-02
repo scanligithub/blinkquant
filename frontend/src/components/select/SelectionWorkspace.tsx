@@ -408,6 +408,7 @@ export default function SelectionWorkspace() {
             stockList={stockList}
             onViewStock={handleViewStock}
             onRemoveWatchlist={toggleWatchlist}
+            onWatchlistChanged={refreshWatchlist}
             formula={formula}
             backtestLoading={backtestLoading}
             backtestResult={backtestResult}
