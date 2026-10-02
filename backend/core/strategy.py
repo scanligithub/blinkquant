@@ -4,7 +4,7 @@ StrategyDefinition 只描述策略，不执行策略。
 执行仍由现有 SelectionEngine / BacktestEngine / ExecutionEngine 负责。
 
 第一版支持的策略层能力：
-- Universe: ALL_A / INDEX
+- Universe: ALL_A / INDEX / WATCHLIST snapshot
 - Entry / Exit: condition / cross_above / cross_below
 - Position sizing: equal_weight / top_n_equal_weight
 - Rebalance: daily / weekly
@@ -19,7 +19,7 @@ from typing import Any, Literal, Optional
 from .backtest_types import ExecutionConfig, MVP_EXECUTION_CONFIG
 
 
-UniverseType = Literal["all_a", "index"]
+UniverseType = Literal["all_a", "index", "watchlist"]
 SignalTrigger = Literal["condition", "cross_above", "cross_below"]
 StrategyMode = Literal["target_portfolio", "event_driven"]
 SizingMethod = Literal["equal_weight", "top_n_equal_weight"]
@@ -36,16 +36,35 @@ class UniverseDefinition:
 
     type: UniverseType = "all_a"
     index_id: Optional[str] = None
+    watchlist_id: Optional[int] = None
+    watchlist_name: Optional[str] = None
+    watchlist_codes: Optional[list[str]] = None
 
     def __post_init__(self) -> None:
-        if self.type not in ("all_a", "index"):
+        if self.type not in ("all_a", "index", "watchlist"):
             raise ValueError(f"unsupported universe type: {self.type!r}")
 
         if self.type == "index":
             if not self.index_id or not self.index_id.strip():
                 raise ValueError("index universe requires index_id")
-        elif self.index_id is not None:
-            raise ValueError("all_a universe must not specify index_id")
+            if any(v is not None for v in (self.watchlist_id, self.watchlist_name, self.watchlist_codes)):
+                raise ValueError("index universe must not specify watchlist fields")
+        elif self.type == "watchlist":
+            if self.index_id is not None:
+                raise ValueError("watchlist universe must not specify index_id")
+            if self.watchlist_id is None or self.watchlist_id <= 0:
+                raise ValueError("watchlist universe requires watchlist_id")
+            if not isinstance(self.watchlist_codes, list) or not self.watchlist_codes:
+                raise ValueError("watchlist universe requires non-empty watchlist_codes")
+            normalized = sorted({str(code).strip() for code in self.watchlist_codes if str(code).strip()})
+            if not normalized:
+                raise ValueError("watchlist universe requires non-empty watchlist_codes")
+            object.__setattr__(self, "watchlist_codes", normalized)
+        else:
+            if self.index_id is not None:
+                raise ValueError("all_a universe must not specify index_id")
+            if any(v is not None for v in (self.watchlist_id, self.watchlist_name, self.watchlist_codes)):
+                raise ValueError("all_a universe must not specify watchlist fields")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
