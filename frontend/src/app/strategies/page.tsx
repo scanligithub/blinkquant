@@ -146,7 +146,10 @@ export default function StrategiesPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '导入失败');
       await refresh();
-      const message = `已导入 ${json.imported || 0} 个策略${json.skipped?.length ? `，跳过 ${json.skipped.length} 个重复或无效策略` : ''}`;
+      const importedSelection = Number(json.imported || 0);
+      const importedBacktests = Number(json.imported_backtests || 0);
+      const skippedCount = (Array.isArray(json.skipped) ? json.skipped.length : 0) + (Array.isArray(json.skipped_backtests) ? json.skipped_backtests.length : 0);
+      const message = `已导入选股策略 ${importedSelection} 个、回测策略 ${importedBacktests} 个${skippedCount ? `，跳过 ${skippedCount} 个重复或无效策略` : ''}`;
       alert(message);
     } catch (error) { alert(error instanceof Error ? error.message : '导入文件格式无效'); }
     finally { if (fileRef.current) fileRef.current.value = ''; }
@@ -175,7 +178,7 @@ export default function StrategiesPage() {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl font-black">策略库</h1>
-              <p className="text-sm text-slate-500 mt-1">管理选股策略；每次编辑都会保留一个新的策略版本。</p>
+              <p className="text-sm text-slate-500 mt-1">统一管理选股与回测策略；导入/导出会保留可迁移的版本历史。</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void importFile(file); }} />
