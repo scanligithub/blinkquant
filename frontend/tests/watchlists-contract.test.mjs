@@ -91,7 +91,8 @@ test('IA5.4.4 watchlist supports owner-scoped bulk removal', () => {
   const watchlist = read('src/components/Watchlist.tsx');
   assert.match(route, /Array\.isArray\(body\.codes\)/);
   assert.match(route, /DELETE FROM watchlist_items/);
-  assert.match(route, /code = ANY\(\$\{chunk\}\)/);
+  assert.match(route, /code = \$\{code\}/);
+  assert.match(route, /chunk\.map\(\(code\) => sql/);
   assert.match(route, /removed_count/);
   assert.match(route, /一次最多移除 5000 只股票/);
   assert.match(watchlist, /批量移除/);
