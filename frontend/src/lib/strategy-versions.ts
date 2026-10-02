@@ -23,6 +23,8 @@ export function ensureSelectionStrategyVersions(): Promise<void> {
         source_backtest_strategy_version INTEGER,
         source_backtest_strategy_name TEXT,
         source_backtest_strategy_trigger TEXT,
+        source_backtest_artifact_id BIGINT,
+        source_backtest_artifact_title TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (strategy_id, version_no)
       )
@@ -32,14 +34,18 @@ export function ensureSelectionStrategyVersions(): Promise<void> {
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_id BIGINT,
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_version INTEGER,
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_name TEXT,
-        ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT
+        ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT,
+        ADD COLUMN IF NOT EXISTS source_backtest_artifact_id BIGINT,
+        ADD COLUMN IF NOT EXISTS source_backtest_artifact_title TEXT
     `;
     await sql`
       ALTER TABLE strategy_versions
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_id BIGINT,
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_version INTEGER,
         ADD COLUMN IF NOT EXISTS source_backtest_strategy_name TEXT,
-        ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT
+        ADD COLUMN IF NOT EXISTS source_backtest_strategy_trigger TEXT,
+        ADD COLUMN IF NOT EXISTS source_backtest_artifact_id BIGINT,
+        ADD COLUMN IF NOT EXISTS source_backtest_artifact_title TEXT
     `;
     await sql`
       CREATE INDEX IF NOT EXISTS idx_strategy_versions_strategy
