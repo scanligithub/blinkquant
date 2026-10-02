@@ -390,3 +390,56 @@ def test_atom_trace_reports_false_comparison_and_boolean_leaves():
             data_manager.df_monthly,
         ) = original
 
+
+
+
+def test_backtest_engine_restore_keeps_t1_signal_trace_provenance():
+    trace = SignalTraceData(
+        signal_date="2025-12-31",
+        formula="CLOSE > 10",
+        traces=[CodeTrace(code="AAA", passed=True)],
+        decisions=[
+            DecisionTrace(
+                code="AAA",
+                side="SELL",
+                target_qty=100,
+                target_weight=0.0,
+                execution_date=dt.date(2026, 1, 2),
+                status="PENDING",
+            )
+        ],
+    )
+    cp = BacktestCheckpoint(
+        current_date="2025-12-31",
+        cash=100_000.0,
+        positions=[{
+            "code": "AAA", "total_qty": 100, "available_qty": 100,
+            "frozen_qty": 0, "avg_cost": 10.0, "market_value": 1000.0,
+        }],
+        pending_signal_date="2025-12-31",
+        pending_execution_date="2026-01-02",
+        pending_intents=[{
+            "code": "AAA", "side": "SELL", "target_qty": 100, "target_weight": 0.0,
+        }],
+        pending_prices={"AAA": {"open": 11.0, "close": 11.0}},
+        signal_traces={"2025-12-31": trace.to_dict()},
+    )
+
+    class _Calendar:
+        def next_trade_day(self, date):
+            return dt.date(2026, 1, 2)
+
+    engine = BacktestEngine(
+        calendar=_Calendar(),
+        selection_engine=SelectionEngine(),
+        raw_price_store=object(),
+        fee_config=FeeConfig(),
+    )
+    engine._restore_from_checkpoint(cp)
+
+    restored = engine._signal_traces["2025-12-31"]
+    assert restored.signal_date == "2025-12-31"
+    assert restored.decisions[0].execution_date == dt.date(2026, 1, 2)
+    assert restored.decisions[0].status == "PENDING"
+    assert engine._pend_sig == dt.date(2025, 12, 31)
+    assert engine._pend_exec == dt.date(2026, 1, 2)
