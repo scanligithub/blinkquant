@@ -69,7 +69,8 @@ function validateManifest(raw: unknown, files: Record<string, Uint8Array>) {
     artifactPaths.add(path);
   }
 
-  const allowed = new Set(['manifest.json', 'strategies.json', 'watchlists.json', ...artifactPaths]);
+  const allowed = new Set<string>(['manifest.json', 'strategies.json', 'watchlists.json']);
+  for (const path of Array.from(artifactPaths)) allowed.add(path);
   for (const path of Object.keys(files)) {
     if (!allowed.has(path)) throw new Error('资产包包含未声明文件：' + path);
   }
