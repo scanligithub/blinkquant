@@ -7,7 +7,7 @@ import polars as pl
 from core.backtest_engine import BacktestEngine
 from core.backtest_types import FeeConfig
 from core.checkpoint import BacktestCheckpoint, load_checkpoint, save_checkpoint
-from core.execution import OrderIntent
+from core.execution import ExecutionEngine, OrderIntent
 from core.portfolio import Portfolio, Position
 from core.engine import SelectionEngine
 from core.signal_trace import CodeTrace, DecisionTrace, ExecutionTrace, SignalTraceData
@@ -236,9 +236,7 @@ def test_decision_trace_preserves_buy_sell_rejection_and_partial_fill():
         "BBB": Position("BBB", total_qty=100, available_qty=0, frozen_qty=100),
         "CCC": Position("CCC", total_qty=100, available_qty=100, frozen_qty=0),
     })
-    engine.execution_engine = engine.execution_engine or __import__(
-        "core.execution", fromlist=["ExecutionEngine"]
-    ).ExecutionEngine(engine.execution_config, engine.fee_config)
+    engine.execution_engine = ExecutionEngine(engine.execution_config, engine.fee_config)
     engine.raw_price_store = _RawStore()
     engine._signal_traces = {signal_date.isoformat(): trace}
     engine._pend_sig = signal_date
