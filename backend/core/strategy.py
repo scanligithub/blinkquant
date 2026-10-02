@@ -41,7 +41,7 @@ class UniverseDefinition:
     watchlist_codes: Optional[list[str]] = None
 
     def __post_init__(self) -> None:
-        if self.type not in ("all_a", "index"):
+        if self.type not in ("all_a", "index", "watchlist"):
             raise ValueError(f"unsupported universe type: {self.type!r}")
 
         if self.type == "index":
