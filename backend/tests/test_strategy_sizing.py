@@ -216,3 +216,83 @@ def test_event_driven_never_allocates_more_than_free_cycle_capital():
 
     buys = [i for i in intents if i.side == "BUY"]
     assert sum(i.target_qty * 10.0 for i in buys) <= 1_000
+
+
+def test_event_driven_top_n_caps_final_holdings_after_retaining_positions():
+    engine = _engine_with_portfolio(
+        1_000,
+        {
+            "sh.600000": Position("sh.600000", 100, 100, 0, 10.0, 1_000.0),
+            "sh.600001": Position("sh.600001", 100, 100, 0, 10.0, 1_000.0),
+        },
+    )
+
+    intents = engine._generate_event_intents(
+        entry_codes=["sz.000001", "sz.000002", "sz.000003"],
+        exit_codes=[],
+        execution_prices={
+            "sh.600000": {"open": 10.0, "close": 10.0},
+            "sh.600001": {"open": 10.0, "close": 10.0},
+            "sz.000001": {"open": 10.0, "close": 10.0},
+            "sz.000002": {"open": 10.0, "close": 10.0},
+            "sz.000003": {"open": 10.0, "close": 10.0},
+        },
+        max_positions=3,
+    )
+
+    buys = [intent for intent in intents if intent.side == "BUY"]
+    assert [intent.code for intent in buys] == ["sz.000001"]
+
+
+def test_event_driven_top_n_exit_frees_one_slot_for_entry():
+    engine = _engine_with_portfolio(
+        0,
+        {
+            "sh.600000": Position("sh.600000", 100, 100, 0, 10.0, 1_000.0),
+            "sh.600001": Position("sh.600001", 100, 100, 0, 10.0, 1_000.0),
+            "sh.600002": Position("sh.600002", 100, 100, 0, 10.0, 1_000.0),
+        },
+    )
+
+    intents = engine._generate_event_intents(
+        entry_codes=["sz.000001", "sz.000002"],
+        exit_codes=["sh.600000"],
+        execution_prices={
+            "sh.600000": {"open": 10.0, "close": 10.0},
+            "sh.600001": {"open": 10.0, "close": 10.0},
+            "sh.600002": {"open": 10.0, "close": 10.0},
+            "sz.000001": {"open": 10.0, "close": 10.0},
+            "sz.000002": {"open": 10.0, "close": 10.0},
+        },
+        max_positions=3,
+    )
+
+    sells = [intent for intent in intents if intent.side == "SELL"]
+    buys = [intent for intent in intents if intent.side == "BUY"]
+    assert [intent.code for intent in sells] == ["sh.600000"]
+    assert [intent.code for intent in buys] == ["sz.000001"]
+
+
+def test_event_driven_top_n_unexecutable_exit_does_not_free_slot():
+    engine = _engine_with_portfolio(
+        1_000,
+        {
+            "sh.600000": Position("sh.600000", 100, 0, 100, 10.0, 1_000.0),
+            "sh.600001": Position("sh.600001", 100, 100, 0, 10.0, 1_000.0),
+            "sh.600002": Position("sh.600002", 100, 100, 0, 10.0, 1_000.0),
+        },
+    )
+
+    intents = engine._generate_event_intents(
+        entry_codes=["sz.000001"],
+        exit_codes=["sh.600000"],
+        execution_prices={
+            "sh.600000": {"open": 10.0, "close": 10.0},
+            "sh.600001": {"open": 10.0, "close": 10.0},
+            "sh.600002": {"open": 10.0, "close": 10.0},
+            "sz.000001": {"open": 10.0, "close": 10.0},
+        },
+        max_positions=3,
+    )
+
+    assert [intent.side for intent in intents] == []
