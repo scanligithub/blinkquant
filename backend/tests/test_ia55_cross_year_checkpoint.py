@@ -10,6 +10,7 @@ from core.backtest_engine import BacktestEngine, TradingCalendar
 from core.backtest_types import FeeConfig, MVP_EXECUTION_CONFIG
 from core.checkpoint import load_checkpoint
 from core.raw_price_store import RawPriceStore
+from core.portfolio import Position
 from core.strategy import (
     PositionSizingDefinition,
     RebalanceDefinition,
@@ -20,8 +21,6 @@ from core.strategy import (
 
 
 DATES = [
-    dt.date(2025, 12, 29),
-    dt.date(2025, 12, 30),
     dt.date(2025, 12, 31),
     dt.date(2026, 1, 2),
     dt.date(2026, 1, 5),
@@ -37,8 +36,6 @@ def _write_year_files(root: str) -> None:
         DATES[0]: {"AAA": 10.0, "BBB": 10.0},
         DATES[1]: {"AAA": 10.0, "BBB": 10.0},
         DATES[2]: {"AAA": 10.0, "BBB": 10.0},
-        DATES[3]: {"AAA": 10.0, "BBB": 10.0},
-        DATES[4]: {"AAA": 10.0, "BBB": 10.0},
     }
     for date in DATES:
         for code in CODES:
@@ -130,12 +127,24 @@ def test_target_portfolio_checkpoint_resume_across_year_boundary():
         assert boundary_prices.height == 4
         assert set(boundary_prices["date"].to_list()) == {DATES[2], DATES[3]}
 
+        initial_positions = {
+            "AAA": Position(
+                code="AAA",
+                total_qty=90_000,
+                available_qty=90_000,
+                frozen_qty=0,
+                avg_cost=10.0,
+                market_value=900_000.0,
+            )
+        }
+
         # C1: continuous run through the 2025-12-31 signal and 2026-01-02 execution.
         continuous_engine = _build_engine(root, calendar, events)
         continuous = continuous_engine.run(
             start_date=DATES[0],
-            end_signal_date=DATES[2],
+            end_signal_date=DATES[0],
             initial_cash=1_000_000.0,
+            initial_positions=initial_positions,
             strategy=strategy,
         )
         c1_day4 = continuous.trades.filter(
@@ -167,8 +176,9 @@ def test_target_portfolio_checkpoint_resume_across_year_boundary():
 
             source_engine.run(
                 start_date=DATES[0],
-                end_signal_date=DATES[2],
+                end_signal_date=DATES[0],
                 initial_cash=1_000_000.0,
+                initial_positions=initial_positions,
                 strategy=strategy,
                 on_progress=save_after_year_end,
             )
