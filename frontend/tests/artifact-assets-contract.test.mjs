@@ -13,7 +13,7 @@ test('artifact export proxy keeps authentication and serves the portable bundle 
   assert.match(source, /requireAuth\(req\)/);
   assert.match(source, /\/internal\/artifacts\/.*\/export/);
   assert.match(source, /user_id/);
-  assert.match(source, /application\/zip/);
+  assert.match(source, /upstream\.headers\.get\('Content-Type'\)/);
 });
 
 test('artifact import proxy forwards the authenticated multipart ZIP stream to Node1', () => {
