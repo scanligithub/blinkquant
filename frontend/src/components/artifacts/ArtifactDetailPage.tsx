@@ -221,6 +221,8 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     )}
                   </section>
 
+                  <SignalTracePanel artifactId={task.id} />
+
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <div className="flex items-center justify-between gap-3">
                       <div>
