@@ -310,7 +310,12 @@ class BacktestEngine:
         self._diag_accum = diag  # Persist reference for checkpointing
         
         # 停牌 carry-forward 估值的最后可用价（derived 规则，非官方复牌基准）
-        self._last_close: dict[str, float] = {}
+        # checkpoint 恢复时 _last_close 已由 _restore_from_checkpoint() 注入；
+        # 仅新建运行时初始化为空，避免覆盖跨段 carry-forward 状态。
+        if not is_new_checkpoint:
+            self._last_close: dict[str, float] = {}
+        elif not hasattr(self, "_last_close"):
+            self._last_close: dict[str, float] = {}
         if self.portfolio.positions and not is_new_checkpoint:
             # For new checkpoint, _last_close already restored in _restore_from_checkpoint
             self._prime_last_close(
@@ -337,10 +342,13 @@ class BacktestEngine:
         all_days = self.calendar.trade_range(start_date, exec_end)
         
         # 待执行意图（信号日调度，次一交易日开盘执行）
-        self._pend_sig = None
-        self._pend_exec = None
-        self._pend_intents: list = []
-        self._pend_prices: dict = {}
+        # checkpoint 恢复时这些状态已经由 _restore_from_checkpoint() 注入，
+        # 不能在这里再次清空，否则跨段 T+1 pending order 会丢失。
+        if not initial_state:
+            self._pend_sig = None
+            self._pend_exec = None
+            self._pend_intents = []
+            self._pend_prices = {}
         
         # 解冻游标：checkpoint 续跑时避免重复解冻同一交易日
         if not is_new_checkpoint:
