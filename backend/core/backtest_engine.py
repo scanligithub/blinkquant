@@ -21,7 +21,7 @@ from core.backtest_types import (
 )
 from core.checkpoint import BacktestCheckpoint, save_checkpoint, load_checkpoint
 from core.corporate_actions import CorporateAction
-from core.signal_trace import SignalTraceData, CodeTrace
+from core.signal_trace import SignalTraceData, CodeTrace, ExecutionTrace
 from core.strategy import StrategyDefinition
 from core.strategy_selector import StrategySelector
 from core.universe_resolver import UniverseResolver
@@ -175,6 +175,7 @@ class BacktestEngine:
         self._pend_intents = []
         self._pend_prices = {}
         self._processed_actions = []
+        self._signal_traces = {}
     
     def run(
         self,
@@ -193,6 +194,7 @@ class BacktestEngine:
         on_progress: 'Callable[[dict], None] | None' = None,
         cancel_check: 'Callable[[], bool] | None' = None,
         strategy: StrategyDefinition = None,
+        collect_signal_trace: bool = False,
     ) -> 'BacktestResult':
         """
         运行回测。
@@ -454,11 +456,13 @@ class BacktestEngine:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
                     t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
                     corporate_action_store, diag,
+                    collect_signal_trace=collect_signal_trace,
                 )
             else:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
                     t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
                     corporate_action_store, diag, strategy=strategy,
+                    collect_signal_trace=collect_signal_trace,
                 )
             _profiler["Selection"] += _time.perf_counter() - _t0
 
@@ -905,6 +909,7 @@ class BacktestEngine:
         self, t: datetime.date, allowed_signals: set,
         formula: str, ranking_fn, top_n: int, universe_filter,
         corporate_action_store, diag: dict, strategy: StrategyDefinition = None,
+        collect_signal_trace: bool = False,
     ) -> tuple:
         """POST_CLOSE_SIGNAL: selection scheduling for next trade day.
 
@@ -924,11 +929,16 @@ class BacktestEngine:
             for row in px_df.iter_rows(named=True)
         }
 
-        # Generate SignalTrace for this signal date
+        # Optional SignalTrace collection is opt-in to preserve normal
+        # full-market backtest performance.
         signal_trace = None
 
         if strategy is not None:
-            result = self.strategy_selector.select(strategy, t, backtest_mode=True)
+            result = self.strategy_selector.select(
+                strategy, t, backtest_mode=True, trace=collect_signal_trace
+            )
+            if collect_signal_trace:
+                signal_trace = result.signal_trace
             if strategy.mode == "target_portfolio":
                 weights = result.target_weights
                 new_intents = self._generate_intents(weights, new_prices)
@@ -949,10 +959,17 @@ class BacktestEngine:
             new_sig, new_exec = result.signal_date, exec_d
 
         elif ranking_fn is not None:
-            sel = self.selection_engine.execute_selector(
-                formula, "D", None, target_date=t,
-                backtest_mode=True, raise_on_error=True, trace=False,
-                qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj)
+            if collect_signal_trace:
+                sel, signal_trace = self.selection_engine.execute_selector_with_trace(
+                    formula, "D", None, target_date=t,
+                    backtest_mode=True, raise_on_error=True,
+                    qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj,
+                )
+            else:
+                sel = self.selection_engine.execute_selector(
+                    formula, "D", None, target_date=t,
+                    backtest_mode=True, raise_on_error=True, trace=False,
+                    qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj)
             if hasattr(sel, 'codes') and sel.codes:
                 eligible = sel.codes
                 if universe_filter is not None and eligible:
@@ -974,10 +991,17 @@ class BacktestEngine:
                     diag["target_gross_by_date"][exec_d] = sum(weights.values())
                 new_sig, new_exec = t, exec_d
         else:
-            sel = self.selection_engine.execute_selector(
-                formula, "D", None, target_date=t,
-                backtest_mode=True, raise_on_error=True, trace=False,
-                qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj)
+            if collect_signal_trace:
+                sel, signal_trace = self.selection_engine.execute_selector_with_trace(
+                    formula, "D", None, target_date=t,
+                    backtest_mode=True, raise_on_error=True,
+                    qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj,
+                )
+            else:
+                sel = self.selection_engine.execute_selector(
+                    formula, "D", None, target_date=t,
+                    backtest_mode=True, raise_on_error=True, trace=False,
+                    qfq_data_provider=self.raw_price_store, latest_adj=self._latest_adj)
             if not (isinstance(sel, dict) and "error" in sel):
                 codes = sel.codes
                 if universe_filter is not None and codes:
@@ -1065,7 +1089,8 @@ class BacktestEngine:
                             if code_trace.code in exec_map:
                                 for side in ("BUY", "SELL"):
                                     if exec_map[code_trace.code][side]:
-                                        code_trace.execution = exec_map[code_trace.code][side]
+                                        info = exec_map[code_trace.code][side]
+                                        code_trace.execution = ExecutionTrace(**info)
                                         break  # Use first match (BUY preferred)
 
             # A scheduled T+1 order is a one-shot event. Once its execution
