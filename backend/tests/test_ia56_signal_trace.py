@@ -600,3 +600,108 @@ def test_signal_trace_legacy_two_table_parquet_remains_readable(tmp_path):
     assert len(restored.decisions) == 0
     assert [e.side for e in restored.traces[0].executions] == ["BUY"]
     assert restored.traces[0].execution.fee == 3.5
+
+
+def test_selection_trace_records_downstream_trigger_and_target_provenance():
+    original = (
+        data_manager.df_daily,
+        data_manager.df_weekly,
+        data_manager.df_monthly,
+    )
+    try:
+        data_manager.df_daily = pl.DataFrame({
+            "date": [dt.date(2024, 1, 4)] * 3,
+            "code": ["AAA", "BBB", "CCC"],
+            "open": [12.0, 11.0, 10.0],
+            "high": [12.5, 11.5, 10.5],
+            "low": [11.5, 10.5, 9.5],
+            "close": [12.0, 11.0, 10.0],
+            "volume": [1000.0, 1000.0, 1000.0],
+            "amount": [12000.0, 11000.0, 10000.0],
+        })
+        data_manager.df_weekly = None
+        data_manager.df_monthly = None
+
+        selector = StrategySelector(selection_engine=SelectionEngine())
+        strategy = StrategyDefinition.from_dict({
+            "name": "IA5.6.3 provenance",
+            "universe": {"type": "all_a"},
+            "entry": {
+                "condition": "CLOSE > 9",
+                "trigger": "condition",
+                "timeframe": "D",
+            },
+            "sizing": {
+                "method": "top_n_equal_weight",
+                "max_positions": 2,
+            },
+            "rebalance": {"frequency": "daily"},
+            "mode": "target_portfolio",
+        })
+
+        result = selector.select(strategy, dt.date(2024, 1, 4), trace=True)
+
+        assert result.target_codes == ["AAA", "BBB"]
+        assert result.signal_trace is not None
+        traces = {item.code: item for item in result.signal_trace.traces}
+        assert set(traces) == {"AAA", "BBB", "CCC"}
+
+        for code in ("AAA", "BBB", "CCC"):
+            assert traces[code].passed is True
+            assert traces[code].triggered is True
+
+        assert traces["AAA"].targeted is True
+        assert traces["AAA"].target_weight == 0.5
+        assert traces["AAA"].selection_reason == "TARGET_SELECTED"
+
+        assert traces["BBB"].targeted is True
+        assert traces["BBB"].target_weight == 0.5
+        assert traces["BBB"].selection_reason == "TARGET_SELECTED"
+
+        assert traces["CCC"].targeted is False
+        assert traces["CCC"].target_weight is None
+        assert traces["CCC"].selection_reason == "TOP_N_EXCLUDED"
+    finally:
+        (
+            data_manager.df_daily,
+            data_manager.df_weekly,
+            data_manager.df_monthly,
+        ) = original
+
+
+def test_selection_trace_provenance_persists_through_parquet_round_trip():
+    trace = SignalTraceData(
+        signal_date="2024-01-04",
+        formula="CLOSE > 9",
+        traces=[
+            CodeTrace(
+                code="AAA",
+                passed=True,
+                triggered=True,
+                targeted=True,
+                target_weight=0.5,
+                selection_reason="TARGET_SELECTED",
+            ),
+            CodeTrace(
+                code="CCC",
+                passed=True,
+                triggered=True,
+                targeted=False,
+                target_weight=None,
+                selection_reason="TOP_N_EXCLUDED",
+            ),
+        ],
+    )
+
+    traces_df, atoms_df = trace.to_parquet()
+    restored = SignalTraceData.from_parquet(traces_df, atoms_df)
+
+    by_code = {item.code: item for item in restored.traces}
+    assert by_code["AAA"].triggered is True
+    assert by_code["AAA"].targeted is True
+    assert by_code["AAA"].target_weight == 0.5
+    assert by_code["AAA"].selection_reason == "TARGET_SELECTED"
+    assert by_code["CCC"].triggered is True
+    assert by_code["CCC"].targeted is False
+    assert by_code["CCC"].target_weight is None
+    assert by_code["CCC"].selection_reason == "TOP_N_EXCLUDED"
