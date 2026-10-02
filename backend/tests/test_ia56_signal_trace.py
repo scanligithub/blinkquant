@@ -458,6 +458,9 @@ def test_signal_trace_parquet_dir_round_trip_preserves_extended_provenance(tmp_p
             CodeTrace(
                 code="AAA",
                 passed=True,
+                execution=ExecutionTrace(
+                    dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0
+                ),
                 executions=[
                     ExecutionTrace(dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0),
                     ExecutionTrace(dt.date(2024, 1, 4), 10.0, "BUY", 100, 1.0),
