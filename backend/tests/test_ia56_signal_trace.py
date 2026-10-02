@@ -338,29 +338,46 @@ def test_signal_trace_json_round_trip_preserves_multiple_executions_and_decision
 
 
 def test_atom_trace_reports_false_comparison_and_boolean_leaves():
-    engine = SelectionEngine()
-    trace = engine._generate_trace(
-        ["AAA"],
-        "CLOSE > 10 & CLOSE < 20",
-        "D",
-        dt.date(2024, 1, 4),
-        False,
+    original = (
+        data_manager.df_daily,
+        data_manager.df_weekly,
+        data_manager.df_monthly,
     )
-    assert len(trace.traces) == 1
-    atoms = trace.traces[0].atoms
-    assert len(atoms) == 2
-    assert [a.operator for a in atoms] == [">", "<"]
-    assert all(a.passed for a in atoms)
+    try:
+        data_manager.df_daily = _frame()
+        data_manager.df_weekly = None
+        data_manager.df_monthly = None
 
-    false_trace = engine._generate_trace(
-        ["AAA"],
-        "CLOSE > 100",
-        "D",
-        dt.date(2024, 1, 4),
-        False,
-    )
-    false_atom = false_trace.traces[0].atoms[0]
-    assert false_atom.operator == ">"
-    assert false_atom.threshold == 100.0
-    assert false_atom.value == 12.0
-    assert false_atom.passed is False
+        engine = SelectionEngine()
+        trace = engine._generate_trace(
+            ["AAA"],
+            "CLOSE > 10 & CLOSE < 20",
+            "D",
+            dt.date(2024, 1, 4),
+            False,
+        )
+        assert len(trace.traces) == 1
+        atoms = trace.traces[0].atoms
+        assert len(atoms) == 2
+        assert [a.operator for a in atoms] == [">", "<"]
+        assert all(a.passed for a in atoms)
+
+        false_trace = engine._generate_trace(
+            ["AAA"],
+            "CLOSE > 100",
+            "D",
+            dt.date(2024, 1, 4),
+            False,
+        )
+        false_atom = false_trace.traces[0].atoms[0]
+        assert false_atom.operator == ">"
+        assert false_atom.threshold == 100.0
+        assert false_atom.value == 12.0
+        assert false_atom.passed is False
+    finally:
+        (
+            data_manager.df_daily,
+            data_manager.df_weekly,
+            data_manager.df_monthly,
+        ) = original
+
