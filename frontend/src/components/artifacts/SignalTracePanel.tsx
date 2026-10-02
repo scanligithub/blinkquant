@@ -35,6 +35,7 @@ type CodeTrace = {
 
 type SignalTraceData = {
   schema_version?: string;
+  nodes?: Record<string, SignalTraceData>;
   engine_version?: string;
   signal_date?: string;
   formula?: string;
