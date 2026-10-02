@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
+import { downloadFromResponse } from '@/lib/download';
 
 interface User { id: string; email: string; role: string }
 interface WatchlistSummary {
@@ -13,6 +14,7 @@ interface WatchlistSummary {
 
 export default function WatchlistsPage() {
   const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [lists, setLists] = useState<WatchlistSummary[]>([]);
@@ -47,6 +49,27 @@ export default function WatchlistsPage() {
 
   useEffect(() => { if (user) void refresh(); }, [user, refresh]);
 
+  const importFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const res = await fetch('/api/watchlists/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || '导入失败');
+      await refresh();
+      const skipped = Array.isArray(json.skipped) ? json.skipped.length : 0;
+      alert(`已导入 ${Number(json.imported || 0)} 个自选股列表${skipped ? `，跳过 ${skipped} 个重复或无效列表` : ''}`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '导入文件格式无效');
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
   const create = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -77,9 +100,14 @@ export default function WatchlistsPage() {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl font-black">自选股</h1>
-              <p className="text-sm text-slate-500 mt-1">创建多个自选股列表，并为每个列表自定义名称。</p>
+              <p className="text-sm text-slate-500 mt-1">创建多个自选股列表；导入/导出可迁移全部列表及股票。</p>
             </div>
-            <button type="button" onClick={() => setShowCreate(true)} className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 shadow-sm">+ 新建列表</button>
+            <div className="flex flex-wrap gap-2">
+              <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void importFile(file); }} />
+              <button type="button" onClick={() => fileRef.current?.click()} className="px-3 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50">导入</button>
+              <button type="button" onClick={() => void downloadFromResponse('/api/watchlists/export')} className="px-3 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50">导出</button>
+              <button type="button" onClick={() => setShowCreate(true)} className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 shadow-sm">+ 新建列表</button>
+            </div>
           </div>
 
           {loading ? (
