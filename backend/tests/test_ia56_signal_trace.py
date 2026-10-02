@@ -47,11 +47,11 @@ def test_selection_trace_is_wired_and_cache_safe():
             base,
             base.with_columns(
                 pl.lit("BBB").alias("code"),
-                pl.Series("close", [8.0, 9.0, 9.5]),
-                pl.Series("open", [8.0, 9.0, 9.5]),
-                pl.Series("high", [8.5, 9.5, 10.0]),
-                pl.Series("low", [7.5, 8.5, 9.0]),
-                pl.Series("amount", [8000.0, 9000.0, 9500.0]),
+                pl.Series("close", [8.0, 9.0, 8.5]),
+                pl.Series("open", [8.0, 9.0, 8.5]),
+                pl.Series("high", [8.5, 9.5, 9.0]),
+                pl.Series("low", [7.5, 8.5, 8.0]),
+                pl.Series("amount", [8000.0, 9000.0, 8500.0]),
             ),
         ])
         data_manager.df_weekly = None
