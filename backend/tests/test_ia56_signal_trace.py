@@ -445,3 +445,91 @@ def test_backtest_engine_restore_keeps_t1_signal_trace_provenance():
     assert restored.decisions[0].status == "PENDING"
     assert engine._pend_sig == dt.date(2025, 12, 31)
     assert engine._pend_exec == dt.date(2026, 1, 2)
+
+
+def test_signal_trace_parquet_dir_round_trip_preserves_extended_provenance(tmp_path):
+    trace = SignalTraceData(
+        signal_date="2024-01-03",
+        formula="CLOSE > 10",
+        traces=[
+            CodeTrace(
+                code="AAA",
+                passed=True,
+                executions=[
+                    ExecutionTrace(dt.date(2024, 1, 4), 10.0, "SELL", 100, 1.0),
+                    ExecutionTrace(dt.date(2024, 1, 4), 10.0, "BUY", 100, 1.0),
+                ],
+            )
+        ],
+        decisions=[
+            DecisionTrace(
+                "AAA", "SELL", 100, 0.0,
+                execution_date=dt.date(2024, 1, 4),
+                status="FILLED",
+                executed_qty=100,
+                execution_price=10.0,
+                fee=1.0,
+            ),
+            DecisionTrace(
+                "BBB", "SELL", 200, 0.0,
+                execution_date=dt.date(2024, 1, 4),
+                status="PARTIAL",
+                executed_qty=100,
+                execution_price=9.5,
+                fee=0.95,
+                rejection_reason="PARTIAL_LIMIT",
+            ),
+        ],
+    )
+
+    directory = tmp_path / "signal_trace"
+    trace.save_parquet(directory)
+
+    assert (directory / "traces.parquet").exists()
+    assert (directory / "atoms.parquet").exists()
+    assert (directory / "executions.parquet").exists()
+    assert (directory / "decisions.parquet").exists()
+
+    restored = SignalTraceData.load_from_dir(directory)
+
+    assert restored.signal_date == "2024-01-03"
+    assert restored.formula == "CLOSE > 10"
+    assert [e.side for e in restored.traces[0].executions] == ["SELL", "BUY"]
+    assert restored.traces[0].execution.side == "SELL"
+    decisions = {(d.code, d.side): d for d in restored.decisions}
+    assert decisions[("AAA", "SELL")].status == "FILLED"
+    assert decisions[("AAA", "SELL")].executed_qty == 100
+    assert decisions[("BBB", "SELL")].status == "PARTIAL"
+    assert decisions[("BBB", "SELL")].execution_price == 9.5
+    assert decisions[("BBB", "SELL")].rejection_reason == "PARTIAL_LIMIT"
+    assert restored.to_dict() == trace.to_dict()
+
+
+def test_signal_trace_legacy_two_table_parquet_remains_readable(tmp_path):
+    trace = SignalTraceData(
+        signal_date="2024-01-03",
+        formula="CLOSE > 10",
+        traces=[
+            CodeTrace(
+                code="AAA",
+                passed=True,
+                execution=ExecutionTrace(
+                    execution_date=dt.date(2024, 1, 4),
+                    price=12.0,
+                    side="BUY",
+                    qty=100,
+                    fee=3.5,
+                ),
+            )
+        ],
+    )
+    directory = tmp_path / "legacy"
+    directory.mkdir()
+    traces_df, atoms_df = trace.to_parquet()
+    traces_df.write_parquet(directory / "traces.parquet", compression="zstd")
+    atoms_df.write_parquet(directory / "atoms.parquet", compression="zstd")
+
+    restored = SignalTraceData.load_from_dir(directory)
+    assert len(restored.decisions) == 0
+    assert [e.side for e in restored.traces[0].executions] == ["BUY"]
+    assert restored.traces[0].execution.fee == 3.5

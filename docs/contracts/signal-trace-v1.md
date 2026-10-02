@@ -116,7 +116,9 @@ This enables answering: *"Why did this stock get traded on this date?"* with ful
 signal_trace/
 ├── meta.json              # schema_version, engine_version, formula, signal_date
 ├── traces.parquet         # Columnar trace data (one row per code per signal_date)
-└── atoms.parquet          # Normalized atom evaluations (one row per atom per code)
+├── atoms.parquet          # Normalized atom evaluations (one row per atom per code)
+├── executions.parquet     # IA5.6.1: all execution records per code
+└── decisions.parquet      # IA5.6.1: complete order-intent decisions and outcomes
 ```
 
 ### traces.parquet
@@ -148,6 +150,17 @@ signal_trace/
 
 ---
 
+## IA5.6.1 Additive Persistence Extension
+
+The original traces.parquet + atoms.parquet layout remains readable through to_parquet()
+for backward compatibility. Complete IA5.6.1 artifacts additionally persist:
+
+- executions.parquet: every execution record in CodeTrace.executions, preserving multiple
+  executions for the same code/date while retaining the legacy CodeTrace.execution projection.
+- decisions.parquet: every DecisionTrace, including BUY/SELL, FILLED/PARTIAL/REJECTED,
+  target quantities/weights, execution outcome and rejection reason.
+
+Readers treat both sidecar files as optional so existing v1 artifacts remain readable.
 ## Generation Rules
 
 1. **During Selection**: Each code's formula evaluation produces a trace entry

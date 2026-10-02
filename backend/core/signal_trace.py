@@ -248,11 +248,51 @@ class SignalTraceData:
             decisions=[decision for decision in self.decisions if decision.code in wanted],
         )
 
+    def _parquet_schemas(self) -> tuple[dict[str, pl.DataType], dict[str, pl.DataType], dict[str, pl.DataType], dict[str, pl.DataType]]:
+        return (
+            {
+                "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
+                "formula": pl.Utf8, "execution_date": pl.Date,
+                "exec_price": pl.Float64, "exec_side": pl.Utf8,
+                "exec_qty": pl.Int64, "exec_fee": pl.Float64,
+            },
+            {
+                "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
+                "field": pl.Utf8, "window": pl.Utf8, "value": pl.Float64,
+                "operator": pl.Utf8, "threshold": pl.Float64,
+                "passed": pl.Boolean, "source": pl.Utf8,
+            },
+            {
+                "signal_date": pl.Date, "code": pl.Utf8, "execution_index": pl.Int64,
+                "execution_date": pl.Date, "price": pl.Float64,
+                "side": pl.Utf8, "qty": pl.Int64, "fee": pl.Float64,
+            },
+            {
+                "signal_date": pl.Date, "code": pl.Utf8, "side": pl.Utf8,
+                "target_qty": pl.Int64, "target_weight": pl.Float64,
+                "execution_date": pl.Date, "decision_type": pl.Utf8,
+                "status": pl.Utf8, "executed_qty": pl.Int64,
+                "execution_price": pl.Float64, "fee": pl.Float64,
+                "rejection_reason": pl.Utf8,
+            },
+        )
+
     def to_parquet(self) -> tuple[pl.DataFrame, pl.DataFrame]:
-        """Convert to (traces_df, atoms_df) for Parquet storage."""
-        # traces DataFrame
+        """Convert to the legacy (traces_df, atoms_df) Parquet pair."""
+        traces_df, atoms_df, _, _ = self.to_parquet_parts()
+        return traces_df, atoms_df
+
+    def to_parquet_parts(self) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        """Convert the complete trace to traces, atoms, executions and decisions tables.
+
+        The first two tables preserve the SignalTrace v1 contract. The two
+        additional tables are additive IA5.6.1 persistence for fields that
+        cannot be represented without loss in the original two-table layout.
+        """
         trace_rows = []
         atom_rows = []
+        execution_rows = []
+        decision_rows = []
 
         for trace in self.traces:
             exec_info = trace.execution
@@ -268,6 +308,21 @@ class SignalTraceData:
                 "exec_fee": exec_info.fee if exec_info else None,
             })
 
+            executions = list(trace.executions)
+            if exec_info is not None and not executions:
+                executions = [exec_info]
+            for index, execution in enumerate(executions):
+                execution_rows.append({
+                    "signal_date": self.signal_date,
+                    "code": trace.code,
+                    "execution_index": index,
+                    "execution_date": execution.execution_date,
+                    "price": execution.price,
+                    "side": execution.side,
+                    "qty": execution.qty,
+                    "fee": execution.fee,
+                })
+
             for atom in trace.atoms:
                 atom_rows.append({
                     "signal_date": self.signal_date,
@@ -282,29 +337,49 @@ class SignalTraceData:
                     "source": atom.source,
                 })
 
-        traces_df = pl.DataFrame(trace_rows) if trace_rows else pl.DataFrame(schema={
-            "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
-            "formula": pl.Utf8, "execution_date": pl.Date,
-            "exec_price": pl.Float64, "exec_side": pl.Utf8, "exec_qty": pl.Int64,
-            "exec_fee": pl.Float64,
-        })
-        atoms_df = pl.DataFrame(atom_rows) if atom_rows else pl.DataFrame(schema={
-            "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
-            "field": pl.Utf8, "window": pl.Utf8, "value": pl.Float64,
-            "operator": pl.Utf8, "threshold": pl.Float64, "passed": pl.Boolean,
-            "source": pl.Utf8,
-        })
+        for decision in self.decisions:
+            decision_rows.append({
+                "signal_date": self.signal_date,
+                "code": decision.code,
+                "side": decision.side,
+                "target_qty": decision.target_qty,
+                "target_weight": decision.target_weight,
+                "execution_date": decision.execution_date,
+                "decision_type": decision.decision_type,
+                "status": decision.status,
+                "executed_qty": decision.executed_qty,
+                "execution_price": decision.execution_price,
+                "fee": decision.fee,
+                "rejection_reason": decision.rejection_reason,
+            })
 
-        return traces_df, atoms_df
+        trace_schema, atom_schema, execution_schema, decision_schema = self._parquet_schemas()
+        return (
+            pl.DataFrame(trace_rows) if trace_rows else pl.DataFrame(schema=trace_schema),
+            pl.DataFrame(atom_rows) if atom_rows else pl.DataFrame(schema=atom_schema),
+            pl.DataFrame(execution_rows) if execution_rows else pl.DataFrame(schema=execution_schema),
+            pl.DataFrame(decision_rows) if decision_rows else pl.DataFrame(schema=decision_schema),
+        )
 
     @classmethod
-    def from_parquet(cls, traces_df: pl.DataFrame, atoms_df: pl.DataFrame) -> "SignalTraceData":
-        """Reconstruct SignalTraceData from Parquet DataFrames."""
-        if traces_df.is_empty():
-            return cls(signal_date="")
+    def from_parquet(
+        cls,
+        traces_df: pl.DataFrame,
+        atoms_df: pl.DataFrame,
+        decisions_df: Optional[pl.DataFrame] = None,
+        executions_df: Optional[pl.DataFrame] = None,
+    ) -> "SignalTraceData":
+        """Reconstruct from Parquet, including optional IA5.6.1 sidecar tables.
 
-        signal_date = traces_df["signal_date"][0]
-        formula = traces_df["formula"][0]
+        decisions_df/executions_df are optional so older two-table artifacts
+        remain readable.
+        """
+        if traces_df.is_empty():
+            signal_date = ""
+            formula = ""
+        else:
+            signal_date = traces_df["signal_date"][0]
+            formula = traces_df["formula"][0]
 
         # Group atoms by code
         atoms_by_code: Dict[str, List[AtomTrace]] = {}
@@ -322,6 +397,20 @@ class SignalTraceData:
             )
             atoms_by_code.setdefault(code, []).append(atom)
 
+        executions_by_code: Dict[str, List[ExecutionTrace]] = {}
+        if executions_df is not None and not executions_df.is_empty():
+            ordered = executions_df.sort(["code", "execution_index"])
+            for row in ordered.iter_rows(named=True):
+                executions_by_code.setdefault(row["code"], []).append(
+                    ExecutionTrace(
+                        execution_date=row["execution_date"],
+                        price=row["price"],
+                        side=row["side"],
+                        qty=row["qty"],
+                        fee=row["fee"],
+                    )
+                )
+
         traces = []
         for row in traces_df.iter_rows(named=True):
             exec_info = None
@@ -331,50 +420,93 @@ class SignalTraceData:
                     price=row["exec_price"],
                     side=row["exec_side"],
                     qty=row["exec_qty"],
-                    fee=row["exec_fee"] if "exec_fee" in row else None,
+                    fee=row["exec_fee"],
                 )
+            executions = executions_by_code.get(row["code"], [])
+            if exec_info is not None and not executions:
+                executions = [exec_info]
             trace = CodeTrace(
                 code=row["code"],
                 passed=bool(row["passed"]),
                 atoms=atoms_by_code.get(row["code"], []),
-                execution=exec_info,
+                execution=exec_info or (executions[0] if executions else None),
+                executions=executions,
             )
             traces.append(trace)
 
+        decisions = []
+        if decisions_df is not None and not decisions_df.is_empty():
+            ordered = decisions_df.sort(["code", "side", "execution_date", "target_qty"])
+            for row in ordered.iter_rows(named=True):
+                decisions.append(
+                    DecisionTrace(
+                        code=row["code"],
+                        side=row["side"],
+                        target_qty=int(row["target_qty"]),
+                        target_weight=float(row["target_weight"]),
+                        execution_date=row["execution_date"],
+                        decision_type=row["decision_type"],
+                        status=row["status"],
+                        executed_qty=int(row["executed_qty"]),
+                        execution_price=row["execution_price"],
+                        fee=float(row["fee"]),
+                        rejection_reason=row["rejection_reason"],
+                    )
+                )
+
+        signal_value = signal_date.isoformat() if hasattr(signal_date, "isoformat") else str(signal_date)
         return cls(
-            signal_date=signal_date.isoformat() if hasattr(signal_date, "isoformat") else str(signal_date),
+            signal_date=signal_value,
             formula=formula,
             traces=traces,
+            decisions=decisions,
         )
 
     @classmethod
     def load_from_dir(cls, directory: Union[str, Path]) -> "SignalTraceData":
-        """Load from directory with traces.parquet + atoms.parquet."""
+        """Load v1 two-table artifacts plus optional IA5.6.1 sidecars."""
         dir_path = Path(directory)
         traces_df = pl.read_parquet(dir_path / "traces.parquet")
         atoms_df = pl.read_parquet(dir_path / "atoms.parquet")
-        return cls.from_parquet(traces_df, atoms_df)
+        decisions_path = dir_path / "decisions.parquet"
+        executions_path = dir_path / "executions.parquet"
+        decisions_df = pl.read_parquet(decisions_path) if decisions_path.exists() else None
+        executions_df = pl.read_parquet(executions_path) if executions_path.exists() else None
+        return cls.from_parquet(traces_df, atoms_df, decisions_df, executions_df)
 
     def save_parquet(self, directory: Union[str, Path]) -> None:
-        """Save as Parquet files in directory."""
+        """Save complete SignalTrace Parquet tables in directory."""
         dir_path = Path(directory)
         dir_path.mkdir(parents=True, exist_ok=True)
-        traces_df, atoms_df = self.to_parquet()
+        traces_df, atoms_df, executions_df, decisions_df = self.to_parquet_parts()
         traces_df.write_parquet(dir_path / "traces.parquet", compression="zstd")
         atoms_df.write_parquet(dir_path / "atoms.parquet", compression="zstd")
+        executions_df.write_parquet(dir_path / "executions.parquet", compression="zstd")
+        decisions_df.write_parquet(dir_path / "decisions.parquet", compression="zstd")
 
-        # Also save meta.json
+        import json
         meta = {
             "schema_version": self.schema_version,
             "engine_version": self.engine_version,
             "signal_date": self.signal_date,
             "formula": self.formula,
             "code_count": len(self.traces),
+            "execution_count": sum(
+                len(t.executions) if t.executions else (1 if t.execution else 0)
+                for t in self.traces
+            ),
+            "decision_count": len(self.decisions),
+            "files": [
+                "traces.parquet",
+                "atoms.parquet",
+                "executions.parquet",
+                "decisions.parquet",
+            ],
         }
-        import json
         (dir_path / "meta.json").write_text(
             json.dumps(meta, sort_keys=True, separators=(',', ':')), encoding="utf-8"
         )
+
 
 
 class SignalTraceCollector:
