@@ -838,14 +838,19 @@ class BacktestEngine:
                 if qty > 0:
                     intents.append(OrderIntent(code=code, side="BUY", target_qty=qty, target_weight=weight))
             elif diff < 0:
-                if pos is None or pos.available_qty <= 0:
+                if pos is None or pos.total_qty <= 0:
                     continue
                 if weight <= 0:
-                    # 退出目标组合：全仓卖出可用数量
-                    qty = pos.available_qty
+                    # 退出目标组合：安排次一交易日全仓卖出。
+                    # 信号产生于收盘后，当前日刚买入的持仓可能仍 frozen；
+                    # T+1 执行日开盘前会 thaw，ExecutionEngine 再用真实
+                    # available_qty 做最终可卖性约束。
+                    qty = pos.total_qty
                 else:
                     qty = int(-diff / price)
-                qty = min(qty, pos.available_qty)
+                # Planner 计算的是 next-T+1 的目标意图，不能被信号日的
+                # frozen_qty 提前截断；执行层在实际 execution_date 再约束。
+                qty = min(qty, pos.total_qty)
                 if qty > 0:
                     intents.append(OrderIntent(code=code, side="SELL", target_qty=qty, target_weight=weight))
 
