@@ -116,10 +116,15 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     assert set(result.trades["side"].to_list()) == {"BUY", "SELL"}
     assert (result.trades["execution_date"] > result.trades["signal_date"]).all()
 
-    # The Feb 2 rebalance must sell AAA before buying BBB with the proceeds.
+    # Feb 1 signal executes on Feb 2 (BUY AAA); Feb 2 signal executes on
+    # Feb 5 (SELL AAA first, then BUY BBB with the sale proceeds).
     feb2 = result.trades.filter(pl.col("execution_date") == dt.date(2024, 2, 2))
-    assert feb2["side"].to_list() == ["SELL", "BUY"]
-    assert feb2["code"].to_list() == ["AAA", "BBB"]
+    assert feb2["side"].to_list() == ["BUY"]
+    assert feb2["code"].to_list() == ["AAA"]
+
+    feb5 = result.trades.filter(pl.col("execution_date") == dt.date(2024, 2, 5))
+    assert feb5["side"].to_list() == ["SELL", "BUY"]
+    assert feb5["code"].to_list() == ["AAA", "BBB"]
 
     # The next cycle switches to BBB; no capital is created by planning.
     final = (
