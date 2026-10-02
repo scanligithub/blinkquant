@@ -162,6 +162,12 @@ class CodeTrace:
     """Complete trace for one code on one signal date."""
     code: str
     passed: bool
+    # IA5.6.3 downstream selection provenance. These fields never redefine
+    # passed; they describe trigger/allocation outcomes after formula evaluation.
+    triggered: bool = False
+    targeted: bool = False
+    target_weight: Optional[float] = None
+    selection_reason: str = ""
     atoms: List[AtomTrace] = field(default_factory=list)
     execution: Optional[ExecutionTrace] = None  # legacy single-execution projection
     executions: List[ExecutionTrace] = field(default_factory=list)
@@ -170,6 +176,10 @@ class CodeTrace:
         return {
             "code": self.code,
             "passed": self.passed,
+            "triggered": self.triggered,
+            "targeted": self.targeted,
+            "target_weight": self.target_weight,
+            "selection_reason": self.selection_reason,
             "atoms": [a.to_dict() for a in self.atoms],
             "execution": self.execution.to_dict() if self.execution else None,
             "executions": [e.to_dict() for e in self.executions],
@@ -187,6 +197,10 @@ class CodeTrace:
         return cls(
             code=data["code"],
             passed=bool(data["passed"]),
+            triggered=bool(data.get("triggered", False)),
+            targeted=bool(data.get("targeted", False)),
+            target_weight=(float(data["target_weight"]) if data.get("target_weight") is not None else None),
+            selection_reason=data.get("selection_reason", ""),
             atoms=[AtomTrace.from_dict(a) for a in data.get("atoms", [])],
             execution=legacy_execution or (executions[0] if executions else None),
             executions=executions,
@@ -252,7 +266,9 @@ class SignalTraceData:
         return (
             {
                 "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
-                "formula": pl.Utf8, "execution_date": pl.Date,
+                "formula": pl.Utf8, "triggered": pl.Boolean, "targeted": pl.Boolean,
+                "target_weight": pl.Float64, "selection_reason": pl.Utf8,
+                "execution_date": pl.Date,
                 "exec_price": pl.Float64, "exec_side": pl.Utf8,
                 "exec_qty": pl.Int64, "exec_fee": pl.Float64,
             },
@@ -301,6 +317,10 @@ class SignalTraceData:
                 "code": trace.code,
                 "passed": trace.passed,
                 "formula": self.formula,
+                "triggered": trace.triggered,
+                "targeted": trace.targeted,
+                "target_weight": trace.target_weight,
+                "selection_reason": trace.selection_reason,
                 "execution_date": exec_info.execution_date if exec_info else None,
                 "exec_price": exec_info.price if exec_info else None,
                 "exec_side": exec_info.side if exec_info else None,
@@ -428,6 +448,10 @@ class SignalTraceData:
             trace = CodeTrace(
                 code=row["code"],
                 passed=bool(row["passed"]),
+                triggered=bool(row.get("triggered", False)),
+                targeted=bool(row.get("targeted", False)),
+                target_weight=(float(row["target_weight"]) if row.get("target_weight") is not None else None),
+                selection_reason=row.get("selection_reason", ""),
                 atoms=atoms_by_code.get(row["code"], []),
                 execution=exec_info or (executions[0] if executions else None),
                 executions=executions,
@@ -546,7 +570,9 @@ class SignalTraceCollector:
             return (
                 pl.DataFrame(schema={
                     "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
-                    "formula": pl.Utf8, "execution_date": pl.Date,
+                    "formula": pl.Utf8, "triggered": pl.Boolean, "targeted": pl.Boolean,
+                    "target_weight": pl.Float64, "selection_reason": pl.Utf8,
+                    "execution_date": pl.Date,
                     "exec_price": pl.Float64, "exec_side": pl.Utf8, "exec_qty": pl.Int64,
                     "exec_fee": pl.Float64,
                 }),
