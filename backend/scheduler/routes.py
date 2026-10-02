@@ -395,6 +395,7 @@ async def list_artifacts(
     role: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    q: Optional[str] = None,
 ) -> dict:
     if artifact_type not in (None, "selection", "backtest"):
         raise HTTPException(400, "Invalid artifact_type")
@@ -402,6 +403,7 @@ async def list_artifacts(
         raise HTTPException(401, "user_id required")
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
+    q = (q or "").strip()[:80]
     base_where = ["1=1"]
     base_params: list = []
     if not _is_admin(role):
@@ -415,6 +417,12 @@ async def list_artifacts(
     if artifact_type:
         where.append("artifact_type = ?")
         params.append(artifact_type)
+    if q:
+        # Search title and serialized metadata (formula/source strategy/name) while
+        # keeping ownership and tab filtering server-side.
+        where.append("(title LIKE ? OR metadata LIKE ?)")
+        pattern = "%" + q + "%"
+        params.extend([pattern, pattern])
 
     where_sql = " AND ".join(where)
     stats = await fetchrow(f"""

@@ -95,3 +95,44 @@ def test_artifact_quota_gc_does_not_touch_new_artifact(tmp_path, monkeypatch):
             await db.close_pool()
 
     asyncio.run(run())
+
+
+def test_artifact_list_search_filters_results_but_not_global_counters(tmp_path, monkeypatch):
+    async def run():
+        path = tmp_path / "scheduler.db"
+        monkeypatch.setattr(db, "SCHEDULER_DB_PATH", str(path))
+        await db.close_pool()
+        await db.init_pool()
+        try:
+            rows = [
+                ("u-search", "backtest", 9101, "MA60 趋势回测", '{"payload":{"strategy":{"entry":{"condition":"MA(CLOSE,60)"}}}}'),
+                ("u-search", "selection", 9102, "MA20 选股", '{"payload":{"formula":"CLOSE > MA(CLOSE,20)"}}'),
+                ("u-search", "backtest", 9103, "动量回测", '{"payload":{"strategy":{"entry":{"condition":"ROC(CLOSE,20)"}}}}'),
+            ]
+            for user_id, artifact_type, task_id, title, metadata in rows:
+                await db.execute(
+                    """INSERT INTO artifacts
+                       (user_id, artifact_type, task_id, title, metadata, result_bytes, finished_at)
+                       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                    user_id, artifact_type, task_id, title, metadata, 10,
+                )
+
+            result = await __import__("scheduler.routes", fromlist=["list_artifacts"]).list_artifacts(
+                artifact_type=None, user_id="u-search", role=None, limit=20, offset=0, q="MA20"
+            )
+            assert result["total"] == 1
+            assert result["artifacts"][0]["title"] == "MA20 选股"
+            assert result["global_total"] == 3
+            assert result["selection_total"] == 1
+            assert result["backtest_total"] == 2
+
+            result = await __import__("scheduler.routes", fromlist=["list_artifacts"]).list_artifacts(
+                artifact_type="backtest", user_id="u-search", role=None, limit=20, offset=0, q="MA"
+            )
+            assert result["total"] == 1
+            assert result["artifacts"][0]["title"] == "MA60 趋势回测"
+            assert result["global_total"] == 3
+        finally:
+            await db.close_pool()
+
+    asyncio.run(run())
