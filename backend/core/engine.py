@@ -1,3 +1,4 @@
+import ast
 import polars as pl
 import re
 import logging
@@ -592,6 +593,33 @@ class SelectionEngine:
     # =========================================================================
     # SignalTrace generation (P1-2)
     # =========================================================================
+    def _candidate_codes_for_trace(
+        self,
+        signal_date: datetime.date,
+        timeframe: str,
+        eligible_codes=None,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> list[str]:
+        """Return the PIT candidate universe seen by the selector."""
+        if eligible_codes is not None:
+            return sorted(set(str(code) for code in eligible_codes))
+
+        tf = timeframe.upper()
+        if qfq_data_provider is not None and latest_adj is not None:
+            lookback_days = {"D": 365, "W": 600, "M": 2200}.get(tf, 365)
+            frame = qfq_data_provider.load_qfq_window(
+                signal_date - datetime.timedelta(days=lookback_days),
+                signal_date,
+                latest_adj,
+            )
+        else:
+            frame = data_manager.build_asof_frame(tf, signal_date)
+
+        if frame is None or frame.is_empty() or "code" not in frame.columns:
+            return []
+        return sorted(set(frame.select("code").unique()["code"].to_list()))
+
     def execute_selector_with_trace(
         self,
         formula: str,
@@ -604,10 +632,11 @@ class SelectionEngine:
         latest_adj: dict = None,
         eligible_codes=None,
     ):
-        """Execute selection and return the canonical SignalTraceData alongside it.
+        """Execute selection and return selection plus candidate-level SignalTrace.
 
-        Trace generation uses the same PIT target date, QFQ provider and
-        optional eligible-code universe as the selection call.
+        Trace covers the PIT candidate universe rather than only final selected
+        codes. Ranking, allocator and trigger filtering remain outside this
+        formula-level trace.
         """
         result = self.execute_selector(
             formula,
@@ -626,12 +655,20 @@ class SelectionEngine:
                 raise BacktestSelectionError(f"Selection failed: {result['error']}")
             return result, None
 
+        candidate_codes = self._candidate_codes_for_trace(
+            result.signal_date,
+            timeframe,
+            eligible_codes=eligible_codes,
+            qfq_data_provider=qfq_data_provider,
+            latest_adj=latest_adj,
+        )
         trace = self._generate_trace(
-            result.codes,
+            candidate_codes,
             formula,
             timeframe,
             result.signal_date,
             backtest_mode,
+            passed_codes=set(result.codes),
             qfq_data_provider=qfq_data_provider,
             latest_adj=latest_adj,
         )
@@ -644,10 +681,12 @@ class SelectionEngine:
         timeframe: str,
         signal_date: datetime.date,
         backtest_mode: bool,
+        passed_codes=None,
         qfq_data_provider=None,
         latest_adj: dict = None,
     ) -> SignalTraceData:
-        """Generate deterministic trace records for the selected codes."""
+        """Generate deterministic candidate-level trace records."""
+        passed_codes = set(passed_codes or [])
         trace = SignalTraceData(
             engine_version="unknown",
             signal_date=signal_date.isoformat(),
@@ -662,6 +701,7 @@ class SelectionEngine:
                 timeframe,
                 signal_date,
                 backtest_mode,
+                passed=code in passed_codes,
                 qfq_data_provider=qfq_data_provider,
                 latest_adj=latest_adj,
             )
@@ -671,41 +711,191 @@ class SelectionEngine:
         return trace
 
     def _trace_code(
+        self, code: str, formula: str, timeframe: str, signal_date: datetime.date,
+        backtest_mode: bool, passed: bool = True,
+        qfq_data_provider=None, latest_adj: dict = None,
+    ) -> CodeTrace:
+        """对单个 code 生成实际比较级 SignalTrace。"""
+        atoms = self._extract_comparison_atoms(
+            code, formula, timeframe, signal_date,
+            qfq_data_provider=qfq_data_provider, latest_adj=latest_adj,
+        )
+        return CodeTrace(code=code, passed=passed, atoms=atoms, execution=None)
+
+    @staticmethod
+    def _comparison_nodes(node) -> list:
+        """Flatten comparison leaves while preserving deterministic AST order."""
+        if isinstance(node, ast.Compare):
+            return [node]
+        if isinstance(node, ast.BoolOp):
+            result = []
+            for child in node.values:
+                result.extend(SelectionEngine._comparison_nodes(child))
+            return result
+        if isinstance(node, ast.BinOp) and type(node.op) in (ast.BitAnd, ast.BitOr):
+            return (
+                SelectionEngine._comparison_nodes(node.left)
+                + SelectionEngine._comparison_nodes(node.right)
+            )
+        return []
+
+    @staticmethod
+    def _comparison_operator(op) -> str:
+        return {
+            ast.Gt: ">",
+            ast.GtE: ">=",
+            ast.Lt: "<",
+            ast.LtE: "<=",
+            ast.Eq: "==",
+            ast.NotEq: "!=",
+        }.get(type(op), type(op).__name__)
+
+    @staticmethod
+    def _trace_scalar(frame: pl.DataFrame, expr):
+        """Evaluate either a Polars expression or a scalar on the final as-of bar."""
+        if isinstance(expr, pl.Expr):
+            series = frame.select(expr.alias("__trace_value"))["__trace_value"]
+            return series[-1] if len(series) else None
+        return expr
+
+    def _load_trace_frame(
+        self,
+        timeframe: str,
+        signal_date: datetime.date,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> pl.DataFrame:
+        """Load the same as-of data family used by selection, including W/M labels."""
+        tf = timeframe.upper()
+        if qfq_data_provider is not None and latest_adj is not None:
+            lookback_days = {"D": 365, "W": 600, "M": 2200}.get(tf, 365)
+            frame = qfq_data_provider.load_qfq_window(
+                signal_date - datetime.timedelta(days=lookback_days),
+                signal_date,
+                latest_adj,
+            )
+            if frame.is_empty():
+                return frame
+            if tf in ("W", "M"):
+                aggs = [
+                    pl.col("close").last(),
+                    pl.col("date").last().alias("_period_date"),
+                ]
+                for column, expr in (
+                    ("open", pl.col("open").first()),
+                    ("high", pl.col("high").max()),
+                    ("low", pl.col("low").min()),
+                    ("volume", pl.col("volume").sum()),
+                    ("amount", pl.col("amount").sum()),
+                ):
+                    if column in frame.columns:
+                        aggs.insert(-1, expr)
+                every = "1w" if tf == "W" else "1mo"
+                frame = (
+                    frame.sort("date")
+                    .group_by_dynamic("date", every=every, group_by="code")
+                    .agg(aggs)
+                    .drop("date")
+                    .rename({"_period_date": "date"})
+                    .sort(["code", "date"])
+                )
+            return frame
+        return data_manager.build_asof_frame(tf, signal_date)
+
+    def _extract_comparison_atoms(
         self,
         code: str,
         formula: str,
         timeframe: str,
         signal_date: datetime.date,
-        backtest_mode: bool,
         qfq_data_provider=None,
         latest_adj: dict = None,
-    ) -> CodeTrace:
-        """对单个 code 生成完整的原子级 trace。"""
-        # Get the plan tree to extract all atoms
-        has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', formula.strip().replace('&&', '&').replace('||', '|')))
+    ) -> list:
+        """Evaluate each comparison leaf exactly at the requested as-of bar."""
+        clean = re.sub(r'\b(AND|OR|NOT)\b', lambda m: m.group(1).lower(), formula.strip())
+        clean = clean.replace('&&', '&').replace('||', '|')
+        root = ast.parse(clean, mode='eval').body
+        nodes = self._comparison_nodes(root)
+        atoms = []
 
-        if has_mtf:
-            plan = blink_parser.parse_multi_tf(formula, 'D')
-            atoms = self._extract_atoms_from_plan(
-                plan, code, signal_date, backtest_mode,
+        for index, node in enumerate(nodes, start=1):
+            source = ast.unparse(node)
+            prefixes = blink_parser._collect_prefixes(node)
+            atom_tf = next(iter(prefixes)) if prefixes else timeframe.upper()
+            frame = self._load_trace_frame(
+                atom_tf,
+                signal_date,
                 qfq_data_provider=qfq_data_provider,
                 latest_adj=latest_adj,
             )
-        else:
-            # Single timeframe - parse expression and extract atoms.
-            expr = blink_parser.parse_expression(formula, timeframe)
-            atoms = self._extract_atoms_from_expr(
-                expr, formula, timeframe, code, signal_date, backtest_mode,
-                qfq_data_provider=qfq_data_provider,
-                latest_adj=latest_adj,
-            )
+            code_df = frame.filter(pl.col("code") == code).sort("date") if frame is not None else pl.DataFrame()
 
-        return CodeTrace(
-            code=code,
-            passed=True,  # Selected codes are by definition passed
-            atoms=atoms,
-            execution=None,  # Filled later by BacktestEngine
-        )
+            operator = self._comparison_operator(node.ops[0])
+            if code_df.is_empty():
+                atoms.append(AtomTrace(
+                    atom_id=f"CMP_{index:03d}",
+                    field="",
+                    window=None,
+                    value=float("nan"),
+                    operator=operator,
+                    threshold=None,
+                    passed=False,
+                    source=source,
+                ))
+                continue
+
+            previous = (blink_parser.current_df, blink_parser.current_source, blink_parser.mount_enabled)
+            try:
+                blink_parser.current_df = code_df
+                blink_parser.current_source = source
+                blink_parser.mount_enabled = False
+                lhs = self._trace_scalar(code_df, blink_parser._visit(node.left))
+                rhs = self._trace_scalar(code_df, blink_parser._visit(node.comparators[0]))
+            finally:
+                blink_parser.current_df, blink_parser.current_source, blink_parser.mount_enabled = previous
+
+            field = ""
+            window = None
+            metric_match = self.metric_pattern.search(source)
+            if metric_match:
+                _func, metric_field, param = metric_match.groups()
+                field = metric_field.upper()
+                window = str(param)
+            elif isinstance(node.left, ast.Name) and node.left.id.upper() in FIELDS:
+                field = node.left.id.upper()
+
+            try:
+                lhs_f = float(lhs)
+                rhs_f = float(rhs)
+                valid = lhs_f == lhs_f and rhs_f == rhs_f
+            except (TypeError, ValueError):
+                lhs_f = float("nan")
+                rhs_f = None
+                valid = False
+
+            passed = False
+            if valid:
+                passed = {
+                    ">": lhs_f > rhs_f,
+                    ">=": lhs_f >= rhs_f,
+                    "<": lhs_f < rhs_f,
+                    "<=": lhs_f <= rhs_f,
+                    "==": lhs_f == rhs_f,
+                    "!=": lhs_f != rhs_f,
+                }.get(operator, False)
+
+            atoms.append(AtomTrace(
+                atom_id=f"CMP_{index:03d}",
+                field=field,
+                window=window,
+                value=lhs_f,
+                operator=operator,
+                threshold=rhs_f if valid else None,
+                passed=passed,
+                source=source,
+            ))
+
+        return atoms
 
     def _extract_atoms_from_plan(
         self,

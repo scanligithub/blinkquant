@@ -17,6 +17,7 @@ StrategySelector 负责把 StrategyDefinition 转换为单个 as-of 日的策略
 from __future__ import annotations
 
 import datetime as dt
+import copy
 
 import polars as pl
 from dataclasses import dataclass, field
@@ -271,7 +272,9 @@ class StrategySelector:
 
         previous_date = self._previous_signal_date(signal_date, signal.timeframe)
         if previous_date is None:
-            return [], current_trace.for_codes([]) if current_trace else None
+            # Keep the candidate-level formula trace intact even though a
+            # cross trigger cannot fire without a previous signal.
+            return [], current_trace
 
         # 对 cross_*，Universe 也必须按各自历史 as-of 日解析，
         # 不能把当前 Universe 套到历史信号日上。
@@ -287,10 +290,14 @@ class StrategySelector:
 
         if signal.trigger == "cross_above":
             selected = sorted(current - previous)
-            return selected, current_trace.for_codes(selected) if current_trace else None
+            # IA5.6.2: trace the complete current PIT candidate universe;
+            # trigger membership is downstream of formula evaluation.
+            return selected, current_trace
         if signal.trigger == "cross_below":
             selected = sorted(previous - current)
-            return selected, previous_trace.for_codes(selected) if previous_trace else None
+            # The trace date is the previous signal evaluation for cross_below.
+            # Keep the complete PIT candidate universe for that evaluation.
+            return selected, previous_trace
 
         raise ValueError(f"unsupported signal trigger: {signal.trigger!r}")
 
@@ -320,6 +327,11 @@ class StrategySelector:
         cache_key = (repr(strategy.to_dict()), target_date, backtest_mode, trace)
         cached = self._selection_cache.get(cache_key)
         if cached is not None:
+            # SignalTrace is enriched later with execution outcomes. Never hand
+            # the mutable cached instance to BacktestEngine, or one run can
+            # contaminate a later same-date trace lookup.
+            if trace and cached.signal_trace is not None:
+                return copy.deepcopy(cached)
             return cached
 
         df = data_manager.df_daily
@@ -385,7 +397,10 @@ class StrategySelector:
         )
         if len(self._selection_cache) >= self._selection_cache_max:
             self._selection_cache.pop(next(iter(self._selection_cache)))
-        self._selection_cache[cache_key] = result
+        if trace and result.signal_trace is not None:
+            self._selection_cache[cache_key] = copy.deepcopy(result)
+        else:
+            self._selection_cache[cache_key] = result
         return result
 
 

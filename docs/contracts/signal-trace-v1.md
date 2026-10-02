@@ -116,7 +116,9 @@ This enables answering: *"Why did this stock get traded on this date?"* with ful
 signal_trace/
 ├── meta.json              # schema_version, engine_version, formula, signal_date
 ├── traces.parquet         # Columnar trace data (one row per code per signal_date)
-└── atoms.parquet          # Normalized atom evaluations (one row per atom per code)
+├── atoms.parquet          # Normalized atom evaluations (one row per atom per code)
+├── executions.parquet     # IA5.6.1: all execution records per code
+└── decisions.parquet      # IA5.6.1: complete order-intent decisions and outcomes
 ```
 
 ### traces.parquet
@@ -148,14 +150,37 @@ signal_trace/
 
 ---
 
+## IA5.6.1 Additive Persistence Extension
+
+The original traces.parquet + atoms.parquet layout remains readable through to_parquet()
+for backward compatibility. Complete IA5.6.1 artifacts additionally persist:
+
+- executions.parquet: every execution record in CodeTrace.executions, preserving multiple
+  executions for the same code/date while retaining the legacy CodeTrace.execution projection.
+- decisions.parquet: every DecisionTrace, including BUY/SELL, FILLED/PARTIAL/REJECTED,
+  target quantities/weights, execution outcome and rejection reason.
+
+Readers treat both sidecar files as optional so existing v1 artifacts remain readable.
+## IA5.6.2 Candidate Semantics
+
+A traced signal covers the complete PIT candidate universe supplied to the selection
+engine, not only the final selected codes. Candidates that fail the formula remain in
+the trace with `passed=false` and their atom evaluations retain the observed PIT
+values and comparison outcomes.
+
+Ranking, Top-N allocation, and event-trigger post-filtering are downstream selection
+semantics. They do not redefine `CodeTrace.passed`. The candidate universe is resolved
+as-of the signal date and must not include future universe membership.
+
 ## Generation Rules
 
-1. **During Selection**: Each code's formula evaluation produces a trace entry
-2. **Only Eligible Codes**: Only codes passing universe filter are traced
-3. **Atom Order**: Atoms sorted by formula parse order (deterministic)
-4. **No Lookahead**: All values from `build_asof_frame(target_date=signal_date)`
-5. **PIT Fields**: Sector/Industry fields rejected in backtest mode (raise error)
-6. **Null Handling**: Missing data → atom `passed=false`, `value=NaN`
+1. **During Selection**: Each PIT candidate code's formula evaluation produces a trace entry
+2. **Candidate Universe**: Candidates are the codes eligible for the signal as-of date; formula failures remain traceable
+3. **Selection Result**: Final selected codes are a subset of candidates; `CodeTrace.passed` describes formula evaluation, not Top-N/ranking/trigger outcome
+4. **Atom Order**: Atoms sorted by formula parse order (deterministic)
+5. **No Lookahead**: All values from `build_asof_frame(target_date=signal_date)`
+6. **PIT Fields**: Sector/Industry fields rejected in backtest mode (raise error)
+7. **Null Handling**: Missing data → atom `passed=false`, `value=NaN`
 
 ---
 
