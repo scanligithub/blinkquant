@@ -33,12 +33,19 @@ type CodeTrace = {
   executions?: ExecutionTrace[];
 };
 
-type SignalTrace = {
+type SignalTraceData = {
   schema_version?: string;
   engine_version?: string;
   signal_date?: string;
   formula?: string;
-  traces?: CodeTrace[];
+  traces?: CodeTrace[] | Record<string, SignalTraceData>;
+  decisions?: unknown[];
+};
+
+type TraceGroup = {
+  key: string;
+  label: string;
+  trace: SignalTraceData;
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -72,13 +79,36 @@ function reasonClass(reason?: string) {
   }
 }
 
+function normalizeGroups(raw: SignalTraceData): TraceGroup[] {
+  if (raw && raw.nodes && typeof raw.nodes === 'object' && !Array.isArray(raw.nodes)) {
+    return Object.entries(raw.nodes as Record<string, SignalTraceData>)
+      .filter(([, trace]) => trace && typeof trace === 'object')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([node, trace]) => ({ key: 'node:' + node, label: node, trace }));
+  }
+
+  if (Array.isArray(raw?.traces)) {
+    return [{ key: 'single', label: raw.signal_date || '当前信号', trace: raw }];
+  }
+
+  if (raw?.traces && typeof raw.traces === 'object') {
+    return Object.entries(raw.traces as Record<string, SignalTraceData>)
+      .filter(([, trace]) => trace && typeof trace === 'object')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, trace]) => ({ key: 'date:' + date, label: date, trace }));
+  }
+
+  return [];
+}
+
 export default function SignalTracePanel({ artifactId }: { artifactId: number }) {
-  const [trace, setTrace] = useState<SignalTrace | null>(null);
+  const [rawTrace, setRawTrace] = useState<SignalTraceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [available, setAvailable] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [reason, setReason] = useState('ALL');
+  const [groupKey, setGroupKey] = useState('');
   const [page, setPage] = useState(0);
 
   useEffect(() => {
@@ -94,12 +124,12 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
         }
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error || ('SignalTrace HTTP ' + res.status));
-        return data as SignalTrace;
+        return data as SignalTraceData;
       })
       .then((data) => {
         if (!mounted) return;
         if (data) {
-          setTrace(data);
+          setRawTrace(data);
           setAvailable(true);
         }
       })
@@ -112,7 +142,22 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
     return () => { mounted = false; };
   }, [artifactId]);
 
-  const rows = Array.isArray(trace?.traces) ? trace!.traces! : [];
+  const groups = useMemo(() => normalizeGroups(rawTrace || {}), [rawTrace]);
+
+  useEffect(() => {
+    if (!groups.length) {
+      setGroupKey('');
+      return;
+    }
+    if (!groups.some((group) => group.key === groupKey)) {
+      setGroupKey(groups[0].key);
+    }
+  }, [groups, groupKey]);
+
+  const activeGroup = groups.find((group) => group.key === groupKey) || groups[0];
+  const trace = activeGroup?.trace || null;
+  const rows = Array.isArray(trace?.traces) ? trace.traces : [];
+
   const summary = useMemo(() => rows.reduce((acc, row) => {
     acc.total += 1;
     if (row.passed) acc.passed += 1;
@@ -135,7 +180,9 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
       const matchesQuery = !needle
         || row.code.toLowerCase().includes(needle)
         || String(row.selection_reason || '').toLowerCase().includes(needle)
-        || (row.atoms || []).some((atom) => String(atom.source || atom.atom_id || '').toLowerCase().includes(needle));
+        || (row.atoms || []).some((atom) =>
+          String(atom.source || atom.atom_id || '').toLowerCase().includes(needle)
+        );
       const matchesReason = reason === 'ALL' || row.selection_reason === reason;
       return matchesQuery && matchesReason;
     });
@@ -147,7 +194,7 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
 
   useEffect(() => {
     setPage(0);
-  }, [query, reason]);
+  }, [query, reason, groupKey]);
 
   const download = async () => {
     const res = await fetch('/api/artifacts/' + artifactId + '/part?name=signal_trace&fmt=json', { cache: 'no-store' });
@@ -182,16 +229,16 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
           <h2 className="font-bold text-slate-800">SignalTrace</h2>
           <span className="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">未启用</span>
         </div>
-        <div className="mt-2 text-xs text-slate-400">本次回测未启用 SignalTrace，历史结果文件中没有该可选产物。</div>
+        <div className="mt-2 text-xs text-slate-400">本次成果未启用 SignalTrace，历史结果文件中没有该可选产物。</div>
       </section>
     );
   }
 
-  if (error || !trace) {
+  if (error || !rawTrace || !groups.length) {
     return (
       <section className="bg-white rounded-2xl border border-red-100 shadow-sm p-5">
         <h2 className="font-bold text-slate-800">SignalTrace</h2>
-        <div className="mt-2 text-sm text-red-600">{error || 'SignalTrace 不可用'}</div>
+        <div className="mt-2 text-sm text-red-600">{error || 'SignalTrace 数据结构不可用'}</div>
       </section>
     );
   }
@@ -214,20 +261,37 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
         </button>
       </div>
 
+      {groups.length > 1 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-400">
+            {groups[0].key.startsWith('node:') ? '执行节点' : '信号日期'}
+          </span>
+          <select
+            value={activeGroup?.key || ''}
+            onChange={(e) => setGroupKey(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+          >
+            {groups.map((group) => (
+              <option key={group.key} value={group.key}>{group.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
         <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">候选数</div><div className="font-mono font-bold mt-1">{summary.total}</div></div>
         <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">公式通过</div><div className="font-mono font-bold mt-1">{summary.passed}</div></div>
         <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">已触发</div><div className="font-mono font-bold mt-1">{summary.triggered}</div></div>
         <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">进入目标组合</div><div className="font-mono font-bold mt-1">{summary.targeted}</div></div>
-        <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">日期</div><div className="font-mono font-bold mt-1">{trace.signal_date || '—'}</div></div>
+        <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-400">日期</div><div className="font-mono font-bold mt-1">{trace?.signal_date || activeGroup?.label || '—'}</div></div>
       </div>
 
       <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 p-3">
         <div className="text-xs font-bold text-blue-700">Trace 元数据</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 text-xs">
-          <div><span className="text-slate-400">Schema：</span><span className="font-mono">{trace.schema_version || '—'}</span></div>
-          <div><span className="text-slate-400">Engine：</span><span className="font-mono">{trace.engine_version || '—'}</span></div>
-          <div className="md:col-span-3"><span className="text-slate-400">Formula：</span><span className="font-mono break-all">{trace.formula || '—'}</span></div>
+          <div><span className="text-slate-400">Schema：</span><span className="font-mono">{trace?.schema_version || rawTrace.schema_version || '—'}</span></div>
+          <div><span className="text-slate-400">Engine：</span><span className="font-mono">{trace?.engine_version || '—'}</span></div>
+          <div className="md:col-span-3"><span className="text-slate-400">Formula：</span><span className="font-mono break-all">{trace?.formula || '—'}</span></div>
         </div>
       </div>
 
@@ -335,7 +399,7 @@ export default function SignalTracePanel({ artifactId }: { artifactId: number })
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 mt-4 text-xs text-slate-400">
-        <span>显示 {filteredRows.length === 0 ? 0 : page * pageSize + 1}–{Math.min((page + 1) * pageSize, filteredRows.length)} / {filteredRows.length} 条（候选全集共 {rows.length} 条）</span>
+        <span>显示 {filteredRows.length === 0 ? 0 : page * pageSize + 1}–{Math.min((page + 1) * pageSize, filteredRows.length)} / {filteredRows.length} 条（当前视图候选 {rows.length} 条）</span>
         <div className="flex items-center gap-2">
           <button type="button" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40">上一页</button>
           <span>{page + 1} / {pageCount}</span>
