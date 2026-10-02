@@ -27,7 +27,7 @@ function BulkWatchlistBar({ codes, onChanged }: { codes: string[]; onChanged?: (
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    setSelected((prev) => new Set([...prev].filter((code) => codes.includes(code))));
+    setSelected((prev) => new Set(Array.from(prev).filter((code) => codes.includes(code))));
   }, [codes]);
 
   useEffect(() => {
