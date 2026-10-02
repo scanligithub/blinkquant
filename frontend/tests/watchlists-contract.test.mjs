@@ -78,6 +78,7 @@ test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', 
   assert.match(sidebar, /BulkWatchlistBar/);
   assert.match(sidebar, /已选/);
   assert.match(sidebar, /批量加入/);
-  assert.match(sidebar, /body: JSON\.stringify\(\{ listId, codes: \[\.\.\.selected\] \}\)/);
+  assert.match(sidebar, /body: JSON\.stringify\(\{ listId, codes: Array\.from\(selected\) \}\)/);
+  assert.match(sidebar, /<BulkWatchlistBar codes=\{results\} onChanged=\{onWatchlistChanged\} \/>/);
   assert.match(workspace, /onWatchlistChanged=\{refreshWatchlist\}/);
 });
