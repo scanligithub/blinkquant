@@ -472,7 +472,15 @@ class SignalTraceData:
         executions_path = dir_path / "executions.parquet"
         decisions_df = pl.read_parquet(decisions_path) if decisions_path.exists() else None
         executions_df = pl.read_parquet(executions_path) if executions_path.exists() else None
-        return cls.from_parquet(traces_df, atoms_df, decisions_df, executions_df)
+        restored = cls.from_parquet(traces_df, atoms_df, decisions_df, executions_df)
+
+        meta_path = dir_path / "meta.json"
+        if meta_path.exists():
+            import json
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            restored.schema_version = meta.get("schema_version", restored.schema_version)
+            restored.engine_version = meta.get("engine_version", restored.engine_version)
+        return restored
 
     def save_parquet(self, directory: Union[str, Path]) -> None:
         """Save complete SignalTrace Parquet tables in directory."""

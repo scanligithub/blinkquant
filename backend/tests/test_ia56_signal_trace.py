@@ -449,6 +449,8 @@ def test_backtest_engine_restore_keeps_t1_signal_trace_provenance():
 
 def test_signal_trace_parquet_dir_round_trip_preserves_extended_provenance(tmp_path):
     trace = SignalTraceData(
+        schema_version="1.0.0",
+        engine_version="ia56.1-test-engine",
         signal_date="2024-01-03",
         formula="CLOSE > 10",
         traces=[
@@ -492,6 +494,8 @@ def test_signal_trace_parquet_dir_round_trip_preserves_extended_provenance(tmp_p
 
     restored = SignalTraceData.load_from_dir(directory)
 
+    assert restored.schema_version == "1.0.0"
+    assert restored.engine_version == "ia56.1-test-engine"
     assert restored.signal_date == "2024-01-03"
     assert restored.formula == "CLOSE > 10"
     assert [e.side for e in restored.traces[0].executions] == ["SELL", "BUY"]
