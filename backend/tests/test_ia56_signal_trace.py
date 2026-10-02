@@ -42,7 +42,18 @@ def test_selection_trace_is_wired_and_cache_safe():
         data_manager.df_monthly,
     )
     try:
-        data_manager.df_daily = _frame()
+        base = _frame()
+        data_manager.df_daily = pl.concat([
+            base,
+            base.with_columns(
+                pl.lit("BBB").alias("code"),
+                pl.Series("close", [8.0, 9.0, 9.5]),
+                pl.Series("open", [8.0, 9.0, 9.5]),
+                pl.Series("high", [8.5, 9.5, 10.0]),
+                pl.Series("low", [7.5, 8.5, 9.0]),
+                pl.Series("amount", [8000.0, 9000.0, 9500.0]),
+            ),
+        ])
         data_manager.df_weekly = None
         data_manager.df_monthly = None
 
@@ -71,8 +82,11 @@ def test_selection_trace_is_wired_and_cache_safe():
         assert plain.target_codes == traced.target_codes == ["AAA"]
         assert traced.signal_trace is not None
         assert traced.signal_trace.signal_date == "2024-01-04"
-        assert traced.signal_trace.traces
-        assert traced.signal_trace.traces[0].code == "AAA"
+        assert len(traced.signal_trace.traces) == 2
+        assert [t.code for t in traced.signal_trace.traces] == ["AAA", "BBB"]
+        assert traced.signal_trace.traces[0].passed is True
+        assert traced.signal_trace.traces[1].passed is False
+        assert traced.signal_trace.traces[1].atoms[0].passed is False
         assert traced.signal_trace.traces[0].atoms
         atom = traced.signal_trace.traces[0].atoms[0]
         assert atom.operator == ">"
@@ -89,6 +103,51 @@ def test_selection_trace_is_wired_and_cache_safe():
         traced_again = selector.select(strategy, dt.date(2024, 1, 4), trace=True)
         assert traced_again.signal_trace is not traced.signal_trace
         assert traced_again.signal_trace.traces[0].execution is None
+    finally:
+        (
+            data_manager.df_daily,
+            data_manager.df_weekly,
+            data_manager.df_monthly,
+        ) = original
+
+
+def test_selection_trace_covers_pit_candidates_not_only_selected_codes():
+    original = (
+        data_manager.df_daily,
+        data_manager.df_weekly,
+        data_manager.df_monthly,
+    )
+    try:
+        data_manager.df_daily = pl.DataFrame({
+            "date": [dt.date(2024, 1, 4), dt.date(2024, 1, 4)],
+            "code": ["AAA", "BBB"],
+            "open": [12.0, 9.0],
+            "high": [12.5, 9.5],
+            "low": [11.5, 8.5],
+            "close": [12.0, 9.0],
+            "volume": [1000.0, 1000.0],
+            "amount": [12000.0, 9000.0],
+        })
+        data_manager.df_weekly = None
+        data_manager.df_monthly = None
+
+        engine = SelectionEngine()
+        result, trace = engine.execute_selector_with_trace(
+            "CLOSE > 10",
+            "D",
+            None,
+            target_date=dt.date(2024, 1, 4),
+            backtest_mode=True,
+            raise_on_error=True,
+            eligible_codes=["AAA", "BBB"],
+        )
+
+        assert result.codes == ["AAA"]
+        assert [t.code for t in trace.traces] == ["AAA", "BBB"]
+        assert trace.traces[0].passed is True
+        assert trace.traces[1].passed is False
+        assert trace.traces[1].atoms[0].value == 9.0
+        assert trace.traces[1].atoms[0].passed is False
     finally:
         (
             data_manager.df_daily,
