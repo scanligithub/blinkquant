@@ -77,7 +77,7 @@ function validateManifest(raw: unknown, files: Record<string, Uint8Array>) {
   for (const path of ['strategies.json', 'watchlists.json']) {
     if (!(path in files)) throw new Error('缺少资产文件：' + path);
   }
-  for (const path of artifactPaths) {
+  for (const path of Array.from(artifactPaths)) {
     if (!(path in files)) throw new Error('成果文件缺失：' + path);
   }
 
