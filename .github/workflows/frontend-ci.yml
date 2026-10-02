@@ -33,4 +33,6 @@ jobs:
         run: node tests/watchlists-contract.test.mjs
       - name: IA5.8 watchlist asset contract regression
         run: node tests/watchlists-assets-contract.test.mjs
+      - name: IA5.9 artifact asset contract regression
+        run: node tests/artifact-assets-contract.test.mjs
       - run: npm run build
