@@ -459,14 +459,12 @@ class BacktestEngine:
             if strategy is None:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
                     t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
-                    corporate_action_store, diag,
-                    collect_signal_trace=collect_signal_trace,
+                    corporate_action_store, diag, None, collect_signal_trace,
                 )
             else:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
                     t, allowed_signals, formula, ranking_fn, top_n, universe_filter,
-                    corporate_action_store, diag, strategy=strategy,
-                    collect_signal_trace=collect_signal_trace,
+                    corporate_action_store, diag, strategy, collect_signal_trace,
                 )
             _profiler["Selection"] += _time.perf_counter() - _t0
 
