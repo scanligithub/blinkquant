@@ -417,20 +417,38 @@ class BacktestEngine:
             self._phase_pre_open(t, corporate_action_store, fee_schedule, diag)
             _profiler["CA"] += _time.perf_counter() - _t0
 
-            # POST_EXECUTION: execute pending intents first.
-            # The portfolio state used by today's signal planner must include
-            # all fills from the prior signal. Otherwise target-portfolio
-            # rebalancing can plan against stale holdings (e.g. miss SELL AAA
-            # when switching from AAA to BBB).
+            # POST_EXECUTION: consume pending T+1 orders first.
+            # Today's fills must be reflected before the close-based target
+            # portfolio is planned.
             _t0 = _time.perf_counter()
             fills, cur_signal_date, cur_prices = self._phase_post_execution(
                 t, fee_schedule, diag,
             )
             _profiler["Execution"] += _time.perf_counter() - _t0
 
-            # POST_CLOSE_SIGNAL: selection + ranking + intent generation.
-            # This deliberately runs after execution so planning observes the
-            # actual cash/positions produced by the previous T+1 cycle.
+            for fill in fills:
+                trades_rows.append({
+                    "signal_date": cur_signal_date,
+                    "execution_date": t,
+                    "code": fill.code, "side": fill.side,
+                    "qty": fill.qty, "price": fill.price, "fee": fill.fee,
+                })
+
+            # MARKET_CLOSE: load today's close (or the executed day's close
+            # carried by cur_prices) before target planning.
+            _t0 = _time.perf_counter()
+            day_px = self._phase_market_close(t, cur_signal_date, cur_prices)
+            _profiler["Portfolio"] += _time.perf_counter() - _t0
+
+            # VALUATION: update Position.market_value and equity first.
+            # Target-portfolio planning depends on current positions' actual
+            # market value after today's execution and close.
+            _t0 = _time.perf_counter()
+            equity, positions_value = self._phase_valuation(t, day_px, diag)
+            _profiler["Valuation"] += _time.perf_counter() - _t0
+
+            # POST_CLOSE_SIGNAL: generate the next T+1 target/order only after
+            # execution and today's close valuation are both reflected.
             _t0 = _time.perf_counter()
             if strategy is None:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
@@ -449,24 +467,6 @@ class BacktestEngine:
                 self._pend_sig, self._pend_exec = new_sig, new_exec
                 self._pend_intents, self._pend_prices = new_intents, new_prices
                 self._selected_thru = t
-
-            for fill in fills:
-                trades_rows.append({
-                    "signal_date": cur_signal_date,
-                    "execution_date": t,
-                    "code": fill.code, "side": fill.side,
-                    "qty": fill.qty, "price": fill.price, "fee": fill.fee,
-                })
-
-            # MARKET_CLOSE: load daily prices
-            _t0 = _time.perf_counter()
-            day_px = self._phase_market_close(t, cur_signal_date, cur_prices)
-            _profiler["Portfolio"] += _time.perf_counter() - _t0
-
-            # VALUATION: equity calc + ledger check
-            _t0 = _time.perf_counter()
-            equity, positions_value = self._phase_valuation(t, day_px, diag)
-            _profiler["Valuation"] += _time.perf_counter() - _t0
 
             # CHECKPOINT: equity curve + position snapshot
             _t0 = _time.perf_counter()
