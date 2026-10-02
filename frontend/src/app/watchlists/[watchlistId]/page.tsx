@@ -26,6 +26,8 @@ export default function WatchlistDetailPage() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [rename, setRename] = useState('');
   const [error, setError] = useState('');
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -53,6 +55,7 @@ export default function WatchlistDetailPage() {
       if (!listRes.ok) throw new Error(listJson.error || '加载列表失败');
       setWatchlist(listJson.watchlist);
       setRename(listJson.watchlist.name);
+      setSelectedCodes(new Set());
       if (stocksRes.ok) setStockList(await stocksRes.json());
     } catch (error) { setError(error instanceof Error ? error.message : '加载失败'); }
     finally { setLoading(false); }
@@ -76,12 +79,53 @@ export default function WatchlistDetailPage() {
   const removeCode = useCallback(async (code: string) => {
     if (!watchlistId) return;
     try {
-      const res = await fetch(`/api/watchlist?listId=${encodeURIComponent(watchlistId)}&code=${encodeURIComponent(code)}`, { method: 'DELETE' });
+      const res = await fetch('/api/watchlist', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: watchlistId, code }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '删除失败');
+      setSelectedCodes((prev) => { const next = new Set(prev); next.delete(code); return next; });
       setWatchlist((prev) => prev ? { ...prev, codes: prev.codes.filter((item) => item !== code), item_count: Math.max(0, prev.item_count - 1) } : prev);
     } catch (error) { alert(error instanceof Error ? error.message : '删除失败'); }
   }, [watchlistId]);
+
+  const toggleSelection = useCallback((code: string) => {
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setSelectedCodes((prev) => prev.size === (watchlist?.codes.length || 0) ? new Set() : new Set(watchlist?.codes || []));
+  }, [watchlist?.codes]);
+
+  const bulkRemove = useCallback(async () => {
+    if (!watchlistId || selectedCodes.size === 0 || bulkLoading) return;
+    if (!confirm(`确定从“${watchlist?.name || ''}”移除已选 ${selectedCodes.size} 只股票？`)) return;
+    setBulkLoading(true);
+    try {
+      const res = await fetch('/api/watchlist', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: watchlistId, codes: Array.from(selectedCodes) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || '批量删除失败');
+      const removed = Number(json.removed_count || selectedCodes.size);
+      const selected = new Set(selectedCodes);
+      setWatchlist((prev) => prev ? {
+        ...prev,
+        codes: prev.codes.filter((code) => !selected.has(code)),
+        item_count: Math.max(0, prev.item_count - removed),
+      } : prev);
+      setSelectedCodes(new Set());
+    } catch (error) { alert(error instanceof Error ? error.message : '批量删除失败'); }
+    finally { setBulkLoading(false); }
+  }, [bulkLoading, selectedCodes, watchlist, watchlistId]);
 
   const renameList = useCallback(async () => {
     if (!watchlistId || !rename.trim()) return;
@@ -140,10 +184,26 @@ export default function WatchlistDetailPage() {
            watchlist ? <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
              <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
                <div className="text-sm font-bold text-slate-700">列表股票</div>
-               <div className="text-xs text-slate-400">点击股票查看研究 · × 可移除</div>
+               <div className="flex items-center gap-2">
+                 {selectedCodes.size > 0 && (
+                   <button type="button" onClick={() => void bulkRemove()} disabled={bulkLoading} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 disabled:opacity-50">
+                     {bulkLoading ? '移除中…' : `批量移除（${selectedCodes.size}）`}
+                   </button>
+                 )}
+                 <div className="text-xs text-slate-400">点击股票查看研究 · × 可移除</div>
+               </div>
              </div>
              <div className="max-h-[65vh] overflow-y-auto custom-scrollbar">
-               <Watchlist codes={watchlist.codes} onSelect={(code) => router.push(`/stocks/${encodeURIComponent(code)}`)} onRemove={(code) => void removeCode(code)} stockList={stockList} />
+               <Watchlist
+                 codes={watchlist.codes}
+                 onSelect={(code) => router.push(`/stocks/${encodeURIComponent(code)}`)}
+                 onRemove={(code) => void removeCode(code)}
+                 stockList={stockList}
+                 selectable
+                 selectedCodes={Array.from(selectedCodes)}
+                 onToggleSelection={toggleSelection}
+                 onToggleAll={toggleAll}
+               />
              </div>
            </section> : null}
 
