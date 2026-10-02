@@ -139,6 +139,9 @@ def test_target_portfolio_rebalances_sell_first_and_reuses_proceeds():
     assert result.equity_curve["cash"].min() >= -1e-6
     assert result.metrics["total_return"] is not None
 
+    # The executed Feb 2 target order must not survive as a pending checkpoint event.
+    assert engine.export_state()["pending"] is None
+
 
 def test_target_portfolio_planner_is_deterministic_under_cash_limited_buys():
     """Multiple target buys must be planned in stable code order."""
