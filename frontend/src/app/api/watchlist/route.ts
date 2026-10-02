@@ -60,11 +60,28 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.user) return NextResponse.json({ error: '未登录' }, { status: auth.status });
+  const body = await req.json().catch(() => ({}));
   const { searchParams } = new URL(req.url);
-  const code = searchParams.get('code');
-  if (!code) return NextResponse.json({ error: '缺少股票代码' }, { status: 400 });
-  const listId = await resolveListId(auth.user.userId, searchParams.get('listId'));
+  const code = String(body?.code || searchParams.get('code') || '').trim();
+  const requestedCodes = Array.isArray(body?.codes)
+    ? body.codes.map((v: unknown) => String(v || '').trim()).filter(Boolean)
+    : [code].filter(Boolean);
+  const codes = Array.from(new Set<string>(requestedCodes));
+  if (!codes.length) return NextResponse.json({ error: '缺少股票代码' }, { status: 400 });
+  if (codes.length > 5000) return NextResponse.json({ error: '一次最多移除 5000 只股票' }, { status: 400 });
+  const listId = await resolveListId(auth.user.userId, body?.listId || searchParams.get('listId'));
   if (!listId) return NextResponse.json({ error: '自选股列表不存在' }, { status: 404 });
-  await sql`DELETE FROM watchlist_items WHERE watchlist_id = ${listId} AND code = ${code}`;
-  return NextResponse.json({ success: true, listId });
+
+  let removedCount = 0;
+  for (let i = 0; i < codes.length; i += 50) {
+    const chunk = codes.slice(i, i + 50);
+    const results = await Promise.all(
+      chunk.map((item) => sql`DELETE FROM watchlist_items WHERE watchlist_id = ${listId} AND code = ${item} RETURNING code`)
+    );
+    removedCount += results.filter((r) => r.rows.length > 0).length;
+  }
+  if (removedCount > 0) {
+    await sql`UPDATE watchlists SET updated_at = NOW() WHERE id = ${listId} AND user_id = ${auth.user.userId}`;
+  }
+  return NextResponse.json({ success: true, listId, requested_count: codes.length, removed_count: removedCount });
 }
