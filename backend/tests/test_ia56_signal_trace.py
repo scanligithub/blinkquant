@@ -74,6 +74,12 @@ def test_selection_trace_is_wired_and_cache_safe():
         assert traced.signal_trace.traces
         assert traced.signal_trace.traces[0].code == "AAA"
         assert traced.signal_trace.traces[0].atoms
+        atom = traced.signal_trace.traces[0].atoms[0]
+        assert atom.operator == ">"
+        assert atom.value == 12.0
+        assert atom.threshold == 11.5
+        assert atom.passed is True
+        assert atom.source
     finally:
         (
             data_manager.df_daily,
@@ -328,3 +334,33 @@ def test_signal_trace_json_round_trip_preserves_multiple_executions_and_decision
 
     assert [e.side for e in restored.traces[0].executions] == ["SELL", "BUY"]
     assert {(d.code, d.side) for d in restored.decisions} == {("AAA", "SELL"), ("AAA", "BUY")}
+
+
+
+def test_atom_trace_reports_false_comparison_and_boolean_leaves():
+    engine = SelectionEngine()
+    trace = engine._generate_trace(
+        ["AAA"],
+        "CLOSE > 10 & CLOSE < 20",
+        "D",
+        dt.date(2024, 1, 4),
+        False,
+    )
+    assert len(trace.traces) == 1
+    atoms = trace.traces[0].atoms
+    assert len(atoms) == 2
+    assert [a.operator for a in atoms] == [">", "<"]
+    assert all(a.passed for a in atoms)
+
+    false_trace = engine._generate_trace(
+        ["AAA"],
+        "CLOSE > 100",
+        "D",
+        dt.date(2024, 1, 4),
+        False,
+    )
+    false_atom = false_trace.traces[0].atoms[0]
+    assert false_atom.operator == ">"
+    assert false_atom.threshold == 100.0
+    assert false_atom.value == 12.0
+    assert false_atom.passed is False
