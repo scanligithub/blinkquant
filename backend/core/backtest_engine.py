@@ -750,6 +750,16 @@ class BacktestEngine:
 
         # Only cash plus this cycle's valid exits is available for new entries.
         available_for_entries = self.portfolio.cash + exit_value
+        retained_count = sum(
+            1 for code, pos in self.portfolio.positions.items()
+            if pos.total_qty > 0 and code not in executable_exit_codes
+        )
+        available_slots = None
+        if max_positions is not None:
+            available_slots = max(0, max_positions - retained_count)
+            if available_slots <= 0:
+                return intents
+
         new_entries = [
             code for code in entries
             if code not in self.portfolio.positions
