@@ -95,7 +95,6 @@ class ExecutionTrace:
 
 
 @dataclass
-@dataclass
 class DecisionTrace:
     """One strategy decision / order intent and its eventual execution outcome.
 
