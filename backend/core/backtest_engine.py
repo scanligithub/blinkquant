@@ -409,7 +409,20 @@ class BacktestEngine:
             self._phase_pre_open(t, corporate_action_store, fee_schedule, diag)
             _profiler["CA"] += _time.perf_counter() - _t0
 
-            # POST_CLOSE_SIGNAL: selection + ranking + intent generation
+            # POST_EXECUTION: execute pending intents first.
+            # The portfolio state used by today's signal planner must include
+            # all fills from the prior signal. Otherwise target-portfolio
+            # rebalancing can plan against stale holdings (e.g. miss SELL AAA
+            # when switching from AAA to BBB).
+            _t0 = _time.perf_counter()
+            fills, cur_signal_date, cur_prices = self._phase_post_execution(
+                t, fee_schedule, diag,
+            )
+            _profiler["Execution"] += _time.perf_counter() - _t0
+
+            # POST_CLOSE_SIGNAL: selection + ranking + intent generation.
+            # This deliberately runs after execution so planning observes the
+            # actual cash/positions produced by the previous T+1 cycle.
             _t0 = _time.perf_counter()
             if strategy is None:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
@@ -422,13 +435,6 @@ class BacktestEngine:
                     corporate_action_store, diag, strategy=strategy,
                 )
             _profiler["Selection"] += _time.perf_counter() - _t0
-
-            # POST_EXECUTION: execute pending intents
-            _t0 = _time.perf_counter()
-            fills, cur_signal_date, cur_prices = self._phase_post_execution(
-                t, fee_schedule, diag,
-            )
-            _profiler["Execution"] += _time.perf_counter() - _t0
 
             # Commit new scheduled intents
             if new_sig is not None:
