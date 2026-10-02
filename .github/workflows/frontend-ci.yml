@@ -25,6 +25,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: IA5.4.1 watchlist contract regression
+        run: node tests/watchlists-contract.test.mjs
+      - name: IA5.4.2 watchlist backtest universe regression
+        run: node tests/watchlists-contract.test.mjs
       - name: IA4 route and navigation regression
         run: node scripts/check-ia4-routes.mjs
       - run: npm run build
