@@ -126,7 +126,7 @@ def test_backtest_engine_collects_trace_without_changing_default_path():
                 "max_positions": 1,
             },
             "rebalance": {"frequency": "daily"},
-            "mode": "event_driven",
+            "mode": "target_portfolio",
         }
     )
     engine = BacktestEngine(
