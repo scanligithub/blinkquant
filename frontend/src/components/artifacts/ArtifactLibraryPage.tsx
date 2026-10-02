@@ -125,7 +125,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = \`blinkquant_artifact_\${artifactId}.zip\`;
+      a.download = `blinkquant_artifact_\${artifactId}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -143,7 +143,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || '导入失败');
       await load();
-      alert(\`已导入成果：\${json.title || '新成果'}\`);
+      alert(`已导入成果：\${json.title || '新成果'}`);
     } catch (error) {
       alert(error instanceof Error ? error.message : '导入失败');
     } finally {
