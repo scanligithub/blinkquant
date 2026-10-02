@@ -272,7 +272,9 @@ class StrategySelector:
 
         previous_date = self._previous_signal_date(signal_date, signal.timeframe)
         if previous_date is None:
-            return [], current_trace.for_codes([]) if current_trace else None
+            # Keep the candidate-level formula trace intact even though a
+            # cross trigger cannot fire without a previous signal.
+            return [], current_trace
 
         # 对 cross_*，Universe 也必须按各自历史 as-of 日解析，
         # 不能把当前 Universe 套到历史信号日上。
@@ -288,10 +290,14 @@ class StrategySelector:
 
         if signal.trigger == "cross_above":
             selected = sorted(current - previous)
-            return selected, current_trace.for_codes(selected) if current_trace else None
+            # IA5.6.2: trace the complete current PIT candidate universe;
+            # trigger membership is downstream of formula evaluation.
+            return selected, current_trace
         if signal.trigger == "cross_below":
             selected = sorted(previous - current)
-            return selected, previous_trace.for_codes(selected) if previous_trace else None
+            # The trace date is the previous signal evaluation for cross_below.
+            # Keep the complete PIT candidate universe for that evaluation.
+            return selected, previous_trace
 
         raise ValueError(f"unsupported signal trigger: {signal.trigger!r}")
 
