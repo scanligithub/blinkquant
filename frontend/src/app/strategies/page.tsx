@@ -146,7 +146,10 @@ export default function StrategiesPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '导入失败');
       await refresh();
-      const importedSelection = Number(json.imported || 0); const importedBacktests = Number(json.imported_backtests || 0);\n      const skippedCount = (Array.isArray(json.skipped) ? json.skipped.length : 0) + (Array.isArray(json.skipped_backtests) ? json.skipped_backtests.length : 0);\n      const message = `已导入选股策略 ${importedSelection} 个、回测策略 ${importedBacktests} 个${skippedCount ? `，跳过 ${skippedCount} 个重复或无效策略` : ''}`;
+      const importedSelection = Number(json.imported || 0);
+      const importedBacktests = Number(json.imported_backtests || 0);
+      const skippedCount = (Array.isArray(json.skipped) ? json.skipped.length : 0) + (Array.isArray(json.skipped_backtests) ? json.skipped_backtests.length : 0);
+      const message = `已导入选股策略 ${importedSelection} 个、回测策略 ${importedBacktests} 个${skippedCount ? `，跳过 ${skippedCount} 个重复或无效策略` : ''}`;
       alert(message);
     } catch (error) { alert(error instanceof Error ? error.message : '导入文件格式无效'); }
     finally { if (fileRef.current) fileRef.current.value = ''; }
