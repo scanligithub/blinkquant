@@ -15,6 +15,8 @@ interface Strategy {
   source_backtest_strategy_version?: number | null;
   source_backtest_strategy_name?: string | null;
   source_backtest_strategy_trigger?: string | null;
+  source_backtest_artifact_id?: number | null;
+  source_backtest_artifact_title?: string | null;
 }
 
 export default function StrategiesPage() {
@@ -209,6 +211,7 @@ export default function StrategiesPage() {
                       <div className="text-xs font-mono text-slate-500 mt-2 break-all">{strategy.formula}</div>
                       <div className="text-xs text-slate-400 mt-2">周期：{strategy.timeframe} · 更新：{new Date(strategy.updated_at).toLocaleString()}</div>
                       {strategy.source_backtest_strategy_id && <div className="text-xs text-amber-600 mt-1">来源：回测策略 {strategy.source_backtest_strategy_name || ('#' + strategy.source_backtest_strategy_id)} · v{strategy.source_backtest_strategy_version || 1}</div>}
+                      {strategy.source_backtest_artifact_id && <div className="text-xs text-blue-600 mt-1">来源成果：<Link href={'/artifacts/backtests/' + strategy.source_backtest_artifact_id} className="hover:underline">{strategy.source_backtest_artifact_title || ('回测成果 #' + strategy.source_backtest_artifact_id)}</Link></div>}
                     </div>
                     <div className="flex flex-wrap gap-2 shrink-0">
                       <button type="button" onClick={() => useStrategy(strategy)} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">运行选股</button>
