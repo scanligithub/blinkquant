@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
@@ -41,6 +41,7 @@ function backtestMeta(task: Task) {
 
 export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactKind }) {
   const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -115,6 +116,41 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     if (page > lastPage) setPage(lastPage);
   }, [page, storage.filteredTotal, pageSize]);
 
+
+  const exportArtifact = async (artifactId: number) => {
+    try {
+      const res = await fetch('/api/artifacts/' + artifactId + '/export', { cache: 'no-store' });
+      if (!res.ok) throw new Error('导出失败');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = \`blinkquant_artifact_\${artifactId}.zip\`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '导出失败');
+    }
+  };
+
+  const importArtifact = async (file: File) => {
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const res = await fetch('/api/artifacts/import', { method: 'POST', body: form });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || '导入失败');
+      await load();
+      alert(\`已导入成果：\${json.title || '新成果'}\`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
   if (authLoading) {
     return <main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-600 rounded-full animate-spin" /></main>;
   }
@@ -149,7 +185,11 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
               <h1 className="text-2xl font-black">成果库</h1>
               <p className="text-sm text-slate-500 mt-1">按历史任务浏览已完成的选股与回测成果；成果详情保留任务输入和策略版本快照。</p>
             </div>
-            <button type="button" onClick={() => void load()} className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50">刷新</button>
+            <div className="flex flex-wrap gap-2">
+              <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void importArtifact(file); }} />
+              <button type="button" onClick={() => fileRef.current?.click()} className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50">导入成果</button>
+              <button type="button" onClick={() => void load()} className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50">刷新</button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -228,6 +268,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                         </div>
                         <div className="flex gap-2 shrink-0">
                           <Link href={'/artifacts/selections/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看成果</Link>
+                          <button type="button" onClick={() => void exportArtifact(Number(task.id))} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">导出</button>
                           <button type="button" onClick={async () => {
                             const title = window.prompt('成果名称', (task as any).title || ('选股成果 #' + task.id));
                             if (!title || !title.trim()) return;
