@@ -283,6 +283,10 @@ class BacktestEngine:
             fee_config=self.fee_config,
         )
         
+        # Each run owns its trace collection. Checkpoint state does not
+        # currently persist trace payloads, so never leak a prior run's traces.
+        self._signal_traces = {}
+
         # 记录结果
         equity_curve_rows = []
         trades_rows = []
