@@ -231,7 +231,7 @@ def test_target_portfolio_checkpoint_preserves_pending_t1_order():
                 and current == dates[5]
                 and not seen["saved"]
             ):
-                c1_engine.save_checkpoint(
+                source_engine.save_checkpoint(
                     checkpoint_dir,
                     dates[5],
                     "IA5.5.5 day-6 pending T+1",
