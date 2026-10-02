@@ -589,9 +589,45 @@ async def get_artifact_part(
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
     if row["artifact_type"] == "selection":
-        if name not in ("result", "selection_result"): raise HTTPException(400, "Selection Artifact only supports result")
-        try: return json.loads(row["result_json"]) if row["result_json"] else {}
-        except (TypeError, json.JSONDecodeError): raise HTTPException(500, "Stored selection result is invalid")
+        if name not in ("result", "selection_result", "signal_trace"):
+            raise HTTPException(400, "Selection Artifact only supports result or signal_trace")
+        try:
+            selection_result = json.loads(row["result_json"]) if row["result_json"] else {}
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(500, "Stored selection result is invalid")
+        if name in ("result", "selection_result"):
+            return selection_result
+
+        trace = selection_result.get("signal_trace")
+        if isinstance(trace, dict):
+            if fmt != "json":
+                raise HTTPException(400, "SignalTrace only supports JSON format")
+            return trace
+
+        # Compatibility with selection artifacts created before IA5.6.6:
+        # each node could carry its own single-date trace.
+        merged = {}
+        trace_rows = {}
+        nodes = selection_result.get("nodes") or {}
+        for node_id in sorted(nodes):
+            node_trace = nodes[node_id].get("signal_trace") if isinstance(nodes[node_id], dict) else None
+            if not isinstance(node_trace, dict):
+                continue
+            for key in ("schema_version", "engine_version", "signal_date", "formula"):
+                if key not in merged and node_trace.get(key) is not None:
+                    merged[key] = node_trace.get(key)
+            rows = node_trace.get("traces")
+            if isinstance(rows, list):
+                for row_item in rows:
+                    if isinstance(row_item, dict) and row_item.get("code"):
+                        trace_rows.setdefault(str(row_item["code"]), row_item)
+        if trace_rows:
+            if fmt != "json":
+                raise HTTPException(400, "SignalTrace only supports JSON format")
+            merged["traces"] = [trace_rows[code] for code in sorted(trace_rows)]
+            merged.setdefault("decisions", [])
+            return merged
+        raise HTTPException(404, "Artifact 'signal_trace' not found")
     if not row["result_uri"]: raise HTTPException(404, "Artifact result files are unavailable")
     if name == "signal_trace":
         trace = load_signal_trace(row["result_uri"], RESULT_DIR)
