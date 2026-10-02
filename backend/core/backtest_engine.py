@@ -938,11 +938,17 @@ class BacktestEngine:
         signal_trace = None
 
         if strategy is not None:
-            result = self.strategy_selector.select(
-                strategy, t, backtest_mode=True, trace=collect_signal_trace
-            )
             if collect_signal_trace:
+                result = self.strategy_selector.select(
+                    strategy, t, backtest_mode=True, trace=True
+                )
                 signal_trace = result.signal_trace
+            else:
+                # Keep the legacy call shape when tracing is disabled so test
+                # doubles and older integrations remain source-compatible.
+                result = self.strategy_selector.select(
+                    strategy, t, backtest_mode=True
+                )
             if strategy.mode == "target_portfolio":
                 weights = result.target_weights
                 new_intents = self._generate_intents(weights, new_prices)
