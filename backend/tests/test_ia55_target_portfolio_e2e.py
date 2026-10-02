@@ -7,6 +7,7 @@ import polars as pl
 
 from core.backtest_engine import BacktestEngine, TradingCalendar
 from core.backtest_types import FeeConfig, MVP_EXECUTION_CONFIG
+from core.portfolio import Portfolio, Position
 from core.strategy import (
     PositionSizingDefinition,
     RebalanceDefinition,
@@ -152,9 +153,8 @@ def test_target_portfolio_can_schedule_sell_while_position_is_t1_frozen():
         fee_config=FeeConfig(),
         execution_config=MVP_EXECUTION_CONFIG,
     )
-
-    engine.portfolio.cash = 100_000.0
-    engine.portfolio.positions["AAA"] = SimpleNamespace(
+    engine.portfolio = Portfolio(initial_cash=100_000.0)
+    engine.portfolio.positions["AAA"] = Position(
         code="AAA",
         total_qty=1_000,
         available_qty=0,
@@ -182,10 +182,10 @@ def test_target_portfolio_planner_is_deterministic_under_cash_limited_buys():
         fee_config=FeeConfig(),
         execution_config=MVP_EXECUTION_CONFIG,
     )
+    engine.portfolio = Portfolio(initial_cash=1_000.0)
 
     # The planner sees 1,000 cash and two 50% targets at equal prices.
     # Sorting is part of the capital-allocation contract.
-    engine.portfolio.cash = 1_000.0
     intents = engine._generate_intents(
         target_weights={"CCC": 0.5, "BBB": 0.5},
         execution_prices={
