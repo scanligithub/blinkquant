@@ -14,7 +14,7 @@ test('IA5.10 user asset export is authenticated and emits the v1 portable bundle
   assert.match(source, /blinkquant-user-assets-v1/);
   assert.match(source, /strategies\.json/);
   assert.match(source, /watchlists\.json/);
-  assert.match(source, /artifacts\\/);
+  assert.match(source, /artifacts\//);
   assert.match(source, /stripInternalIds/);
   assert.match(source, /MAX_ARTIFACTS = 100/);
   assert.match(source, /MAX_BUNDLE_BYTES/);
