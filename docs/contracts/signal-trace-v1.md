@@ -82,7 +82,11 @@ This enables answering: *"Why did this stock get traded on this date?"* with ful
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | code | string | ✅ | Stock code |
-| passed | bool | ✅ | Overall formula result |
+| passed | bool | ✅ | Overall formula result; formula-level only |
+| triggered | bool | ✅ | Whether the configured Entry trigger fired |
+| targeted | bool | ✅ | Whether the code entered the final target portfolio |
+| target_weight | float/null | ✅ | Target weight when targeted; otherwise null |
+| selection_reason | string | ✅ | FORMULA_REJECTED / TRIGGER_NOT_FIRED / TOP_N_EXCLUDED / TARGET_SELECTED |
 | atoms | array | ✅ | Per-atom evaluation records |
 | execution | object | ❌ | Filled after execution phase |
 
@@ -127,8 +131,12 @@ signal_trace/
 |--------|------|-------------|
 | signal_date | Date | Signal date |
 | code | Utf8 | Stock code |
-| passed | Boolean | Overall formula result |
+| passed | Boolean | Overall formula result; formula-level only |
 | formula | Utf8 | Formula string |
+| triggered | Boolean | Entry trigger fired for this candidate |
+| targeted | Boolean | Candidate entered final target portfolio |
+| target_weight | Float64 | Target weight when targeted; null otherwise |
+| selection_reason | Utf8 | Downstream selection outcome |
 | execution_date | Date | T+1 execution date (null if not executed) |
 | exec_price | Float64 | Fill price (null if not executed) |
 | exec_side | Utf8 | "BUY"/"SELL" (null if not executed) |
