@@ -7,6 +7,7 @@ import datetime
 import polars as pl
 import os
 import re
+import json
 import psutil
 import psycopg2
 import psycopg2.extras
@@ -43,10 +44,12 @@ class SelectionRequest(BaseModel):
     formula: str
     timeframe: str = "D"
     date: Optional[datetime.date] = None  # 可选目标交易日（YYYY-MM-DD）；早于数据起点时回退语义见 engine
+    trace: bool = False  # 按需返回原子级 SignalTrace
 
 
 class BacktestRequest(BaseModel):
     # Legacy flat form remains supported; strategy is the preferred contract.
+    signal_trace: bool = False  # 按需采集并持久化 SignalTrace
     formula: Optional[str] = None
     start_date: datetime.date
     end_signal_date: datetime.date
@@ -113,13 +116,23 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
 
     # 在线程池中运行同步选股计算，避免阻塞事件循环
     import asyncio
-    result = await asyncio.to_thread(
-        selection_engine.execute_selector,
-        req.formula,
-        req.timeframe,
-        background_tasks,
-        req.date
-    )
+    if req.trace:
+        result, signal_trace = await asyncio.to_thread(
+            selection_engine.execute_selector_with_trace,
+            req.formula,
+            req.timeframe,
+            background_tasks,
+            req.date,
+        )
+    else:
+        result = await asyncio.to_thread(
+            selection_engine.execute_selector,
+            req.formula,
+            req.timeframe,
+            background_tasks,
+            req.date
+        )
+        signal_trace = None
 
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -134,6 +147,7 @@ async def select_stocks(req: SelectionRequest, background_tasks: BackgroundTasks
         "signal_date": result.signal_date.isoformat(),
         "codes": result.codes,
         "metadata": result.metadata,
+        "signal_trace": signal_trace.to_dict() if signal_trace is not None else None,
     }
 
 
@@ -536,6 +550,10 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
             },
             "execution_diagnostics": result.execution_diagnostics or {},
             "benchmark": _build_benchmark_payload(config, result),
+            "signal_traces": {
+                date: trace.to_dict()
+                for date, trace in (result.signal_traces or {}).items()
+            } if req.signal_trace else {},
         }
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -714,6 +732,7 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             universe_filter=universe_filter,
             on_progress=_on_progress,
             cancel_check=cancel_event.is_set,
+            collect_signal_trace=req.signal_trace,
         )
 
         job = _backtest_jobs.get(job_id)
@@ -731,6 +750,17 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
             "trades": _df_to_parquet_bytes(result.trades),
             "positions_daily": _df_to_parquet_bytes(result.positions_daily),
         }
+        if req.signal_trace:
+            trace_payload = {
+                "schema_version": "1.0.0",
+                "traces": {
+                    date: trace.to_dict()
+                    for date, trace in (result.signal_traces or {}).items()
+                },
+            }
+            artifacts["signal_trace"] = json.dumps(
+                trace_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
         _backtest_artifacts[job_id] = artifacts
 
         summary = _build_summary_from_result(config, result)
@@ -759,6 +789,11 @@ async def _run_backtest_async(job_id: str, req: BacktestRequest):
                 },
             },
             "artifacts": {k: True for k in artifacts},
+            "signal_trace": {
+                "enabled": bool(req.signal_trace),
+                "signal_dates": len(result.signal_traces or {}),
+                "code_traces": sum(len(t.traces) for t in (result.signal_traces or {}).values()),
+            },
         }
     except BacktestCancelled as e:
         _backtest_artifacts.pop(job_id, None)
@@ -795,7 +830,7 @@ async def get_backtest_async(job_id: str):
 
 @router.get("/backtest/async/{job_id}/artifact/{name}")
 async def get_backtest_artifact(job_id: str, name: str):
-    if name not in ("equity_curve", "trades", "positions_daily"):
+    if name not in ("equity_curve", "trades", "positions_daily", "signal_trace"):
         raise HTTPException(400, "invalid artifact name")
     job = _backtest_jobs.get(job_id)
     if not job:
@@ -807,8 +842,9 @@ async def get_backtest_artifact(job_id: str, name: str):
         raise HTTPException(404, "artifact not found")
     return Response(
         content=blob,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{name}.parquet"'},
+        media_type="application/json" if name == "signal_trace" else "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}.json"'} if name == "signal_trace" else
+                 {"Content-Disposition": f'attachment; filename="{name}.parquet"'},
     )
 
 
