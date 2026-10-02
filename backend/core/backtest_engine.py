@@ -310,7 +310,12 @@ class BacktestEngine:
         self._diag_accum = diag  # Persist reference for checkpointing
         
         # 停牌 carry-forward 估值的最后可用价（derived 规则，非官方复牌基准）
-        self._last_close: dict[str, float] = {}
+        # checkpoint 恢复时 _last_close 已由 _restore_from_checkpoint() 注入；
+        # 仅新建运行时初始化为空，避免覆盖跨段 carry-forward 状态。
+        if not is_new_checkpoint:
+            self._last_close: dict[str, float] = {}
+        elif not hasattr(self, "_last_close"):
+            self._last_close: dict[str, float] = {}
         if self.portfolio.positions and not is_new_checkpoint:
             # For new checkpoint, _last_close already restored in _restore_from_checkpoint
             self._prime_last_close(
@@ -337,10 +342,13 @@ class BacktestEngine:
         all_days = self.calendar.trade_range(start_date, exec_end)
         
         # 待执行意图（信号日调度，次一交易日开盘执行）
-        self._pend_sig = None
-        self._pend_exec = None
-        self._pend_intents: list = []
-        self._pend_prices: dict = {}
+        # checkpoint 恢复时这些状态已经由 _restore_from_checkpoint() 注入，
+        # 不能在这里再次清空，否则跨段 T+1 pending order 会丢失。
+        if not initial_state:
+            self._pend_sig = None
+            self._pend_exec = None
+            self._pend_intents = []
+            self._pend_prices = {}
         
         # 解冻游标：checkpoint 续跑时避免重复解冻同一交易日
         if not is_new_checkpoint:
@@ -409,7 +417,38 @@ class BacktestEngine:
             self._phase_pre_open(t, corporate_action_store, fee_schedule, diag)
             _profiler["CA"] += _time.perf_counter() - _t0
 
-            # POST_CLOSE_SIGNAL: selection + ranking + intent generation
+            # POST_EXECUTION: consume pending T+1 orders first.
+            # Today's fills must be reflected before the close-based target
+            # portfolio is planned.
+            _t0 = _time.perf_counter()
+            fills, cur_signal_date, cur_prices = self._phase_post_execution(
+                t, fee_schedule, diag,
+            )
+            _profiler["Execution"] += _time.perf_counter() - _t0
+
+            for fill in fills:
+                trades_rows.append({
+                    "signal_date": cur_signal_date,
+                    "execution_date": t,
+                    "code": fill.code, "side": fill.side,
+                    "qty": fill.qty, "price": fill.price, "fee": fill.fee,
+                })
+
+            # MARKET_CLOSE: load today's close (or the executed day's close
+            # carried by cur_prices) before target planning.
+            _t0 = _time.perf_counter()
+            day_px = self._phase_market_close(t, cur_signal_date, cur_prices)
+            _profiler["Portfolio"] += _time.perf_counter() - _t0
+
+            # VALUATION: update Position.market_value and equity first.
+            # Target-portfolio planning depends on current positions' actual
+            # market value after today's execution and close.
+            _t0 = _time.perf_counter()
+            equity, positions_value = self._phase_valuation(t, day_px, diag)
+            _profiler["Valuation"] += _time.perf_counter() - _t0
+
+            # POST_CLOSE_SIGNAL: generate the next T+1 target/order only after
+            # execution and today's close valuation are both reflected.
             _t0 = _time.perf_counter()
             if strategy is None:
                 new_sig, new_exec, new_intents, new_prices = self._phase_post_close_signal(
@@ -423,36 +462,11 @@ class BacktestEngine:
                 )
             _profiler["Selection"] += _time.perf_counter() - _t0
 
-            # POST_EXECUTION: execute pending intents
-            _t0 = _time.perf_counter()
-            fills, cur_signal_date, cur_prices = self._phase_post_execution(
-                t, fee_schedule, diag,
-            )
-            _profiler["Execution"] += _time.perf_counter() - _t0
-
             # Commit new scheduled intents
             if new_sig is not None:
                 self._pend_sig, self._pend_exec = new_sig, new_exec
                 self._pend_intents, self._pend_prices = new_intents, new_prices
                 self._selected_thru = t
-
-            for fill in fills:
-                trades_rows.append({
-                    "signal_date": cur_signal_date,
-                    "execution_date": t,
-                    "code": fill.code, "side": fill.side,
-                    "qty": fill.qty, "price": fill.price, "fee": fill.fee,
-                })
-
-            # MARKET_CLOSE: load daily prices
-            _t0 = _time.perf_counter()
-            day_px = self._phase_market_close(t, cur_signal_date, cur_prices)
-            _profiler["Portfolio"] += _time.perf_counter() - _t0
-
-            # VALUATION: equity calc + ledger check
-            _t0 = _time.perf_counter()
-            equity, positions_value = self._phase_valuation(t, day_px, diag)
-            _profiler["Valuation"] += _time.perf_counter() - _t0
 
             # CHECKPOINT: equity curve + position snapshot
             _t0 = _time.perf_counter()
@@ -824,14 +838,19 @@ class BacktestEngine:
                 if qty > 0:
                     intents.append(OrderIntent(code=code, side="BUY", target_qty=qty, target_weight=weight))
             elif diff < 0:
-                if pos is None or pos.available_qty <= 0:
+                if pos is None or pos.total_qty <= 0:
                     continue
                 if weight <= 0:
-                    # 退出目标组合：全仓卖出可用数量
-                    qty = pos.available_qty
+                    # 退出目标组合：安排次一交易日全仓卖出。
+                    # 信号产生于收盘后，当前日刚买入的持仓可能仍 frozen；
+                    # T+1 执行日开盘前会 thaw，ExecutionEngine 再用真实
+                    # available_qty 做最终可卖性约束。
+                    qty = pos.total_qty
                 else:
                     qty = int(-diff / price)
-                qty = min(qty, pos.available_qty)
+                # Planner 计算的是 next-T+1 的目标意图，不能被信号日的
+                # frozen_qty 提前截断；执行层在实际 execution_date 再约束。
+                qty = min(qty, pos.total_qty)
                 if qty > 0:
                     intents.append(OrderIntent(code=code, side="SELL", target_qty=qty, target_weight=weight))
 
@@ -1048,6 +1067,16 @@ class BacktestEngine:
                                     if exec_map[code_trace.code][side]:
                                         code_trace.execution = exec_map[code_trace.code][side]
                                         break  # Use first match (BUY preferred)
+
+            # A scheduled T+1 order is a one-shot event. Once its execution
+            # date is reached, the state must be consumed regardless of whether
+            # the order fully fills, partially fills, or is rejected. Keeping an
+            # already-executed intent in checkpoint state would make a later
+            # resume treat historical work as still pending.
+            self._pend_sig = None
+            self._pend_exec = None
+            self._pend_intents = []
+            self._pend_prices = {}
 
         return fills, cur_signal_date, cur_prices
 
