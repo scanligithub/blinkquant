@@ -70,6 +70,7 @@ async function importSelectionStrategies(userId: string, items: unknown[]) {
             AS v(version_no integer, name text, formula text, timeframe text)
         ),
         new_versions AS (
+          // Imported JSON is untrusted: never carry uploaded provenance into persisted versions.
           INSERT INTO strategy_versions (
             strategy_id, version_no, name, formula, timeframe,
             source_backtest_strategy_id, source_backtest_strategy_version,
