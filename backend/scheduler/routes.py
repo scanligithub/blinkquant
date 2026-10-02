@@ -1,6 +1,6 @@
 # backend/scheduler/routes.py
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Header, Depends, File, UploadFile
 from pydantic import BaseModel
 from typing import Optional, List
 import json
@@ -499,6 +499,209 @@ async def list_artifacts(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.get("/artifacts/{artifact_id}/export", dependencies=[Depends(verify_internal_token)])
+async def export_artifact_bundle(
+    artifact_id: int,
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+):
+    from .config import RESULT_DIR
+    from .result_store import build_artifact_bundle
+    row = await fetchrow("SELECT * FROM artifacts WHERE id = ?", artifact_id)
+    if not row:
+        raise HTTPException(404, "Artifact not found")
+    _assert_task_access(row, user_id, role)
+    try:
+        payload = build_artifact_bundle(row, RESULT_DIR)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    from fastapi.responses import Response
+    filename = f"blinkquant_artifact_{artifact_id}.zip"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+@router.post("/artifacts/import", dependencies=[Depends(verify_internal_token)])
+async def import_artifact_bundle(
+    file: UploadFile = File(...),
+    user_id: Optional[str] = None,
+    role: Optional[str] = None,
+):
+    if _is_admin(role) and not user_id:
+        raise HTTPException(400, "user_id required for artifact import")
+    if not user_id:
+        raise HTTPException(401, "user_id required")
+
+    import io
+    import os
+    import shutil
+    import tempfile
+    import zipfile
+    from .config import ARTIFACT_QUOTA_BYTES_PER_USER, RESULT_DIR
+    from .result_store import (
+        _portable_value,
+        assert_safe_user_id,
+        extract_artifact_bundle,
+        make_result_uri,
+        validate_artifact_bundle,
+    )
+
+    temp_dir = None
+    final_dir = None
+    try:
+        temp_dir = tempfile.mkdtemp(prefix="artifact-import-", dir=RESULT_DIR)
+        with zipfile.ZipFile(file.file) as zf:
+            manifest = validate_artifact_bundle(zf)
+            if manifest["artifact_type"] == "selection" and "result.json" not in manifest["files"]:
+                raise ValueError("selection artifact is missing result.json")
+            if manifest["artifact_type"] == "backtest" and not any(
+                name.startswith("parts/") and name.endswith(".parquet") for name in manifest["files"]
+            ):
+                raise ValueError("backtest artifact has no result parquet files")
+
+            extracted_bytes = extract_artifact_bundle(zf, temp_dir, manifest)
+            result_json = None
+            if "result.json" in manifest["files"]:
+                try:
+                    result_json = json.loads(zf.read("result.json").decode("utf-8"))
+                except (TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise ValueError(f"invalid result.json: {exc}") from exc
+                if not isinstance(result_json, dict):
+                    raise ValueError("result.json must contain a JSON object")
+
+        for name in ("equity_curve.parquet", "trades.parquet", "positions_daily.parquet"):
+            path = os.path.join(temp_dir, name)
+            if os.path.exists(path):
+                try:
+                    import polars as pl
+                    pl.read_parquet_schema(path)
+                except Exception as exc:
+                    raise ValueError(f"invalid parquet file {name}: {exc}") from exc
+        trace_path = os.path.join(temp_dir, "signal_trace.json")
+        if os.path.exists(trace_path):
+            try:
+                with open(trace_path, encoding="utf-8") as fh:
+                    trace = json.load(fh)
+                if not isinstance(trace, dict):
+                    raise ValueError("signal_trace.json must contain an object")
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise ValueError(f"invalid signal_trace.json: {exc}") from exc
+
+        metadata = _portable_value(manifest.get("metadata") or {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        source_payload = metadata.get("payload") if isinstance(metadata, dict) else {}
+        payload = _portable_value(source_payload) if isinstance(source_payload, dict) else {}
+        metadata.update({
+            "payload": payload,
+            "imported": True,
+            "imported_format": "blinkquant-artifact-v1",
+            "assigned_node": None,
+            "source_task_id": None,
+            "strategy_template_id": None,
+            "strategy_template_name": None,
+            "strategy_template_updated_at": None,
+            "strategy_template_version": None,
+        })
+        summary = _portable_value(manifest.get("summary"))
+        title = str(manifest["title"]).strip()
+        artifact_type = str(manifest["artifact_type"])
+
+        # Serialized selection results remain in SQLite; backtest data lives in RESULT_DIR.
+        result_text = None
+        if result_json is not None:
+            result_text = json.dumps(_portable_value(result_json), ensure_ascii=False, separators=(",", ":"))
+        summary_text = json.dumps(summary, ensure_ascii=False, separators=(",", ":")) if summary is not None else None
+        metadata_text = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+
+        async with acquire() as conn:
+            used = await conn.fetchval(
+                "SELECT COALESCE(SUM(result_bytes), 0) FROM artifacts WHERE user_id = ?",
+                user_id,
+            )
+            if int(used or 0) + extracted_bytes > ARTIFACT_QUOTA_BYTES_PER_USER:
+                raise HTTPException(413, "Artifact import exceeds the user's artifact quota")
+
+            task = await conn.fetchrow(
+                """
+                INSERT INTO task_queue (
+                    user_id, task_type, payload, priority, status,
+                    result, result_summary, result_bytes, source_task_id
+                ) VALUES (?, ?, ?, 0, 'done', ?, ?, ?, NULL)
+                RETURNING id
+                """,
+                user_id,
+                artifact_type,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                result_text,
+                summary_text,
+                extracted_bytes,
+            )
+            task_id = int(task["id"])
+            result_uri = None
+            if artifact_type == "backtest":
+                assert_safe_user_id(str(user_id))
+                result_uri = make_result_uri(user_id, task_id)
+                final_dir = os.path.join(RESULT_DIR, result_uri)
+                os.makedirs(os.path.dirname(final_dir), exist_ok=True)
+                os.replace(temp_dir, final_dir)
+                temp_dir = None
+
+                # The task's result_bytes includes the imported result directory only.
+                await conn.execute(
+                    "UPDATE task_queue SET result_uri = ? WHERE id = ?",
+                    result_uri,
+                    task_id,
+                )
+
+            row = await conn.fetchrow(
+                """
+                INSERT INTO artifacts (
+                    user_id, artifact_type, task_id, title, status, metadata,
+                    summary, result_json, result_uri, result_bytes, created_at, finished_at
+                ) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                RETURNING id
+                """,
+                user_id,
+                artifact_type,
+                task_id,
+                title,
+                metadata_text,
+                summary_text,
+                result_text,
+                result_uri,
+                extracted_bytes,
+            )
+            artifact_id_new = int(row["id"])
+
+        return {
+            "ok": True,
+            "artifact_id": artifact_id_new,
+            "task_id": task_id,
+            "artifact_type": artifact_type,
+            "title": title,
+            "result_bytes": extracted_bytes,
+        }
+    except HTTPException:
+        raise
+    except (OSError, zipfile.BadZipFile, ValueError) as exc:
+        raise HTTPException(400, f"Invalid artifact bundle: {exc}") from exc
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+        if temp_dir and os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        if final_dir and not os.path.isdir(final_dir):
+            # No-op; keep the branch explicit for failure cleanup after DB rollback.
+            final_dir = None
+
 
 @router.get("/artifacts/{artifact_id}", dependencies=[Depends(verify_internal_token)])
 async def get_artifact(artifact_id: int, user_id: Optional[str] = None, role: Optional[str] = None) -> dict:
