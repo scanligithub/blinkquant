@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/auth';
 export const runtime = 'nodejs';
 const NODE1_URL = process.env.NODE1_URL || 'https://scanli-blinkquant-node1.hf.space';
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'internal-secret-change-me';
-const ALLOWED = new Set(['equity_curve', 'trades', 'positions_daily', 'result', 'selection_result']);
+const ALLOWED = new Set(['equity_curve', 'trades', 'positions_daily', 'result', 'selection_result', 'signal_trace']);
 export async function GET(req: NextRequest, { params }: { params: Promise<{ artifactId: string }> }) {
   const auth = await requireAuth(req);
   if (auth.status !== 200 || !auth.user?.userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

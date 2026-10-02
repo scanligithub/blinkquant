@@ -584,7 +584,7 @@ async def get_artifact_part(
     user_id: str | None = None, role: str | None = None,
 ):
     from .config import RESULT_DIR
-    from .result_store import ARTIFACT_NAMES, load_part
+    from .result_store import ARTIFACT_NAMES, load_part, load_signal_trace
     row = await fetchrow("SELECT result_uri, result_json, user_id, artifact_type FROM artifacts WHERE id = ?", artifact_id)
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
@@ -593,6 +593,13 @@ async def get_artifact_part(
         try: return json.loads(row["result_json"]) if row["result_json"] else {}
         except (TypeError, json.JSONDecodeError): raise HTTPException(500, "Stored selection result is invalid")
     if not row["result_uri"]: raise HTTPException(404, "Artifact result files are unavailable")
+    if name == "signal_trace":
+        trace = load_signal_trace(row["result_uri"], RESULT_DIR)
+        if trace is None:
+            raise HTTPException(404, "Artifact 'signal_trace' not found")
+        if fmt != "json":
+            raise HTTPException(400, "SignalTrace only supports JSON format")
+        return trace
     if name not in ARTIFACT_NAMES: raise HTTPException(400, f"Unknown artifact: {name}")
     df = load_part(row["result_uri"], name, RESULT_DIR)
     if df is None: raise HTTPException(404, f"Artifact '{name}' not found")
@@ -628,7 +635,7 @@ async def get_task_artifact(
     role: str | None = None,
 ):
     from .config import RESULT_DIR
-    from .result_store import load_part, load_as_legacy_json, ARTIFACT_NAMES
+    from .result_store import load_part, load_as_legacy_json, load_signal_trace, ARTIFACT_NAMES
 
     row = await fetchrow("SELECT result_uri, result, user_id FROM task_queue WHERE id = ?", task_id)
     if not row:
@@ -656,6 +663,14 @@ async def get_task_artifact(
             404,
             "结果文件已清理，仅保留摘要。Result files were purged; only summary remains.",
         )
+
+    if name == "signal_trace":
+        trace = load_signal_trace(row["result_uri"], RESULT_DIR)
+        if trace is None:
+            raise HTTPException(404, "Artifact 'signal_trace' not found")
+        if fmt != "json":
+            raise HTTPException(400, "SignalTrace only supports JSON format")
+        return trace
 
     if fmt == "legacy":
         full = load_as_legacy_json(row["result_uri"], RESULT_DIR)

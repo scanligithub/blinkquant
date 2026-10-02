@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 const NODE1_URL = process.env.NODE1_URL || 'https://scanli-blinkquant-node1.hf.space';
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'internal-secret-change-me';
 
-const ALLOWED = new Set(['equity_curve', 'trades', 'positions_daily']);
+const ALLOWED = new Set(['equity_curve', 'trades', 'positions_daily', 'signal_trace']);
 
 export async function GET(
   req: NextRequest,
