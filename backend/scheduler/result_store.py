@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import shutil
+import io
+import zipfile
 from typing import Optional
 
 import polars as pl
@@ -279,3 +281,163 @@ def load_as_legacy_json(result_uri: str, result_dir: str) -> dict:
     if trace is not None:
         result[SIGNAL_TRACE_ARTIFACT] = trace
     return result
+
+
+PORTABLE_ID_KEYS = frozenset({
+    "user_id",
+    "task_id",
+    "artifact_id",
+    "source_task_id",
+    "strategy_template_id",
+    "cluster_job_id",
+    "assigned_node",
+})
+
+
+def _portable_value(value):
+    """Strip internal identity/provenance IDs from portable artifact metadata."""
+    if isinstance(value, dict):
+        result = {}
+        for key, child in value.items():
+            if key in PORTABLE_ID_KEYS:
+                continue
+            if key in ("source_selection_strategy", "selection_strategy_snapshot") and isinstance(child, dict):
+                child = {
+                    k: v for k, v in child.items()
+                    if k not in {"id", "strategy_id", "source_task_id", "artifact_id"}
+                }
+            result[key] = _portable_value(child)
+        return result
+    if isinstance(value, list):
+        return [_portable_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_portable_value(item) for item in value]
+    return value
+
+
+def build_artifact_bundle(row: dict, result_dir: str) -> bytes:
+    """Create a portable ZIP bundle for one artifact without exposing owner/internal IDs."""
+    artifact_type = str(row.get("artifact_type") or "")
+    if artifact_type not in {"selection", "backtest"}:
+        raise ValueError("invalid artifact type")
+
+    try:
+        metadata = json.loads(row.get("metadata") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    try:
+        summary = json.loads(row.get("summary") or "null")
+    except (TypeError, json.JSONDecodeError):
+        summary = None
+    try:
+        result_json = json.loads(row.get("result_json") or "null")
+    except (TypeError, json.JSONDecodeError):
+        result_json = None
+
+    files = []
+    result_uri = row.get("result_uri")
+    base = os.path.join(result_dir, str(result_uri)) if result_uri else None
+    if base and os.path.isdir(base):
+        for name in ARTIFACT_NAMES:
+            if os.path.isfile(os.path.join(base, f"{name}.parquet")):
+                files.append(f"parts/{name}.parquet")
+        if os.path.isfile(os.path.join(base, "signal_trace.json")):
+            files.append("parts/signal_trace.json")
+
+    if artifact_type == "selection":
+        files.append("result.json")
+
+    from datetime import datetime, timezone
+    manifest = {
+        "format": "blinkquant-artifact-v1",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_type": artifact_type,
+        "title": str(row.get("title") or ""),
+        "created_at": row.get("created_at"),
+        "finished_at": row.get("finished_at"),
+        "metadata": _portable_value(metadata),
+        "summary": _portable_value(summary),
+        "files": files,
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "manifest.json",
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+        if artifact_type == "selection" and result_json is not None:
+            zf.writestr(
+                "result.json",
+                json.dumps(_portable_value(result_json), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            )
+        if base and os.path.isdir(base):
+            for name in ARTIFACT_NAMES:
+                path = os.path.join(base, f"{name}.parquet")
+                if os.path.isfile(path):
+                    zf.write(path, f"parts/{name}.parquet")
+            trace_path = os.path.join(base, "signal_trace.json")
+            if os.path.isfile(trace_path):
+                zf.write(trace_path, "parts/signal_trace.json")
+    return buf.getvalue()
+
+
+ALLOWED_BUNDLE_FILES = frozenset({
+    "manifest.json",
+    "result.json",
+    "parts/equity_curve.parquet",
+    "parts/trades.parquet",
+    "parts/positions_daily.parquet",
+    "parts/signal_trace.json",
+})
+
+
+def validate_artifact_bundle(zf: zipfile.ZipFile) -> dict:
+    """Validate and return the portable manifest before filesystem mutation."""
+    names = zf.namelist()
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate artifact bundle members")
+    if "manifest.json" not in names:
+        raise ValueError("artifact bundle is missing manifest.json")
+    if any(name not in ALLOWED_BUNDLE_FILES for name in names):
+        raise ValueError("artifact bundle contains an unsupported file")
+    manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("format") != "blinkquant-artifact-v1":
+        raise ValueError("unsupported artifact bundle format")
+    if manifest.get("artifact_type") not in {"selection", "backtest"}:
+        raise ValueError("invalid artifact type")
+    title = str(manifest.get("title") or "").strip()
+    if not title or len(title) > 80:
+        raise ValueError("invalid artifact title")
+
+    files = manifest.get("files")
+    if not isinstance(files, list) or any(path not in ALLOWED_BUNDLE_FILES for path in files):
+        raise ValueError("invalid artifact file manifest")
+    if len(set(files)) != len(files):
+        raise ValueError("duplicate artifact files")
+    if set(files) != (set(names) - {"manifest.json"}):
+        raise ValueError("artifact file manifest mismatch")
+
+    total_uncompressed = 0
+    for info in zf.infolist():
+        if info.filename not in ALLOWED_BUNDLE_FILES:
+            raise ValueError("unsupported artifact file")
+        if info.file_size > 2 * 1024**3:
+            raise ValueError("artifact member is too large")
+        total_uncompressed += info.file_size
+        if total_uncompressed > 2 * 1024**3:
+            raise ValueError("artifact bundle is too large")
+    return manifest
+
+
+def extract_artifact_bundle(zf: zipfile.ZipFile, temp_dir: str, manifest: dict) -> int:
+    """Extract validated result files to a temporary directory and return byte size."""
+    os.makedirs(temp_dir, exist_ok=True)
+    for name in manifest["files"]:
+        if name == "result.json":
+            continue
+        out_name = os.path.basename(name)
+        target = os.path.join(temp_dir, out_name)
+        with zf.open(name) as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+    return dir_size(temp_dir)
