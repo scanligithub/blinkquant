@@ -351,7 +351,7 @@ def test_atom_trace_reports_false_comparison_and_boolean_leaves():
         engine = SelectionEngine()
         trace = engine._generate_trace(
             ["AAA"],
-            "CLOSE > 10 & CLOSE < 20",
+            "(CLOSE > 10) AND (CLOSE < 20)",
             "D",
             dt.date(2024, 1, 4),
             False,
