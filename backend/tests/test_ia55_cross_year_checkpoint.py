@@ -23,6 +23,7 @@ from core.strategy import (
 DATES = [
     dt.date(2025, 12, 31),
     dt.date(2026, 1, 2),
+    dt.date(2026, 1, 5),
 ]
 
 CODES = ["AAA", "BBB"]
@@ -45,15 +46,15 @@ def _write_year_files(root: str) -> None:
     )
     frame_2026 = pl.DataFrame(
         {
-            "date": [DATES[1], DATES[1]],
-            "code": CODES,
-            "open": [10.0, 10.0],
-            "high": [10.0, 10.0],
-            "low": [10.0, 10.0],
-            "close": [10.0, 10.0],
-            "volume": [1_000_000.0, 1_000_000.0],
-            "amount": [10_000_000.0, 10_000_000.0],
-            "adjustFactor": [1.0, 1.0],
+            "date": [DATES[1], DATES[1], DATES[2], DATES[2]],
+            "code": CODES + CODES,
+            "open": [10.0, 10.0, 10.0, 10.0],
+            "high": [10.0, 10.0, 10.0, 10.0],
+            "low": [10.0, 10.0, 10.0, 10.0],
+            "close": [10.0, 10.0, 10.0, 10.0],
+            "volume": [1_000_000.0] * 4,
+            "amount": [10_000_000.0] * 4,
+            "adjustFactor": [1.0] * 4,
         }
     )
     frame_2025.write_parquet(f"{root}/stock_kline_2025.parquet")
@@ -62,7 +63,7 @@ def _write_year_files(root: str) -> None:
 
 def _build_engine(root: str, calendar: TradingCalendar):
     def select(strategy, date, backtest_mode=True):
-        weights = {"BBB": 0.9} if date == DATES[0] else {}
+        weights = {"BBB": 0.9} if date in (DATES[0], DATES[1]) else {}
         return SimpleNamespace(
             signal_date=date,
             target_codes=list(weights),
@@ -130,7 +131,7 @@ def test_target_portfolio_checkpoint_resume_across_year_boundary():
 
         store = RawPriceStore(root)
         boundary = store.load_execution_prices(DATES)
-        assert boundary.height == 4
+        assert boundary.height == 6
         assert set(boundary["date"].to_list()) == set(DATES)
 
         # C1: continuous execution. The 2025-12-31 target switch executes on 2026-01-02.
@@ -190,6 +191,8 @@ def test_target_portfolio_checkpoint_resume_across_year_boundary():
             )
 
             # C2: fresh process resumes on the cross-year T+1 execution date.
+            # The extra 2026-01-05 calendar day keeps resumed signal scheduling
+            # within a valid T+1 window.
             resume_engine = _build_engine(root, calendar)
             resumed = resume_engine.run(
                 start_date=DATES[1],
