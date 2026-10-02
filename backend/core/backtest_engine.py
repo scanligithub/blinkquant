@@ -21,7 +21,7 @@ from core.backtest_types import (
 )
 from core.checkpoint import BacktestCheckpoint, save_checkpoint, load_checkpoint
 from core.corporate_actions import CorporateAction
-from core.signal_trace import SignalTraceData, CodeTrace, ExecutionTrace
+from core.signal_trace import SignalTraceData, CodeTrace, ExecutionTrace, DecisionTrace
 from core.strategy import StrategyDefinition
 from core.strategy_selector import StrategySelector
 from core.universe_resolver import UniverseResolver
@@ -283,9 +283,12 @@ class BacktestEngine:
             fee_config=self.fee_config,
         )
         
-        # Each run owns its trace collection. Checkpoint state does not
-        # currently persist trace payloads, so never leak a prior run's traces.
-        self._signal_traces = {}
+        # Each run owns its trace collection. When resuming from a v1 checkpoint,
+        # restore the prior trace history first so T -> T+1 provenance is continuous.
+        if is_new_checkpoint:
+            self._signal_traces = getattr(self, "_signal_traces", {})
+        else:
+            self._signal_traces = {}
 
         # 记录结果
         equity_curve_rows = []
@@ -632,6 +635,10 @@ class BacktestEngine:
             last_close=last_close,
             thru_thaw=self._thru_thaw.isoformat() if self._thru_thaw else None,
             selected_thru=self._selected_thru.isoformat() if self._selected_thru else None,
+            signal_traces={
+                date: trace.to_dict()
+                for date, trace in sorted(getattr(self, "_signal_traces", {}).items())
+            },
         )
 
     def save_checkpoint(self, directory: Union[str, Path], current_date: datetime.date, description: str = "") -> None:
@@ -697,6 +704,13 @@ class BacktestEngine:
         
         # Restore diagnostics
         self._diag_accum = cp.diagnostics
+
+        # Restore SignalTrace history when present. Older checkpoints simply
+        # have no signal_traces field and therefore restore an empty collection.
+        self._signal_traces = {
+            date: SignalTraceData.from_dict(payload)
+            for date, payload in sorted(getattr(cp, "signal_traces", {}).items())
+        }
 
     def _prime_last_close(self, codes: list[str], before: datetime.date, lookback_days: int = 60):
         """回看播种初始持仓的最后可用 raw close（供首周期停牌 carry-forward 估值）。
@@ -1021,11 +1035,35 @@ class BacktestEngine:
                     diag["target_gross_by_date"][exec_d] = sum(weights.values())
                 new_sig, new_exec = t, exec_d
 
-        # Store signal trace for later enrichment with execution data
-        if signal_trace:
+        # Store signal trace for later enrichment with decision/execution data.
+        if collect_signal_trace:
             if not hasattr(self, '_signal_traces'):
                 self._signal_traces = {}
-            self._signal_traces[t.isoformat()] = signal_trace
+            if signal_trace is None:
+                signal_trace = SignalTraceData(
+                    signal_date=t.isoformat(),
+                    formula=(strategy.entry.condition if strategy is not None else (formula or "")),
+                    traces=[],
+                )
+                self._signal_traces[t.isoformat()] = signal_trace
+            else:
+                self._signal_traces[t.isoformat()] = signal_trace
+
+            if new_sig is not None:
+                decision_type = "TARGET_REBALANCE"
+                if strategy is not None and strategy.mode == "event_driven":
+                    decision_type = "EVENT_DRIVEN"
+                signal_trace.decisions.extend(
+                    DecisionTrace(
+                        code=intent.code,
+                        side=intent.side,
+                        target_qty=intent.target_qty,
+                        target_weight=intent.target_weight,
+                        execution_date=new_exec,
+                        decision_type=decision_type,
+                    )
+                    for intent in sorted(new_intents, key=lambda x: (x.code, x.side, x.target_qty))
+                )
 
         return new_sig, new_exec, new_intents, new_prices
 
@@ -1074,32 +1112,59 @@ class BacktestEngine:
                     f"execution {t} 后现金为负: {self.portfolio.cash:.2f}"
                 )
 
-            # Enrich signal traces with execution data
-            if fills and hasattr(self, '_signal_traces'):
+            # Enrich SignalTrace with execution outcomes. Decisions are keyed by
+            # (code, side), so BUY and SELL for the same code are both preserved.
+            if hasattr(self, '_signal_traces'):
                 signal_date = self._pend_sig
                 if signal_date:
                     trace = self._signal_traces.get(signal_date.isoformat())
                     if trace:
-                        # Create a map of execution data by code
-                        exec_map = {}
-                        for f in fills:
-                            if f.code not in exec_map:
-                                exec_map[f.code] = {"BUY": None, "SELL": None}
-                            exec_map[f.code][f.side] = {
-                                "execution_date": t,
-                                "price": f.price,
-                                "side": f.side,
-                                "qty": f.qty,
-                                "fee": f.fee,
-                            }
-                        # Enrich traces with execution data
-                        for code_trace in trace.traces:
-                            if code_trace.code in exec_map:
-                                for side in ("BUY", "SELL"):
-                                    if exec_map[code_trace.code][side]:
-                                        info = exec_map[code_trace.code][side]
-                                        code_trace.execution = ExecutionTrace(**info)
-                                        break  # Use first match (BUY preferred)
+                        fills_by_key = {}
+                        for fill in fills:
+                            fills_by_key.setdefault((fill.code, fill.side), []).append(fill)
+                        rejections_by_key = {}
+                        for rejection in report.rejections:
+                            rejections_by_key.setdefault((rejection.code, rejection.side), []).append(rejection)
+
+                        for decision in trace.decisions:
+                            if decision.execution_date != t:
+                                continue
+                            key = (decision.code, decision.side)
+                            fill_queue = fills_by_key.get(key, [])
+                            rejection_queue = rejections_by_key.get(key, [])
+                            if fill_queue:
+                                fill = fill_queue.pop(0)
+                                decision.executed_qty = fill.qty
+                                decision.execution_price = fill.price
+                                decision.fee = fill.fee
+                                decision.status = (
+                                    "FILLED" if fill.qty >= decision.target_qty else "PARTIAL"
+                                )
+                            elif rejection_queue:
+                                rejection = rejection_queue.pop(0)
+                                decision.status = "REJECTED"
+                                decision.executed_qty = 0
+                                decision.rejection_reason = rejection.reason
+
+                        # Preserve the existing single-execution CodeTrace field as
+                        # a backward-compatible projection, while executions[] keeps
+                        # every fill. This prevents same-code BUY/SELL overwrite.
+                        for fill in fills:
+                            execution = ExecutionTrace(
+                                execution_date=t,
+                                price=fill.price,
+                                side=fill.side,
+                                qty=fill.qty,
+                                fee=fill.fee,
+                            )
+                            code_traces = [ct for ct in trace.traces if ct.code == fill.code]
+                            for code_trace in code_traces:
+                                code_trace.executions.append(execution)
+                                if (
+                                    code_trace.execution is None
+                                    or (code_trace.execution.side == "SELL" and fill.side == "BUY")
+                                ):
+                                    code_trace.execution = execution
 
             # A scheduled T+1 order is a one-shot event. Once its execution
             # date is reached, the state must be consumed regardless of whether
