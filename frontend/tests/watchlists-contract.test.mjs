@@ -89,7 +89,7 @@ test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', 
 test('IA5.4.4 watchlist supports owner-scoped bulk removal', () => {
   const route = read('src/app/api/watchlist/route.ts');
   const watchlist = read('src/components/Watchlist.tsx');
-  assert.match(route, /Array.isArray(body.codes)/);
+  assert.match(route, /Array\.isArray\(body\.codes\)/);
   assert.match(route, /DELETE FROM watchlist_items/);
   assert.match(route, /code = ANY\(\$\{chunk\}\)/);
   assert.match(route, /removed_count/);
