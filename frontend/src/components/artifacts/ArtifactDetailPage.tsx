@@ -294,8 +294,6 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     </div>
                   </section>
 
-                  <SignalTracePanel artifactId={task.id} />
-
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <h2 className="font-bold text-slate-800">Artifact 数据</h2>
                     <div className="text-xs text-slate-400 mt-1">大型结果文件仍由 Node1 结果存储提供，本页使用现有权限控制读取。</div>
@@ -310,6 +308,8 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                   </section>
                 </>
               )}
+
+              <SignalTracePanel artifactId={task.id} />
 
               <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                 <h2 className="font-bold text-slate-800">任务输入完整快照</h2>
