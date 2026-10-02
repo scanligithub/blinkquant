@@ -35,7 +35,9 @@ test('legacy watchlist item API resolves explicit lists through ownership', () =
   const route = read('src/app/api/watchlist/route.ts');
   assert.match(route, /getOwnedWatchlist\(userId, explicitId\)/);
   assert.match(route, /return owned \? explicitId : null/);
-  assert.match(route, /WHERE watchlist_id = \$\{listId\} AND code = \$\{code\}/);
+  assert.match(route, /body\.code \|\| searchParams\.get\('code'\)/);
+  assert.match(route, /DELETE FROM watchlist_items/);
+  assert.match(route, /watchlist_id = \$\{listId\}/);
 });
 
 test('watchlist UI exposes create, rename, delete and per-list stock management', () => {
@@ -81,4 +83,20 @@ test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', 
   assert.match(sidebar, /body: JSON\.stringify\(\{ listId, codes: Array\.from\(selected\) \}\)/);
   assert.match(sidebar, /<BulkWatchlistBar codes=\{results\} onChanged=\{onWatchlistChanged\} \/>/);
   assert.match(workspace, /onWatchlistChanged=\{refreshWatchlist\}/);
+});
+
+
+test('IA5.4.4 watchlist supports owner-scoped bulk removal', () => {
+  const route = read('src/app/api/watchlist/route.ts');
+  const watchlist = read('src/components/Watchlist.tsx');
+  assert.match(route, /Array\.isArray\(body\.codes\)/);
+  assert.match(route, /DELETE FROM watchlist_items/);
+  assert.match(route, /code = \$\{code\}/);
+  assert.match(route, /chunk\.map\(\(code\) => sql/);
+  assert.match(route, /removed_count/);
+  assert.match(route, /一次最多移除 5000 只股票/);
+  assert.match(watchlist, /批量移除/);
+  assert.match(watchlist, /取消全选/);
+  assert.match(watchlist, /codes: Array\.from\(selected\)/);
+  assert.match(watchlist, /removed_count/);
 });
