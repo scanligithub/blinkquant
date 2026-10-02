@@ -1,6 +1,7 @@
 """SignalTrace 可审计性测试。"""
 import datetime
 from core.signal_trace import SignalTrace, TraceRecord
+from backend.scheduler.dispatcher import build_selection_signal_trace
 
 
 def test_trace_record_creation():
@@ -75,3 +76,38 @@ def test_trace_to_dataframe():
     df = trace.to_dataframe()
     assert df.shape == (1, 17)
     assert df["code"][0] == "000001"
+
+
+def test_selection_signal_trace_preserves_node_provenance():
+    node_results = {
+        "node2": {
+            "signal_trace": {
+                "schema_version": "1.0.0",
+                "signal_date": "2024-07-01",
+                "traces": [{"code": "BBB", "passed": False}],
+            },
+        },
+        "node1": {
+            "signal_trace": {
+                "schema_version": "1.0.0",
+                "signal_date": "2024-07-01",
+                "traces": [{"code": "AAA", "passed": True}],
+            },
+        },
+        "node3": {"codes": ["CCC"]},
+    }
+
+    merged = build_selection_signal_trace(node_results)
+    assert merged is not None
+    assert merged["schema_version"] == "1.0.0"
+    assert list(merged["nodes"]) == ["node1", "node2"]
+    assert merged["nodes"]["node1"]["traces"][0]["code"] == "AAA"
+    assert merged["nodes"]["node2"]["traces"][0]["code"] == "BBB"
+
+
+def test_selection_signal_trace_absent_when_trace_disabled():
+    assert build_selection_signal_trace({
+        "node1": {"codes": ["AAA"]},
+        "node2": {"codes": ["BBB"]},
+        "node3": {"codes": ["CCC"]},
+    }) is None

@@ -589,9 +589,20 @@ async def get_artifact_part(
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
     if row["artifact_type"] == "selection":
-        if name not in ("result", "selection_result"): raise HTTPException(400, "Selection Artifact only supports result")
-        try: return json.loads(row["result_json"]) if row["result_json"] else {}
-        except (TypeError, json.JSONDecodeError): raise HTTPException(500, "Stored selection result is invalid")
+        try:
+            stored = json.loads(row["result_json"]) if row["result_json"] else {}
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(500, "Stored selection result is invalid")
+        if name == "signal_trace":
+            trace = stored.get("signal_trace") if isinstance(stored, dict) else None
+            if not trace:
+                raise HTTPException(404, "Artifact 'signal_trace' not found")
+            if fmt != "json":
+                raise HTTPException(400, "SignalTrace only supports JSON format")
+            return trace
+        if name not in ("result", "selection_result"):
+            raise HTTPException(400, "Selection Artifact only supports result")
+        return stored
     if not row["result_uri"]: raise HTTPException(404, "Artifact result files are unavailable")
     if name == "signal_trace":
         trace = load_signal_trace(row["result_uri"], RESULT_DIR)
