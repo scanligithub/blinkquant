@@ -51,6 +51,22 @@ async def dispatch_backtest(node_id: str, payload: Union[dict, str], timeout: in
     except Exception as e:
         raise RuntimeError(f"dispatch_backtest({node_id}) failed: {e}")
 
+def build_selection_signal_trace(node_results: dict) -> dict | None:
+    """Preserve per-node SignalTrace provenance for the 3-node selection fan-out."""
+    nodes = {}
+    for node_id, node_data in sorted(node_results.items()):
+        trace = node_data.get("signal_trace") if isinstance(node_data, dict) else None
+        if isinstance(trace, dict):
+            nodes[node_id] = trace
+    if not nodes:
+        return None
+    first = next(iter(nodes.values()))
+    return {
+        "schema_version": first.get("schema_version", "1.0.0"),
+        "nodes": nodes,
+    }
+
+
 async def dispatch_selection(payload: Union[dict, str], timeout: int = 60) -> dict:
     """并行向 3 节点发起 selection，返回各节点结果"""
     payload = _ensure_dict(payload)
@@ -86,8 +102,12 @@ async def dispatch_selection(payload: Union[dict, str], timeout: int = 60) -> di
     for node_data in success.values():
         codes = node_data.get("codes", [])
         all_codes.update(codes)
-    
-    return {"nodes": success, "codes": list(all_codes)}
+
+    result = {"nodes": success, "codes": list(all_codes)}
+    signal_trace = build_selection_signal_trace(success)
+    if signal_trace is not None:
+        result["signal_trace"] = signal_trace
+    return result
 
 async def cancel_task(
     node_id: str,
