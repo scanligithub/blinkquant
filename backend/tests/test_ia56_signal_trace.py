@@ -6,6 +6,7 @@ import polars as pl
 
 from core.backtest_engine import BacktestEngine
 from core.backtest_types import FeeConfig
+from core.portfolio import Portfolio
 from core.engine import SelectionEngine
 from core.signal_trace import CodeTrace, ExecutionTrace, SignalTraceData
 from core.strategy import StrategyDefinition
@@ -136,6 +137,7 @@ def test_backtest_engine_collects_trace_without_changing_default_path():
         fee_config=FeeConfig(),
         strategy_selector=_Selector(),
     )
+    engine.portfolio = Portfolio(initial_cash=1_000_000)
     diag = {
         "rej_counters": {},
         "intents_total": 0,
