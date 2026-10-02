@@ -27,6 +27,7 @@ from .engine import SelectionEngine
 from .backtest_types import equal_weight_allocator, top_n_equal_weight_allocator
 from .strategy import StrategyDefinition
 from .universe_resolver import UniverseResolver
+from .signal_trace import SignalTraceData
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class StrategySelectionResult:
     target_codes: list[str]
     target_weights: dict[str, float] = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    signal_trace: Optional[SignalTraceData] = None
 
 
 class StrategySelector:
@@ -210,6 +212,7 @@ class StrategySelector:
         signal_date: dt.date,
         eligible_codes: Optional[list[str]],
         backtest_mode: bool,
+        trace: bool = False,
     ):
         timeframe = signal.timeframe.upper()
         self._ensure_correct_period_frame(timeframe)
@@ -218,20 +221,36 @@ class StrategySelector:
         # daily frame has already been loaded from the real QFQ provider by
         # BacktestEngine, so no second data download is required.
         use_provider = not (backtest_mode and timeframe in ("W", "M"))
-        result = self.selection_engine.execute_selector(
-            signal.condition,
-            timeframe,
-            None,
-            target_date=signal_date,
-            backtest_mode=backtest_mode,
-            raise_on_error=True,
-            eligible_codes=eligible_codes,
-            qfq_data_provider=(getattr(self, "_qfq_data_provider", None) if use_provider else None),
-            latest_adj=(getattr(self, "_latest_adj", None) if use_provider else None),
-        )
+        provider = getattr(self, "_qfq_data_provider", None) if use_provider else None
+        latest_adj = getattr(self, "_latest_adj", None) if use_provider else None
+        if trace:
+            result, signal_trace = self.selection_engine.execute_selector_with_trace(
+                signal.condition,
+                timeframe,
+                None,
+                target_date=signal_date,
+                backtest_mode=backtest_mode,
+                raise_on_error=True,
+                qfq_data_provider=provider,
+                latest_adj=latest_adj,
+                eligible_codes=eligible_codes,
+            )
+        else:
+            result = self.selection_engine.execute_selector(
+                signal.condition,
+                timeframe,
+                None,
+                target_date=signal_date,
+                backtest_mode=backtest_mode,
+                raise_on_error=True,
+                eligible_codes=eligible_codes,
+                qfq_data_provider=provider,
+                latest_adj=latest_adj,
+            )
+            signal_trace = None
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(result["error"])
-        return result
+        return result, signal_trace
 
     def _select_trigger(
         self,
@@ -239,35 +258,39 @@ class StrategySelector:
         signal,
         signal_date: dt.date,
         backtest_mode: bool,
-    ) -> list[str]:
+        trace: bool = False,
+    ) -> tuple[list[str], Optional[SignalTraceData]]:
         eligible_codes = self._eligible_codes(strategy, signal_date)
-        current_result = self._select_signal(
-            signal, signal_date, eligible_codes, backtest_mode
+        current_result, current_trace = self._select_signal(
+            signal, signal_date, eligible_codes, backtest_mode, trace=trace
         )
         current = set(current_result.codes)
 
         if signal.trigger == "condition":
-            return sorted(current)
+            return sorted(current), current_trace
 
         previous_date = self._previous_signal_date(signal_date, signal.timeframe)
         if previous_date is None:
-            return []
+            return [], current_trace.for_codes([]) if current_trace else None
 
         # 对 cross_*，Universe 也必须按各自历史 as-of 日解析，
         # 不能把当前 Universe 套到历史信号日上。
         previous_eligible = self._eligible_codes(strategy, previous_date)
-        previous_result = self._select_signal(
+        previous_result, previous_trace = self._select_signal(
             signal,
             previous_date,
             previous_eligible,
             backtest_mode,
+            trace=trace,
         )
         previous = set(previous_result.codes)
 
         if signal.trigger == "cross_above":
-            return sorted(current - previous)
+            selected = sorted(current - previous)
+            return selected, current_trace.for_codes(selected) if current_trace else None
         if signal.trigger == "cross_below":
-            return sorted(previous - current)
+            selected = sorted(previous - current)
+            return selected, previous_trace.for_codes(selected) if previous_trace else None
 
         raise ValueError(f"unsupported signal trigger: {signal.trigger!r}")
 
@@ -277,6 +300,7 @@ class StrategySelector:
         target_date: dt.date,
         *,
         backtest_mode: bool = True,
+        trace: bool = False,
     ) -> StrategySelectionResult:
         """计算 strategy 在 target_date 的 Entry/Exit/Target 信号。
 
@@ -291,7 +315,9 @@ class StrategySelector:
         if not isinstance(target_date, dt.date):
             raise TypeError("target_date must be datetime.date")
 
-        cache_key = (repr(strategy.to_dict()), target_date, backtest_mode)
+        # Trace collection changes the returned result, so it must participate in
+        # the cache key; otherwise a prior non-traced selection would mask trace=True.
+        cache_key = (repr(strategy.to_dict()), target_date, backtest_mode, trace)
         cached = self._selection_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -309,20 +335,22 @@ class StrategySelector:
                 f"指定日期 {target_date} 早于数据起点，无可用交易日数据"
             )
 
-        entry_codes = self._select_trigger(
+        entry_codes, entry_trace = self._select_trigger(
             strategy,
             strategy.entry,
             effective_date,
             backtest_mode,
+            trace=trace,
         )
 
         exit_codes: list[str] = []
         if strategy.exit is not None:
-            exit_codes = self._select_trigger(
+            exit_codes, _exit_trace = self._select_trigger(
                 strategy,
                 strategy.exit,
                 effective_date,
                 backtest_mode,
+                trace=False,
             )
 
         if strategy.sizing.method == "equal_weight":
@@ -353,6 +381,7 @@ class StrategySelector:
                 "entry_trigger": strategy.entry.trigger,
                 "exit_trigger": None if strategy.exit is None else strategy.exit.trigger,
             },
+            signal_trace=entry_trace,
         )
         if len(self._selection_cache) >= self._selection_cache_max:
             self._selection_cache.pop(next(iter(self._selection_cache)))

@@ -592,32 +592,62 @@ class SelectionEngine:
     # =========================================================================
     # SignalTrace generation (P1-2)
     # =========================================================================
-    def execute_selector_with_trace(self, formula: str, timeframe: str, background_tasks,
-                                    target_date=None, backtest_mode: bool = False,
-                                    raise_on_error: bool = False):
-        """执行选股并生成 SignalTraceData（P1-2）。
+    def execute_selector_with_trace(
+        self,
+        formula: str,
+        timeframe: str,
+        background_tasks,
+        target_date=None,
+        backtest_mode: bool = False,
+        raise_on_error: bool = False,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+        eligible_codes=None,
+    ):
+        """Execute selection and return the canonical SignalTraceData alongside it.
 
-        Returns:
-            tuple: (SelectionResult, SignalTraceData)
+        Trace generation uses the same PIT target date, QFQ provider and
+        optional eligible-code universe as the selection call.
         """
-        # Reuse existing execute_selector logic, but also generate trace
-        result = self.execute_selector(formula, timeframe, background_tasks,
-                                        target_date, backtest_mode, raise_on_error)
+        result = self.execute_selector(
+            formula,
+            timeframe,
+            background_tasks,
+            target_date=target_date,
+            backtest_mode=backtest_mode,
+            raise_on_error=raise_on_error,
+            qfq_data_provider=qfq_data_provider,
+            latest_adj=latest_adj,
+            eligible_codes=eligible_codes,
+        )
 
         if isinstance(result, dict) and "error" in result:
-            # Error case
             if raise_on_error:
                 raise BacktestSelectionError(f"Selection failed: {result['error']}")
             return result, None
 
-        # Generate trace for the selected codes
-        trace = self._generate_trace(result.codes, formula, timeframe, result.signal_date, backtest_mode)
-
+        trace = self._generate_trace(
+            result.codes,
+            formula,
+            timeframe,
+            result.signal_date,
+            backtest_mode,
+            qfq_data_provider=qfq_data_provider,
+            latest_adj=latest_adj,
+        )
         return result, trace
 
-    def _generate_trace(self, codes: list, formula: str, timeframe: str,
-                        signal_date: datetime.date, backtest_mode: bool) -> SignalTraceData:
-        """为选中的 codes 生成完整的 SignalTraceData。"""
+    def _generate_trace(
+        self,
+        codes: list,
+        formula: str,
+        timeframe: str,
+        signal_date: datetime.date,
+        backtest_mode: bool,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> SignalTraceData:
+        """Generate deterministic trace records for the selected codes."""
         trace = SignalTraceData(
             engine_version="unknown",
             signal_date=signal_date.isoformat(),
@@ -625,26 +655,50 @@ class SelectionEngine:
             traces=[],
         )
 
-        for code in codes:
-            code_trace = self._trace_code(code, formula, timeframe, signal_date, backtest_mode)
+        for code in sorted(set(codes)):
+            code_trace = self._trace_code(
+                code,
+                formula,
+                timeframe,
+                signal_date,
+                backtest_mode,
+                qfq_data_provider=qfq_data_provider,
+                latest_adj=latest_adj,
+            )
             if code_trace:
                 trace.traces.append(code_trace)
 
         return trace
 
-    def _trace_code(self, code: str, formula: str, timeframe: str,
-                    signal_date: datetime.date, backtest_mode: bool) -> CodeTrace:
+    def _trace_code(
+        self,
+        code: str,
+        formula: str,
+        timeframe: str,
+        signal_date: datetime.date,
+        backtest_mode: bool,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> CodeTrace:
         """对单个 code 生成完整的原子级 trace。"""
         # Get the plan tree to extract all atoms
         has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', formula.strip().replace('&&', '&').replace('||', '|')))
 
         if has_mtf:
             plan = blink_parser.parse_multi_tf(formula, 'D')
-            atoms = self._extract_atoms_from_plan(plan, code, signal_date, backtest_mode)
+            atoms = self._extract_atoms_from_plan(
+                plan, code, signal_date, backtest_mode,
+                qfq_data_provider=qfq_data_provider,
+                latest_adj=latest_adj,
+            )
         else:
-            # Single timeframe - parse expression and extract atoms
-            expr = blink_parser.parse_expression(formula, 'D')
-            atoms = self._extract_atoms_from_expr(expr, formula, 'D', code, signal_date, backtest_mode)
+            # Single timeframe - parse expression and extract atoms.
+            expr = blink_parser.parse_expression(formula, timeframe)
+            atoms = self._extract_atoms_from_expr(
+                expr, formula, timeframe, code, signal_date, backtest_mode,
+                qfq_data_provider=qfq_data_provider,
+                latest_adj=latest_adj,
+            )
 
         return CodeTrace(
             code=code,
@@ -653,35 +707,122 @@ class SelectionEngine:
             execution=None,  # Filled later by BacktestEngine
         )
 
-    def _extract_atoms_from_plan(self, plan: dict, code: str,
-                                 signal_date: datetime.date, backtest_mode: bool) -> list:
-        """从 MTF plan tree 提取原子。"""
+    def _extract_atoms_from_plan(
+        self,
+        plan: dict,
+        code: str,
+        signal_date: datetime.date,
+        backtest_mode: bool,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> list:
+        """Extract MTF atom traces without relying on a non-existent helper."""
         atoms = []
         if plan["type"] == "atom":
-            atom_trace = self._trace_atom(plan, code, signal_date, backtest_mode)
-            if atom_trace:
-                atoms.append(atom_trace)
+            source = plan.get("source", "")
+            matches = self.metric_pattern_mtf.findall(source)
+            for func, field, param in matches:
+                atom_id = f"{func.upper()}_{field.upper()}_{param}"
+                atoms.append(
+                    self._trace_single_atom(
+                        atom_id,
+                        field.upper(),
+                        int(param),
+                        code,
+                        signal_date,
+                        backtest_mode,
+                        timeframe=plan.get("tf", "D"),
+                        func=func.upper(),
+                        qfq_data_provider=qfq_data_provider,
+                        latest_adj=latest_adj,
+                    )
+                )
         elif plan["type"] == "bool":
             for child in plan["children"]:
-                atoms.extend(self._extract_atoms_from_plan(child, code, signal_date, backtest_mode))
+                atoms.extend(
+                    self._extract_atoms_from_plan(
+                        child,
+                        code,
+                        signal_date,
+                        backtest_mode,
+                        qfq_data_provider=qfq_data_provider,
+                        latest_adj=latest_adj,
+                    )
+                )
         return atoms
 
-    def _extract_atoms_from_expr(self, expr, formula: str, timeframe: str,
-                                 code: str, signal_date: datetime.date, backtest_mode: bool) -> list:
+    def _extract_atoms_from_expr(
+        self,
+        expr,
+        formula: str,
+        timeframe: str,
+        code: str,
+        signal_date: datetime.date,
+        backtest_mode: bool,
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> list:
         """从单周期表达式提取原子（简化版：直接解析 formula 中的原子）。"""
         # 从 formula 字符串中提取原子信息
         atoms = []
         matches = self.metric_pattern.findall(formula)
         for func, field, param in matches:
             atom_id = f"{func.upper()}_{field.upper()}_{param}"
-            atoms.append(self._trace_single_atom(atom_id, field.upper(), int(param), code, signal_date, backtest_mode))
+            atoms.append(
+                self._trace_single_atom(
+                    atom_id,
+                    field.upper(),
+                    int(param),
+                    code,
+                    signal_date,
+                    backtest_mode,
+                    timeframe=timeframe,
+                    func=func.upper(),
+                    qfq_data_provider=qfq_data_provider,
+                    latest_adj=latest_adj,
+                )
+            )
         return atoms
 
-    def _trace_single_atom(self, atom_id: str, field: str, window: int,
-                           code: str, signal_date: datetime.date, backtest_mode: bool) -> AtomTrace:
-        """Trace 单个原子的评估结果。"""
-        # 获取该 code 在 signal_date 的 as-of frame 数据
-        frame = data_manager.build_asof_frame('D', signal_date)
+    def _trace_single_atom(
+        self,
+        atom_id: str,
+        field: str,
+        window: int,
+        code: str,
+        signal_date: datetime.date,
+        backtest_mode: bool,
+        timeframe: str = "D",
+        func: str = "MA",
+        qfq_data_provider=None,
+        latest_adj: dict = None,
+    ) -> AtomTrace:
+        """Trace one indicator atom using the same data family as selection."""
+        if qfq_data_provider is not None and latest_adj is not None:
+            lookback_days = {"D": 365, "W": 600, "M": 2200}.get(timeframe.upper(), 365)
+            frame = qfq_data_provider.load_qfq_window(
+                signal_date - datetime.timedelta(days=lookback_days),
+                signal_date,
+                latest_adj,
+            )
+            tf_for_frame = timeframe.upper()
+            if tf_for_frame in ("W", "M") and not frame.is_empty():
+                aggs = [
+                    pl.col("open").first(),
+                    pl.col("high").max(),
+                    pl.col("low").min(),
+                    pl.col("close").last(),
+                    pl.col("volume").sum(),
+                    pl.col("amount").sum(),
+                ]
+                every = "1w" if tf_for_frame == "W" else "1mo"
+                frame = (
+                    frame.sort("date")
+                    .group_by_dynamic("date", every=every, by="code")
+                    .agg(aggs)
+                )
+        else:
+            frame = data_manager.build_asof_frame(timeframe, signal_date)
         if frame is None or frame.is_empty():
             return AtomTrace(
                 atom_id=atom_id, field=field, window=str(window),

@@ -1,7 +1,7 @@
 """SignalTraceData: atomic-level formula evaluation trace for BlinkQuant."""
 
 import datetime
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, replace
 from typing import Optional, List, Dict, Any, Union
 from pathlib import Path
 
@@ -149,6 +149,14 @@ class SignalTraceData:
     def save_json(self, path: Union[str, Path]) -> None:
         Path(path).write_text(self.to_json(), encoding="utf-8")
 
+    def for_codes(self, codes: List[str]) -> "SignalTraceData":
+        """Return a deterministic trace containing only the requested codes."""
+        wanted = set(str(code) for code in codes)
+        return replace(
+            self,
+            traces=[trace for trace in self.traces if trace.code in wanted],
+        )
+
     def to_parquet(self) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Convert to (traces_df, atoms_df) for Parquet storage."""
         # traces DataFrame
@@ -166,6 +174,7 @@ class SignalTraceData:
                 "exec_price": exec_info.price if exec_info else None,
                 "exec_side": exec_info.side if exec_info else None,
                 "exec_qty": exec_info.qty if exec_info else None,
+                "exec_fee": exec_info.fee if exec_info else None,
             })
 
             for atom in trace.atoms:
@@ -185,6 +194,7 @@ class SignalTraceData:
             "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
             "formula": pl.Utf8, "execution_date": pl.Date,
             "exec_price": pl.Float64, "exec_side": pl.Utf8, "exec_qty": pl.Int64,
+            "exec_fee": pl.Float64,
         })
         atoms_df = pl.DataFrame(atom_rows) if atom_rows else pl.DataFrame(schema={
             "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
@@ -227,6 +237,7 @@ class SignalTraceData:
                     price=row["exec_price"],
                     side=row["exec_side"],
                     qty=row["exec_qty"],
+                    fee=row["exec_fee"] if "exec_fee" in row else None,
                 )
             trace = CodeTrace(
                 code=row["code"],
@@ -303,6 +314,7 @@ class SignalTraceCollector:
                     "signal_date": pl.Date, "code": pl.Utf8, "passed": pl.Boolean,
                     "formula": pl.Utf8, "execution_date": pl.Date,
                     "exec_price": pl.Float64, "exec_side": pl.Utf8, "exec_qty": pl.Int64,
+                    "exec_fee": pl.Float64,
                 }),
                 pl.DataFrame(schema={
                     "signal_date": pl.Date, "code": pl.Utf8, "atom_id": pl.Utf8,
