@@ -17,6 +17,7 @@ StrategySelector 负责把 StrategyDefinition 转换为单个 as-of 日的策略
 from __future__ import annotations
 
 import datetime as dt
+import copy
 
 import polars as pl
 from dataclasses import dataclass, field
@@ -320,6 +321,11 @@ class StrategySelector:
         cache_key = (repr(strategy.to_dict()), target_date, backtest_mode, trace)
         cached = self._selection_cache.get(cache_key)
         if cached is not None:
+            # SignalTrace is enriched later with execution outcomes. Never hand
+            # the mutable cached instance to BacktestEngine, or one run can
+            # contaminate a later same-date trace lookup.
+            if trace and cached.signal_trace is not None:
+                return copy.deepcopy(cached)
             return cached
 
         df = data_manager.df_daily
@@ -385,7 +391,10 @@ class StrategySelector:
         )
         if len(self._selection_cache) >= self._selection_cache_max:
             self._selection_cache.pop(next(iter(self._selection_cache)))
-        self._selection_cache[cache_key] = result
+        if trace and result.signal_trace is not None:
+            self._selection_cache[cache_key] = copy.deepcopy(result)
+        else:
+            self._selection_cache[cache_key] = result
         return result
 
 
