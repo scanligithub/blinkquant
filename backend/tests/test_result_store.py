@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 from backend.scheduler.result_store import (
-    build_result_summary, persist, load_part, load_as_legacy_json,
+    build_result_summary, persist, load_part, load_as_legacy_json, load_signal_trace,
 )
 
 
@@ -112,3 +112,39 @@ def test_load_part_unknown_name():
             assert False, "Should raise ValueError"
         except ValueError:
             pass
+
+
+def test_persist_signal_trace_roundtrip():
+    data = _make_sample_data()
+    data["signal_trace"] = {
+        "schema_version": "1.0.0",
+        "traces": {
+            "2024-01-03": {
+                "signal_date": "2024-01-03",
+                "formula": "CLOSE > 10",
+                "traces": [
+                    {
+                        "code": "AAA",
+                        "passed": True,
+                        "triggered": True,
+                        "targeted": True,
+                        "target_weight": 1.0,
+                        "selection_reason": "TARGET_SELECTED",
+                        "atoms": [],
+                        "execution": None,
+                        "executions": [],
+                    }
+                ],
+                "decisions": [],
+            }
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _, uri, _ = persist(9, data, tmpdir, user_id="trace-user")
+        trace = load_signal_trace(uri, tmpdir)
+        assert trace is not None
+        assert trace["schema_version"] == "1.0.0"
+        assert trace["traces"]["2024-01-03"]["traces"][0]["code"] == "AAA"
+
+        legacy = load_as_legacy_json(uri, tmpdir)
+        assert legacy["signal_trace"] == trace
