@@ -407,7 +407,8 @@ export default function SelectionWorkspace() {
             selectedCode={selectedStock?.code}
             stockList={stockList}
             onViewStock={handleViewStock}
-            onRemoveWatchlist={toggleWatchlist}\n            onWatchlistChanged={refreshWatchlist}
+            onRemoveWatchlist={toggleWatchlist}
+            onWatchlistChanged={refreshWatchlist}
             formula={formula}
             backtestLoading={backtestLoading}
             backtestResult={backtestResult}
