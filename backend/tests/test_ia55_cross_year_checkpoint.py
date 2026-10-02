@@ -160,6 +160,7 @@ def test_target_portfolio_checkpoint_resume_across_year_boundary():
             def save_after_dec31(progress):
                 if (
                     progress["stage"] == "running"
+                    and progress["done_days"] == 1
                     and progress["current_date"] == DATES[0].isoformat()
                     and not seen["saved"]
                 ):
