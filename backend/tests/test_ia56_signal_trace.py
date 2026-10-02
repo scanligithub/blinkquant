@@ -621,6 +621,7 @@ def test_selection_trace_records_downstream_trigger_and_target_provenance():
         })
         data_manager.df_weekly = None
         data_manager.df_monthly = None
+        data_manager._asof_frame_cache.clear()
 
         selector = StrategySelector(selection_engine=SelectionEngine())
         strategy = StrategyDefinition.from_dict({
