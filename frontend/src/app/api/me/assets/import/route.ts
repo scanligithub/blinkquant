@@ -103,7 +103,9 @@ async function postJson(req: NextRequest, path: string, payload: unknown) {
 
 async function postArtifact(req: NextRequest, filename: string, bytes: Uint8Array) {
   const form = new FormData();
-  form.set('file', new Blob([bytes], { type: 'application/zip' }), filename);
+  const blobBytes = new Uint8Array(bytes.byteLength);
+  blobBytes.set(bytes);
+  form.set('file', new Blob([blobBytes.buffer], { type: 'application/zip' }), filename);
   const cookie = req.headers.get('cookie') || '';
   const response = await fetch(new URL('/api/artifacts/import', req.nextUrl.origin), {
     method: 'POST',
