@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
 import type { Task } from '@/hooks/useCluster';
 import { downloadArtifact } from '@/lib/backtestArtifacts';
+import SignalTracePanel from '@/components/artifacts/SignalTracePanel';
 
 const STATUS_LABELS: Record<string, string> = {
   done: '完成', failed: '失败', cancelled: '已取消', preempted: '被抢占',
@@ -292,6 +293,8 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                       <button type="button" onClick={() => void extractSelectionStrategy()} className="px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">提取为选股策略</button>
                     </div>
                   </section>
+
+                  <SignalTracePanel artifactId={task.id} />
 
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <h2 className="font-bold text-slate-800">Artifact 数据</h2>
