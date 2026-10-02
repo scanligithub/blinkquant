@@ -173,6 +173,7 @@ export default function SelectionResultsSidebar(props: SelectionResultsSidebarPr
                 </div>
               ) : (
               <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+                {results.length > 0 && <BulkWatchlistBar codes={results} onChanged={onWatchlistChanged} />}
                 {results.map(code => {
                   const name = stockList.find(s => s.code === code)?.name || code;
                   return (
