@@ -82,7 +82,11 @@ This enables answering: *"Why did this stock get traded on this date?"* with ful
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | code | string | ✅ | Stock code |
-| passed | bool | ✅ | Overall formula result |
+| passed | bool | ✅ | Overall formula result; formula-level only |
+| triggered | bool | ✅ | Whether the configured Entry trigger fired |
+| targeted | bool | ✅ | Whether the code entered the final target portfolio |
+| target_weight | float/null | ✅ | Target weight when targeted; otherwise null |
+| selection_reason | string | ✅ | FORMULA_REJECTED / TRIGGER_NOT_FIRED / TOP_N_EXCLUDED / TARGET_SELECTED |
 | atoms | array | ✅ | Per-atom evaluation records |
 | execution | object | ❌ | Filled after execution phase |
 
@@ -127,8 +131,12 @@ signal_trace/
 |--------|------|-------------|
 | signal_date | Date | Signal date |
 | code | Utf8 | Stock code |
-| passed | Boolean | Overall formula result |
+| passed | Boolean | Overall formula result; formula-level only |
 | formula | Utf8 | Formula string |
+| triggered | Boolean | Entry trigger fired for this candidate |
+| targeted | Boolean | Candidate entered final target portfolio |
+| target_weight | Float64 | Target weight when targeted; null otherwise |
+| selection_reason | Utf8 | Downstream selection outcome |
 | execution_date | Date | T+1 execution date (null if not executed) |
 | exec_price | Float64 | Fill price (null if not executed) |
 | exec_side | Utf8 | "BUY"/"SELL" (null if not executed) |
@@ -172,6 +180,27 @@ Ranking, Top-N allocation, and event-trigger post-filtering are downstream selec
 semantics. They do not redefine `CodeTrace.passed`. The candidate universe is resolved
 as-of the signal date and must not include future universe membership.
 
+
+## IA5.6.3 Selection / Allocation Provenance
+
+For each traced PIT candidate, downstream strategy selection is recorded separately from formula evaluation:
+
+- `passed` remains the formula-level result and is never changed by trigger or allocation.
+- `triggered` indicates whether the configured Entry trigger fired for that traced candidate.
+- `targeted` indicates whether the candidate entered the final target portfolio produced by the sizing allocator.
+- `target_weight` records the resulting target weight when `targeted=true`; otherwise it is null.
+- `selection_reason` is one of `FORMULA_REJECTED`, `TRIGGER_NOT_FIRED`, `TOP_N_EXCLUDED`, or `TARGET_SELECTED`.
+
+This makes a complete explanation possible without conflating formula truth with downstream trigger or Top-N allocation semantics.
+
+```
+# Candidate formula false -> FORMULA_REJECTED
+# Formula true + cross condition not fired -> TRIGGER_NOT_FIRED
+# Formula true + trigger fired but outside Top-N -> TOP_N_EXCLUDED
+# Formula true + trigger fired + allocated -> TARGET_SELECTED
+```
+
+The fields are additive and older artifacts without them remain readable with their default values.
 ## Generation Rules
 
 1. **During Selection**: Each PIT candidate code's formula evaluation produces a trace entry

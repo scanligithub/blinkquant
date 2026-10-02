@@ -372,6 +372,25 @@ class StrategySelector:
             target_weights = allocator(entry_codes, effective_date)
         target_codes = sorted(target_weights)
 
+        # IA5.6.3: keep formula-level passed immutable and annotate the
+        # downstream signal/allocation outcome for every traced candidate.
+        if entry_trace is not None:
+            triggered_codes = set(entry_codes)
+            targeted_codes = set(target_weights)
+            for code_trace in entry_trace.traces:
+                code = code_trace.code
+                code_trace.triggered = code in triggered_codes
+                code_trace.targeted = code in targeted_codes
+                code_trace.target_weight = target_weights.get(code)
+                if not code_trace.passed:
+                    code_trace.selection_reason = "FORMULA_REJECTED"
+                elif not code_trace.triggered:
+                    code_trace.selection_reason = "TRIGGER_NOT_FIRED"
+                elif not code_trace.targeted:
+                    code_trace.selection_reason = "TOP_N_EXCLUDED"
+                else:
+                    code_trace.selection_reason = "TARGET_SELECTED"
+
         result = StrategySelectionResult(
             requested_date=target_date,
             signal_date=effective_date,
