@@ -272,7 +272,9 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     const strategy: BacktestParams['strategy'] = {
       universe: universeType === 'index'
         ? { type: 'index', index_id: indexId.trim() || '000300' }
-        : { type: 'all_a' },
+        : universeType === 'watchlist'
+          ? { type: 'watchlist', watchlist_id: Number(watchlistId) }
+          : { type: 'all_a' },
       entry: { condition: entryCondition, trigger: entryTrigger, timeframe: entryTimeframe },
       sizing: sizingMethod === 'equal_weight'
         ? { method: 'equal_weight' }
