@@ -1,3 +1,4 @@
+import ast
 import polars as pl
 import re
 import logging
@@ -671,42 +672,15 @@ class SelectionEngine:
         return trace
 
     def _trace_code(
-        self,
-        code: str,
-        formula: str,
-        timeframe: str,
-        signal_date: datetime.date,
-        backtest_mode: bool,
-        qfq_data_provider=None,
-        latest_adj: dict = None,
+        self, code: str, formula: str, timeframe: str, signal_date: datetime.date,
+        backtest_mode: bool, qfq_data_provider=None, latest_adj: dict = None,
     ) -> CodeTrace:
-        """对单个 code 生成完整的原子级 trace。"""
-        # Get the plan tree to extract all atoms
-        has_mtf = bool(re.search(r'\b[WM]\.\s*([A-Z_]+|[A-Z_]+\s*\()', formula.strip().replace('&&', '&').replace('||', '|')))
-
-        if has_mtf:
-            plan = blink_parser.parse_multi_tf(formula, 'D')
-            atoms = self._extract_atoms_from_plan(
-                plan, code, signal_date, backtest_mode,
-                qfq_data_provider=qfq_data_provider,
-                latest_adj=latest_adj,
-            )
-        else:
-            # Single timeframe - parse expression and extract atoms.
-            expr = blink_parser.parse_expression(formula, timeframe)
-            atoms = self._extract_atoms_from_expr(
-                expr, formula, timeframe, code, signal_date, backtest_mode,
-                qfq_data_provider=qfq_data_provider,
-                latest_adj=latest_adj,
-            )
-
-        return CodeTrace(
-            code=code,
-            passed=True,  # Selected codes are by definition passed
-            atoms=atoms,
-            execution=None,  # Filled later by BacktestEngine
+        """对单个 code 生成实际比较级 SignalTrace。"""
+        atoms = self._extract_comparison_atoms(
+            code, formula, timeframe, signal_date,
+            qfq_data_provider=qfq_data_provider, latest_adj=latest_adj,
         )
-
+        return CodeTrace(code=code, passed=True, atoms=atoms, execution=None)
     def _extract_atoms_from_plan(
         self,
         plan: dict,
