@@ -722,6 +722,7 @@ class SelectionEngine:
         )
         return CodeTrace(code=code, passed=passed, atoms=atoms, execution=None)
 
+    @staticmethod
     def _comparison_nodes(node) -> list:
         """Flatten comparison leaves while preserving deterministic AST order."""
         if isinstance(node, ast.Compare):
