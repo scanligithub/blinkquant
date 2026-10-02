@@ -752,6 +752,32 @@ class ClusterScheduler:
                     await self._fail_backtest(task_id, error, generation)
                     return
 
+            # IA5.6.4: SignalTrace is optional. When enabled on the compute
+            # node, persist the immutable JSON artifact alongside the Parquet
+            # result files. Trace-off backtests remain byte-for-byte compatible
+            # with the required three-part persistence contract.
+            if "signal_trace" in advertised:
+                try:
+                    if not node_id or not job_id:
+                        raise RuntimeError(f"missing node/job mapping (node_id={node_id!r}, job_id={job_id!r})")
+                    trace_raw = await fetch_backtest_artifact(node_id, job_id, "signal_trace")
+                    if not trace_raw:
+                        raise RuntimeError("compute node returned an empty signal_trace response")
+                    trace_payload = json.loads(trace_raw.decode("utf-8"))
+                    if not isinstance(trace_payload, dict):
+                        raise ValueError("signal_trace artifact must be a JSON object")
+                    with open(os.path.join(task_dir, "signal_trace.json"), "w", encoding="utf-8") as f:
+                        json.dump(trace_payload, f, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    log.info("SignalTrace persisted task=%s node=%s job=%s bytes=%s dates=%s",
+                             task_id, node_id, job_id, len(trace_raw),
+                             len((trace_payload.get("traces") or {})))
+                except Exception as exc:
+                    log.exception("signal_trace download/persist failed task=%s node=%s job=%s",
+                                  task_id, node_id, job_id)
+                    error = f"artifact persistence incomplete: signal_trace: {type(exc).__name__}: {exc}"
+                    await self._fail_backtest(task_id, error, generation)
+                    return
+
             nbytes = dir_size(task_dir)
         else:
             legacy_data = {
