@@ -46,6 +46,8 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const pageSize = 20;
   const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number; filteredTotal: number; selectionTotal: number; backtestTotal: number }>({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
 
@@ -54,6 +56,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     try {
       const query = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) });
       if (kind !== 'all') query.set('artifact_type', kind);
+      if (search) query.set('q', search);
       const res = await fetch('/api/artifacts?' + query.toString(), { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加载成果失败');
@@ -74,7 +77,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     } finally {
       setLoading(false);
     }
-  }, [kind, page, pageSize]);
+  }, [kind, page, pageSize, search]);
 
   useEffect(() => {
     let mounted = true;
@@ -102,6 +105,10 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     const timer = window.setInterval(() => void load(), 5000);
     return () => window.clearInterval(timer);
   }, [user, load]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [kind, search]);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(storage.filteredTotal / pageSize) - 1);
@@ -169,6 +176,23 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
             </div>
             <div className="mt-2 text-xs text-slate-400">{storage.total} 个成果；已删除的成果不占用成果库容量。</div>
           </div>
+
+          <section className="bg-white rounded-2xl border border-slate-200 p-4">
+            <form
+              onSubmit={(e) => { e.preventDefault(); setPage(0); setSearch(searchInput.trim()); }}
+              className="flex flex-col sm:flex-row gap-2"
+            >
+              <input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="搜索成果名称、公式或来源策略…"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400"
+              />
+              <button type="submit" className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">搜索</button>
+              {search && <button type="button" onClick={() => { setSearchInput(''); setSearch(''); setPage(0); }} className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-600">清除</button>}
+            </form>
+            {search && <div className="mt-2 text-xs text-slate-400">当前搜索：{search} · 统计卡片仍显示用户全部成果数量。</div>}
+          </section>
 
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-2">
