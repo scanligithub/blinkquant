@@ -30,7 +30,14 @@ test('IA5.10 business assets route through Node1, not Vercel Postgres', () => {
   }
 });
 
-test('legacy selection-version helper no longer writes business data to Neon', () => {\n  const helper = read('frontend/src/lib/strategy-versions.ts');\n  assert.doesNotMatch(helper, /@\\/lib\\/db/);\n  assert.match(helper, /Node1 SQLite/);\n  assert.match(helper, /Promise\.resolve/);\n});\n\ntest('IA5.10 Node1 SQLite schema contains selection strategies and watchlists', () => {
+test('legacy selection-version helper no longer writes business data to Neon', () => {
+  const helper = read('frontend/src/lib/strategy-versions.ts');
+  assert.doesNotMatch(helper, /@\\/lib\\/db/);
+  assert.match(helper, /Node1 SQLite/);
+  assert.match(helper, /Promise\.resolve/);
+});
+
+test('IA5.10 Node1 SQLite schema contains selection strategies and watchlists', () => {
   const schema = read('backend/scheduler/schema.sql');
   for (const table of ['strategies', 'strategy_versions', 'watchlists', 'watchlist_items']) {
     assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`), table);

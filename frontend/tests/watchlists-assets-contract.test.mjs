@@ -18,7 +18,7 @@ test('watchlist export: Vercel authenticates and forwards the request to Node1',
 
 test('watchlist import: Vercel authenticates and Node1 owns validation/persistence', () => {
   const source = read('frontend/src/app/api/watchlists/import/route.ts');
-  const node1 = read('../backend/scheduler/user_assets.py');
+  const node1 = read('backend/scheduler/user_assets.py');
   assert.match(source, /requireAuth\(req\)/);
   assert.match(source, /node1Json/);
   assert.match(source, /user_id: auth\.user\.userId/);
@@ -36,7 +36,7 @@ test('watchlist import: Vercel authenticates and Node1 owns validation/persisten
 
 test('watchlist import remains compatible with versioned JSON payloads and current user ownership', () => {
   const source = read('frontend/src/app/api/watchlists/import/route.ts');
-  const node1 = read('../backend/scheduler/user_assets.py');
+  const node1 = read('backend/scheduler/user_assets.py');
   assert.match(source, /body\.watchlists/);
   assert.match(node1, /uid=require_user_id\(body\.get\("user_id"\)\)|uid = require_user_id\(body\.get\("user_id"\)\)/);
   assert.match(node1, /return \{"imported":imported,"skipped":skipped\}|return \{"imported": imported, "skipped": skipped\}/);
