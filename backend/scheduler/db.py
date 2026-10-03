@@ -201,6 +201,12 @@ async def _migrate() -> None:
     cursor = await _pool.execute("PRAGMA table_info(task_queue)")
     existing = {row[1] for row in await cursor.fetchall()}
 
+    # Legacy scheduler.db versions may predate the generation column. It is
+    # required by the scheduler index, so add it before recreating task_queue
+    # indexes below.
+    if "generation" not in existing:
+        await _pool.execute("ALTER TABLE task_queue ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
+
     if "result_summary" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN result_summary TEXT")
     if "result_uri" not in existing:
@@ -246,6 +252,25 @@ async def _migrate() -> None:
 
     if "source_task_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN source_task_id INTEGER")
+
+    # Recreate scheduler task indexes only after all legacy-sensitive columns
+    # have been ensured.
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tq_status_priority "
+        "ON task_queue (status, priority DESC, created_at)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tq_user_status "
+        "ON task_queue (user_id, status)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tq_assigned_status "
+        "ON task_queue (assigned_node, status)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tq_generation "
+        "ON task_queue (generation)"
+    )
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_tq_source_task ON task_queue (source_task_id)")
     # Backfill the independent Artifact registry for completed historical tasks.
     cursor = await _pool.execute("""

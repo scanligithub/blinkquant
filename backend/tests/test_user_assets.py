@@ -148,6 +148,7 @@ def test_legacy_schema_indexes_do_not_block_migration(tmp_path, monkeypatch):
             task_cols = {row["name"] for row in await db.fetch("PRAGMA table_info(task_queue)")}
             artifact_cols = {row["name"] for row in await db.fetch("PRAGMA table_info(artifacts)")}
             assert "source_task_id" in task_cols
+            assert "generation" in task_cols
             assert "updated_at" in artifact_cols
 
             index_names = {row["name"] for row in await db.fetch("PRAGMA index_list(artifacts)")}

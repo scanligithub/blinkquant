@@ -48,10 +48,8 @@ CREATE TABLE IF NOT EXISTS task_queue (
     progress_pct    REAL,
     progress_json   TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_tq_status_priority ON task_queue (status, priority DESC, created_at);
-CREATE INDEX IF NOT EXISTS idx_tq_user_status ON task_queue (user_id, status);
-CREATE INDEX IF NOT EXISTS idx_tq_assigned_status ON task_queue (assigned_node, status);
-CREATE INDEX IF NOT EXISTS idx_tq_generation ON task_queue (generation);
+-- task_queue indexes are created after additive migration so legacy DBs may
+-- safely omit newer indexed columns such as generation.
 
 CREATE TABLE IF NOT EXISTS artifacts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
