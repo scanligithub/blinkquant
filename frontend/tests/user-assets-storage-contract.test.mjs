@@ -32,7 +32,7 @@ test('IA5.10 business assets route through Node1, not Vercel Postgres', () => {
 
 test('legacy selection-version helper no longer writes business data to Neon', () => {
   const helper = read('frontend/src/lib/strategy-versions.ts');
-  assert.doesNotMatch(helper, /@\\/lib\\/db/);
+  assert.doesNotMatch(helper, /@\/lib\/db/);
   assert.match(helper, /Node1 SQLite/);
   assert.match(helper, /Promise\.resolve/);
 });
