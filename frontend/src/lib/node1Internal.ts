@@ -4,13 +4,18 @@ const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'internal-secret-change-me'
 export function node1Path(path: string, params?: Record<string, string | number | undefined | null>) {
   const url = new URL('/internal' + path, NODE1_URL);
   for (const [key, value] of Object.entries(params || {})) {
-    if (value !== undefined && value !== null && String(value) !== '') url.searchParams.set(key, String(value));
+    if (value !== undefined && value !== null && String(value) !== '') {
+      url.searchParams.set(key, String(value));
+    }
   }
   return url.toString();
 }
 
-export async function node1Fetch(path: string, init: RequestInit = {}) {
-  return fetch(NODE1_URL + '/internal' + path, {
+export async function node1Fetch(pathOrUrl: string, init: RequestInit = {}) {
+  const url = /^https?:\/\//i.test(pathOrUrl)
+    ? pathOrUrl
+    : NODE1_URL + '/internal' + pathOrUrl;
+  return fetch(url, {
     ...init,
     headers: {
       ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
@@ -21,8 +26,8 @@ export async function node1Fetch(path: string, init: RequestInit = {}) {
   });
 }
 
-export async function node1Json(path: string, init: RequestInit = {}) {
-  const response = await node1Fetch(path, init);
+export async function node1Json(pathOrUrl: string, init: RequestInit = {}) {
+  const response = await node1Fetch(pathOrUrl, init);
   const data = await response.json().catch(() => ({}));
   return { response, data };
 }
