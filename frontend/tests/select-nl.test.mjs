@@ -1338,18 +1338,67 @@ test('buildAnalyzePrompt: 包含字段/单位/指标与周期', () => {
 });
 
 // 守卫测试：测试内嵌实现副本与 src/lib/selectNL.ts 保持一致（防漂移）
-test('guard: 测试副本与 selectNL.ts 新增函数一致', () => {
+// 只有已确认“复制版应与生产纯函数同构”的函数纳入精确比对；
+// validateFormula / parseSelectNLText / buildAnalyzePrompt 等历史副本目前存在有意差异，不在此守卫范围。
+function extractFunctionBody(source, name) {
+  const re = new RegExp('(?:export\\s+)?function\\s+' + name + '\\s*\\(');
+  const match = re.exec(source);
+  assert.ok(match, '缺少函数 ' + name);
+  const open = source.indexOf('{', match.index);
+  assert.notEqual(open, -1, '函数 ' + name + ' 缺少 body');
+
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new Error('函数 ' + name + ' body 未闭合');
+}
+
+function normalizeFunctionBody(body) {
+  return body
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|\s)\/\/.*$/gm, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+test('guard: selectNL 稳定纯函数复制版与源码函数体一致', () => {
   const src = readFileSync(join(__dirname, '..', 'src', 'lib', 'selectNL.ts'), 'utf8');
-  assert.match(src, /export function parseSelectNLAnalysis/);
-  assert.match(src, /export function buildAnalyzePrompt/);
-  assert.match(src, /export function findMagnitudeMismatch/);
-  assert.match(src, /export function buildHardConstraintSuffix/);
-  assert.match(src, /export function buildTranslateUserMessage/);
-  assert.match(src, /export function buildRepairSystemSuffix/);
-  assert.match(src, /export function buildRepairUserMessage/);
-  assert.match(src, /export function trySafeBollRefRewrite/);
-  assert.match(src, /export function trySafeNumericCrossRewrite/);
-  assert.match(src, /export function trySafeLimitUpDownRewrite/);
+  const copy = readFileSync(join(__dirname, 'select-nl.test.mjs'), 'utf8');
+  const guarded = [
+    'buildTranslateUserMessage',
+    'buildRepairSystemSuffix',
+    'buildRepairUserMessage',
+    'trySafeBollRefRewrite',
+    'trySafeNumericCrossRewrite',
+  ];
+
+  for (const name of guarded) {
+    assert.match(src, new RegExp('export\\s+function\\s+' + name + '\\s*\\('));
+    assert.match(copy, new RegExp('(?:export\\s+)?function\\s+' + name + '\\s*\\('));
+    assert.equal(
+      normalizeFunctionBody(extractFunctionBody(src, name)),
+      normalizeFunctionBody(extractFunctionBody(copy, name)),
+      '函数 ' + name + ' 的测试复制版已漂移',
+    );
+  }
 });
 
 // ---- 注册表全覆盖：生成器与覆盖矩阵（import scripts/nl-coverage.mjs，纯 .mjs 无需复制）----
