@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, File, UploadFile
 from pydantic import BaseModel
 from typing import Optional, List
 import json
+import logging
 import math
 import os
 
@@ -13,6 +14,7 @@ from .scheduler import ClusterScheduler
 from .models import TaskRow
 
 router = APIRouter(prefix="/internal", tags=["internal"])
+log = logging.getLogger("scheduler.routes")
 
 # 列表查询：禁止 SELECT *，不读 result 大字段
 LIST_COLS = (
@@ -696,6 +698,14 @@ async def import_artifact_bundle(
         raise
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         raise HTTPException(400, f"Invalid artifact bundle: {exc}") from exc
+    except Exception as exc:
+        log.exception(
+            "artifact import failed user_id=%s temp_dir=%s final_dir=%s",
+            user_id,
+            temp_dir,
+            final_dir,
+        )
+        raise HTTPException(500, "Artifact import failed") from exc
     finally:
         try:
             await file.close()
