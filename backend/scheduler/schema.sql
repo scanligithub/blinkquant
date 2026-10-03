@@ -143,7 +143,6 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
     UNIQUE(strategy_id, version_no),
     FOREIGN KEY(strategy_id) REFERENCES strategies(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_strategy_versions_strategy ON strategy_versions (strategy_id, version_no DESC);
 
 CREATE TABLE IF NOT EXISTS watchlists (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,8 +153,6 @@ CREATE TABLE IF NOT EXISTS watchlists (
     updated_at      TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id, name)
 );
-CREATE INDEX IF NOT EXISTS idx_watchlists_user ON watchlists (user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlists_one_default ON watchlists (user_id) WHERE is_default = 1;
 
 CREATE TABLE IF NOT EXISTS watchlist_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,8 +162,6 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
     UNIQUE(watchlist_id, code),
     FOREIGN KEY(watchlist_id) REFERENCES watchlists(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_watchlist_items_list ON watchlist_items (watchlist_id);
-CREATE INDEX IF NOT EXISTS idx_watchlist_items_code ON watchlist_items (code);
 
 INSERT OR IGNORE INTO cluster_nodes (node_id, name, endpoint, weight) VALUES
 ('node1', 'Node 1', 'https://scanli-blinkquant-node1.hf.space', 1),

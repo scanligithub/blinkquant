@@ -25,10 +25,7 @@ def test_user_asset_schema_migrates_legacy_columns(tmp_path, monkeypatch):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                formula TEXT NOT NULL,
-                timeframe TEXT NOT NULL DEFAULT 'D',
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
+                formula TEXT NOT NULL
             );
             CREATE TABLE strategy_versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,17 +33,12 @@ def test_user_asset_schema_migrates_legacy_columns(tmp_path, monkeypatch):
                 version_no INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 formula TEXT NOT NULL,
-                timeframe TEXT NOT NULL DEFAULT 'D',
-                created_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(strategy_id, version_no)
             );
             CREATE TABLE watchlists (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                is_default INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(user_id, name)
             );
             CREATE TABLE watchlist_items (
@@ -160,6 +152,10 @@ def test_legacy_schema_indexes_do_not_block_migration(tmp_path, monkeypatch):
 
             index_names = {row["name"] for row in await db.fetch("PRAGMA index_list(artifacts)")}
             assert "idx_artifacts_user_updated" in index_names
+            watchlist_index_names = {row["name"] for row in await db.fetch("PRAGMA index_list(watchlists)")}
+            assert "idx_watchlists_one_default" in watchlist_index_names
+            strategy_index_names = {row["name"] for row in await db.fetch("PRAGMA index_list(strategies)")}
+            assert "idx_strategies_user_updated" in strategy_index_names
         finally:
             await db.close_pool()
 
