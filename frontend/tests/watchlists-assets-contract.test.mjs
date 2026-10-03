@@ -11,7 +11,9 @@ const read = (p) => fs.readFileSync(path.join(repoRoot, p), 'utf8');
 test('watchlist export: uses a versioned asset format and scopes data to the authenticated user', () => {
   const source = read('frontend/src/app/api/watchlists/export/route.ts');
   assert.match(source, /requireAuth\(req\)/);
-  assert.match(source, /node1Json/);\n  assert.match(source, /user_id: auth\.user\.userId/);\n  assert.match(source, /\/user-assets\/watchlists\/export/);
+  assert.match(source, /node1Json/);
+assert.match(source, /user_id: auth\.user\.userId/);
+assert.match(source, /\/user-assets\/watchlists\/export/);
   assert.match(source, /format: 'blinkquant-watchlists-v1'/);
   assert.match(source, /watchlists:/);
   assert.doesNotMatch(source, /user_id:/);
@@ -35,7 +37,8 @@ test('watchlist import: validates ownership, names, limits and ignores imported 
 
 test('watchlist import is compatible with simple versioned JSON payloads and reports skipped duplicates/invalid lists', () => {
   const source = read('frontend/src/app/api/watchlists/import/route.ts');
-  assert.match(source, /body\.watchlists/);\n  assert.match(source, /\/user-assets\/watchlists\/import/);
+  assert.match(source, /body\.watchlists/);
+assert.match(source, /\/user-assets\/watchlists\/import/);
   assert.match(source, /skipped\.push\(name\)/);
   assert.match(source, /return NextResponse\.json\(\{\s*imported,\s*skipped/);
 });
