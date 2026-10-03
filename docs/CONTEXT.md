@@ -1,14 +1,14 @@
 # BlinkQuant 会话交接说明
 
 > 用途：跨会话保持连续性。新会话开始前先读本文件 + `docs/v2.0-data-migration-plan.md` + `docs/Parquet文件规格说明书.txt`。
-> 最后更新：v2.1 用户管理功能开发完成（代码已实现，数据库初始化与部署待执行），main @ `b38402e` 前的用户管理改动尚未合并。
+> 最后更新：v2.3 Final Review 收尾阶段，main @ `5b76d4c`；IA5.10 及 v2.3 安全/一致性修复已完成并通过 CI/生产回归。
 
 ## 1. 项目架构（现状）
 
 - **数据源**：HF Dataset `scanli/stocka-data`，v2.0 起为**年份分片** Parquet 文件：`stock_kline_{YYYY}.parquet`、`stock_basic.parquet`、`adjust_factor.parquet`、`sector_list.parquet`、`sector_constituents_{YYYY}.parquet`、`index_kline_{YYYY}.parquet`、`money_flow_{YYYY}.parquet`、`fundamental_{YYYY}.parquet`、`kline_extend_{YYYY}.parquet`。
 - **后端**：FastAPI + Polars，部署在 3 个 HF Space（`scanli-blinkquant-node1/2/3.hf.space`），**每节点 16GB RAM，总节点数 `total_nodes=3`**。
 - **前端**：Next.js 14，部署在 Vercel（Vercel 负责构建，本地无 node_modules）。
-- **CI/CD**：`.github/workflows/deploy_backend.yml` 仅 push 到 `main` 且路径含 `backend/**` 时触发，推 3 个 Space；前端无 CI 文件。
+- **CI/CD**：后端 `Deploy Backend to HF Spaces` 在 `backend/**` 变更时推 3 个 Space；前端有独立 Frontend CI；生产 E2E、Golden Regression、P4.1、P4.3 等验收工作流持续覆盖主线。
 
 ## 2. v2.0 已完成的改造（不要重复做）
 
@@ -31,7 +31,7 @@
 
 ## 4. Git 状态
 
-- main @ `b38402e`（merge PR #1），工作树干净，tag `v1.0` / `v2.0` 已推远端。
+- main @ `5b76d4c`（当前 v2.3 Final Review 收尾版本），最近一次后端修复已完成全部核心 CI 与生产 E2E；工作树由 GitHub 主线管理。
 - `feature/v2-data-migration` 分支已删（本地+远端）。
 
 ## 5. 环境注意事项
@@ -43,7 +43,7 @@
 ## 6. 用户管理功能 (v2.1，新增)
 
 ### 架构要点
-- **认证归属前端**：所有用户数据存 Vercel Postgres（`@vercel/postgres`，env `POSTGRES_URL`），后端 3 节点零改动。
+- **认证归属前端**：认证/用户身份数据保留在 Vercel Postgres；Neon 免费配额约束下，选股策略、策略版本、自选股、自选股成员、任务/成果等业务资产统一落到 Node1 SQLite。
 - **会话**：JWT HS256 存 HttpOnly Cookie `__auth_token`（7 天）。`AUTH_SECRET` 为密钥，生产必须配置（缺失则启动抛错）。
 - **密码**：bcryptjs (cost 10)。登录统一返回「邮箱或密码错误」防枚举。
 - **管理员引导**：`AUTH_ADMIN_EMAIL`/`AUTH_ADMIN_PASSWORD` 环境变量，首次调用登录接口时幂等创建 admin。
@@ -63,12 +63,8 @@
 | `frontend/scripts/init_db.sql` | 建表 SQL（users/watchlist/strategies） |
 | `frontend/tests/auth.test.mjs` | 11 个 node --test 单测 |
 
-### 待完成（部署步骤）
-1. Vercel 环境变量新增：`AUTH_SECRET`、`AUTH_ADMIN_EMAIL`、`AUTH_ADMIN_PASSWORD`（`POSTGRES_URL` 已有）。
-2. 在 Vercel Postgres 控制台或 psql 执行一次 `frontend/scripts/init_db.sql`。
-3. 推送 main 触发前端部署（后端无需重新部署）。
-4. 手动验收：注册→登录→选股→加自选→保存策略→登出→禁用账号登录被拒→admin 管理。
-5. （可选）`AUTH_INVITE_CODE`：邀请码列表，逗号分隔。配置后注册必须提交匹配邀请码；留空则不要求。
+### 当前状态
+用户认证链路与管理员功能属于既有生产能力；IA5.10 后，除认证数据外的用户业务资产不再依赖 Neon/Postgres，而统一由 Node1 SQLite 持久化。
 
 ### 注意事项
 - 现有 `select`/`kline`/`search`/`stock-list` 前端 API 已加登录守卫；`status` 与后端 `/api/v1/health` 保持公开。
@@ -129,8 +125,21 @@
 - 新增指标：注册表 `INDICATORS` 加一项 → security / data_manager / engine / nl-meta 自动派生，无需改动其他文件。
 - 新增字段：需**同步**注册表 `FIELDS` 与 `security.py` 的 `fields` 键集、`/api/v1/kline` 的 `target_cols`（`test_fields_match_registry` 锁一致性防 drift）。
 
-### 后续工作（final review 记录，v2.3 交付时跳过未实施）
-- **软白名单**：`security.py` `_visit(ast.Name)` 对未列入 `FIELDS` 的裸名称会 fallthrough 到 `pl.col(name.lower())`（如 `main_net` 可查询）。函数参数位有 `_require_whitelist_field` 强校验，但裸字段位无。LLM 路径安全（前端拒绝 `_net`），仅手动公式框与无认证直接访问后端时可触达。后续可选：收紧裸名称白名单或文档化内部列可查询。
-- **前端测试测复制版**：`select-nl.test.mjs` 复制实现而非导入真实 `selectNL.ts`（仓库既有惯例）。防 drift 可加 ~20 行守卫测试：读 TS 源码断言各函数体出现在测试复制版中。
-- **运算符接受集**：前端 `validateFormula` 放行 `= != % ** ^ &&` 而后端拒绝（400 报错信息较模糊）。可前端拒绝或扩展后端 operators 映射。
+### v2.3 Final Review 当前结论
 
+以下三项原 final-review 风险已完成修复，并在 main @ `5b76d4c` 上闭环验证：
+- **裸字段软白名单**：`security.py` 现对未知裸字段 fail-closed，仅允许注册表字段或明确存在的 Hot-JIT 挂载列；`NOPE`、`main_net` 等未知裸字段均有回归测试。
+- **前端测试复制版 drift**：`frontend/tests/select-nl.test.mjs` 已增加对关键纯函数实现体的规范化一致性守卫，防止测试副本与 `selectNL.ts` 长期漂移。
+- **前后端运算符集合**：前端 `validateFormula` 已拒绝后端不支持的 `!=`、单 `=`、`%`、`**`、`//`、`<<`、`>>`、`~`；后端 `BinOp` 与 `Compare` 也改为显式拒绝未知运算符，避免 `KeyError`。
+
+### 本轮 CI / 生产回归
+- Golden Regression #390：PASS
+- Deploy Backend #532：PASS
+- P4.1 Production Acceptance #103：PASS
+- P4.3 Traceability Acceptance #79：PASS
+- Production Backtest E2E #165 attempt 2：PASS，Target Portfolio / Event-driven / Fixed-fee 三组生产回归全部完成
+- Daily Restart HF Spaces #27：PASS
+
+### 明确延期项
+- **Node1 重启后的 SQLite 持久化专项复测**：按产品推进节奏暂缓，后续单独安排；当前不作为 v2.3 Final Review 阻塞项。
+- 其他未来增强（如多实例集中式注册限流、密码/邮箱自助修改、容量扩展）均属于后续产品能力，不应与本轮 v2.3 收尾混为一谈。
