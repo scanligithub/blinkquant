@@ -62,6 +62,17 @@ class TestCallBranch(unittest.TestCase):
         with self.assertRaises(ValueError):
             blink_parser._visit(node)
 
+    def test_unknown_bare_field_rejected(self):
+        blink_parser.current_df = pl.DataFrame({
+            "date": ["2024-01-01"],
+            "code": ["sh.600000"],
+            "close": [10.0],
+        })
+        with self.assertRaises(ValueError):
+            blink_parser._visit(parse_call("NOPE"))
+        with self.assertRaises(ValueError):
+            blink_parser._visit(parse_call("main_net"))
+
     def test_negative_window_rejected(self):
         node = parse_call("MA(CLOSE, -5)")
         with self.assertRaises(ValueError):
