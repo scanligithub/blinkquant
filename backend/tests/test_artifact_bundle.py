@@ -145,8 +145,15 @@ def test_backtest_artifact_export_can_be_imported_roundtrip(tmp_path, monkeypatc
                     "parts/positions_daily.parquet",
                 }
 
+            class NonSeekableBytesIO(io.BytesIO):
+                def seek(self, *args, **kwargs):
+                    raise OSError("seek disabled for production-upload regression")
+
+                def seekable(self):
+                    return False
+
             uploaded = UploadFile(
-                file=io.BytesIO(bundle),
+                file=NonSeekableBytesIO(bundle),
                 filename="blinkquant_artifact_roundtrip.zip",
             )
             imported = await import_artifact_bundle(
