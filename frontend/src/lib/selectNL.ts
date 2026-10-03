@@ -86,6 +86,8 @@ export function parseSelectNLText(raw: string): SelectNLResult {
 }
 
 const COMPARE_STR = '>=|<=|>|<';
+const UNSUPPORTED_OPERATOR_RE = /(?:!=|\*\*|\/\/|%|\^|<<|>>|~)/;
+const SINGLE_EQUALS_RE = /(^|[^=!<>])=($|[^=])/;
 const POS_INT_MAX = 500;
 const ARITH_MAX_OPS = 3;
 const TF_PREFIXES = new Set(['D', 'W', 'M']);
@@ -108,6 +110,9 @@ export function validateFormula(
   }
   if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
   if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
+  if (UNSUPPORTED_OPERATOR_RE.test(formula) || SINGLE_EQUALS_RE.test(formula)) {
+    return { ok: false, reason: '公式包含后端不支持的运算符' };
+  }
 
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);

@@ -76,6 +76,8 @@ function parseSelectNLText(raw) {
 }
 
 const COMPARE_STR = '>=|<=|>|<';
+const UNSUPPORTED_OPERATOR_RE = /(?:!=|\*\*|\/\/|%|\^|<<|>>|~)/;
+const SINGLE_EQUALS_RE = /(^|[^=!<>])=($|[^=])/;
 const POS_INT_MAX = 500;
 const ARITH_MAX_OPS = 3;
 
@@ -90,6 +92,9 @@ function validateFormula(meta, formula) {
   }
   if (depth !== 0) return { ok: false, reason: '公式括号不配对' };
   if (/[;'"]/.test(formula)) return { ok: false, reason: '公式包含非法字符' };
+  if (UNSUPPORTED_OPERATOR_RE.test(formula) || SINGLE_EQUALS_RE.test(formula)) {
+    return { ok: false, reason: '公式包含后端不支持的运算符' };
+  }
 
   const fields = new Set(meta.fields);
   const indicators = new Set(meta.indicators);
@@ -777,6 +782,28 @@ test('validateFormula: cond 支持数值操作数', () => {
 test('validateFormula: cond == 拒绝', () => {
   const r = validateFormula(META, 'COUNT(CLOSE == 10, 3)');
   assert.equal(r.ok, false);
+});
+
+test('validateFormula: 与后端运算符集合对齐', () => {
+  for (const f of [
+    'CLOSE != 10',
+    'CLOSE = 10',
+    'CLOSE % 2 > 0',
+    'CLOSE ** 2 > 0',
+    'CLOSE ^ 2 > 0',
+    'CLOSE // 2 > 0',
+    'CLOSE << 1 > 0',
+    'CLOSE >> 1 > 0',
+    'NOT(CLOSE > 10)',
+    '~CLOSE > 0',
+  ]) {
+    const r = validateFormula(META, f);
+    assert.equal(r.ok, false, f);
+  }
+
+  assert.equal(validateFormula(META, 'IS_LIMIT_UP == 1').ok, true);
+  assert.equal(validateFormula(META, 'CLOSE > 10 && OPEN > 5').ok, true);
+  assert.equal(validateFormula(META, 'CLOSE > 10 || OPEN > 5').ok, true);
 });
 
 test('validateFormula: AND/OR 子串字段不被误分词', () => {
