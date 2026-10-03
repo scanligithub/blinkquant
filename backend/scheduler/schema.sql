@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_user_type_created ON artifacts (user_id, artifact_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts (task_id);
-CREATE INDEX IF NOT EXISTS idx_artifacts_user_updated ON artifacts (user_id, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS backtest_strategy_templates (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +125,6 @@ CREATE TABLE IF NOT EXISTS strategies (
     updated_at      TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id, name)
 );
-CREATE INDEX IF NOT EXISTS idx_strategies_user_updated ON strategies (user_id, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS strategy_versions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
