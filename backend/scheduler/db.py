@@ -108,8 +108,8 @@ async def _migrate_user_asset_schema() -> None:
         "source_backtest_strategy_trigger": "TEXT",
         "source_backtest_artifact_id": "INTEGER",
         "source_backtest_artifact_title": "TEXT",
-        "created_at": "TEXT DEFAULT (datetime('now'))",
-        "updated_at": "TEXT DEFAULT (datetime('now'))",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
     })
     await _ensure_columns("strategy_versions", {
         "timeframe": "TEXT NOT NULL DEFAULT 'D'",
@@ -119,17 +119,23 @@ async def _migrate_user_asset_schema() -> None:
         "source_backtest_strategy_trigger": "TEXT",
         "source_backtest_artifact_id": "INTEGER",
         "source_backtest_artifact_title": "TEXT",
-        "created_at": "TEXT DEFAULT (datetime('now'))",
+        "created_at": "TEXT",
     })
     await _ensure_columns("watchlists", {
         "is_default": "INTEGER NOT NULL DEFAULT 0",
-        "created_at": "TEXT DEFAULT (datetime('now'))",
-        "updated_at": "TEXT DEFAULT (datetime('now'))",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
     })
     await _ensure_columns("watchlist_items", {
-        "created_at": "TEXT DEFAULT (datetime('now'))",
+        "created_at": "TEXT",
     })
 
+    # SQLite ALTER TABLE ADD COLUMN only permits constant defaults. Backfill
+    # timestamp columns explicitly after adding them so legacy persistent DBs migrate safely.
+    await _pool.execute("UPDATE strategies SET created_at=COALESCE(created_at,datetime('now')), updated_at=COALESCE(updated_at,datetime('now'))")
+    await _pool.execute("UPDATE strategy_versions SET created_at=COALESCE(created_at,datetime('now'))")
+    await _pool.execute("UPDATE watchlists SET created_at=COALESCE(created_at,datetime('now')), updated_at=COALESCE(updated_at,datetime('now'))")
+    await _pool.execute("UPDATE watchlist_items SET created_at=COALESCE(created_at,datetime('now'))")
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_strategies_user_updated "
         "ON strategies (user_id, updated_at DESC, id DESC)"
