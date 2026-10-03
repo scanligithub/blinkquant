@@ -72,8 +72,16 @@ async def init_pool() -> None:
         await _pool.execute("PRAGMA journal_mode=WAL")
         await _pool.execute("PRAGMA synchronous=NORMAL")
         await _pool.execute("PRAGMA foreign_keys=ON")
-        await _load_schema()
-        await _migrate()
+        try:
+            await _load_schema()
+            await _migrate()
+        except Exception:
+            # Never leave a partially initialized connection behind. A failed
+            # schema/migration must be retried cleanly or fail startup loudly.
+            conn = _pool
+            _pool = None
+            await conn.close()
+            raise
         print(f"[db] SQLite pool opened: {SCHEDULER_DB_PATH}")
 
 
@@ -181,6 +189,10 @@ async def _migrate() -> None:
     if "updated_at" not in artifact_existing:
         await _pool.execute("ALTER TABLE artifacts ADD COLUMN updated_at TEXT")
         await _pool.execute("UPDATE artifacts SET updated_at = COALESCE(finished_at, created_at, datetime('now')) WHERE updated_at IS NULL")
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_user_updated "
+        "ON artifacts (user_id, updated_at DESC, id DESC)"
+    )
     if "strategy_template_id" not in existing:
         await _pool.execute("ALTER TABLE task_queue ADD COLUMN strategy_template_id INTEGER")
     if "strategy_template_name" not in existing:
