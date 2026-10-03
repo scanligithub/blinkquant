@@ -208,3 +208,81 @@ def test_legacy_duplicate_default_watchlists_are_deduped_before_unique_index(tmp
             await db.close_pool()
 
     asyncio.run(run())
+
+
+def test_artifact_backfill_handles_legacy_done_tasks(tmp_path, monkeypatch):
+    async def run():
+        path = tmp_path / "scheduler.db"
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE task_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                assigned_node TEXT,
+                result TEXT,
+                result_summary TEXT,
+                result_uri TEXT,
+                result_bytes INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                finished_at TEXT,
+                strategy_template_id INTEGER,
+                strategy_template_name TEXT,
+                strategy_template_updated_at TEXT,
+                strategy_template_version INTEGER,
+                source_task_id INTEGER
+            );
+            CREATE TABLE artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                task_id INTEGER NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ready',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                summary TEXT,
+                result_json TEXT,
+                result_uri TEXT,
+                result_bytes INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now')),
+                finished_at TEXT
+            );
+            INSERT INTO task_queue (
+                user_id, task_type, payload, status, result, result_summary,
+                result_uri, result_bytes, strategy_template_id,
+                strategy_template_name, strategy_template_updated_at,
+                strategy_template_version, source_task_id, assigned_node,
+                created_at, finished_at
+            ) VALUES (
+                'legacy-user', 'selection', '{"selection_strategy_snapshot":{"name":"legacy-sel"}}',
+                'done', '{"signals":[{"code":"000001"}]}', '{"count":1}',
+                'results/legacy', 123, NULL, NULL, NULL, NULL, NULL, 'node1',
+                '2026-01-01T00:00:00', '2026-01-01T00:01:00'
+            );
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(db, "SCHEDULER_DB_PATH", str(path))
+        await db.close_pool()
+        await db.init_pool()
+        try:
+            artifact = await db.fetchrow(
+                "SELECT user_id, artifact_type, task_id, title, result_json, result_uri, result_bytes "
+                "FROM artifacts WHERE task_id=1"
+            )
+            assert artifact is not None
+            assert artifact["user_id"] == "legacy-user"
+            assert artifact["artifact_type"] == "selection"
+            assert artifact["title"] == "legacy-sel 选股成果"
+            assert artifact["result_uri"] == "results/legacy"
+            assert artifact["result_bytes"] == len('{"signals":[{"code":"000001"}]}'.encode("utf-8"))
+        finally:
+            await db.close_pool()
+
+    asyncio.run(run())
