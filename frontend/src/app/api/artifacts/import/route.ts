@@ -19,17 +19,22 @@ export async function POST(req: NextRequest) {
 
   const qs = new URLSearchParams({ user_id: auth.user.userId });
   if (auth.user.role) qs.set('role', auth.user.role);
+  const bodyBytes = await req.arrayBuffer();
+  const maxUploadBytes = 32 * 1024 * 1024;
+  if (bodyBytes.byteLength > maxUploadBytes) {
+    return NextResponse.json({ error: '成果导入 ZIP 超过 32 MB 限制' }, { status: 413 });
+  }
+
   const upstream = await fetch(NODE1_URL + '/internal/artifacts/import?' + qs.toString(), {
     method: 'POST',
     headers: {
       Authorization: 'Bearer ' + INTERNAL_TOKEN,
       'Content-Type': contentType,
+      'Content-Length': String(bodyBytes.byteLength),
     },
-    body: req.body,
-    // Node's fetch requires duplex for streaming request bodies.
-    duplex: 'half',
+    body: bodyBytes,
     cache: 'no-store',
-  } as RequestInit & { duplex: 'half' });
+  });
 
   const body = await upstream.arrayBuffer();
   return new NextResponse(body, {

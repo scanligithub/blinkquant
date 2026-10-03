@@ -97,6 +97,30 @@ async def create_strategy(body: dict) -> dict:
             raise
     return {"strategy": {**row,"version_no":1}}
 
+@router.get("/strategies/export", dependencies=[Depends(verify_internal_token)])
+async def export_selection_strategies(user_id: Optional[str] = None) -> dict:
+    uid=require_user_id(user_id)
+    rows=await fetch("SELECT * FROM strategies WHERE user_id=? ORDER BY id ASC",uid)
+    result=[]
+    for s in rows:
+        versions=await fetch(
+            "SELECT version_no,name,formula,timeframe,source_backtest_strategy_id,source_backtest_strategy_version,"
+            "source_backtest_strategy_name,source_backtest_strategy_trigger,created_at FROM strategy_versions "
+            "WHERE strategy_id=? ORDER BY version_no ASC",s["id"])
+        result.append({
+            "name":s["name"],"formula":s["formula"],"timeframe":s["timeframe"],"created_at":s["created_at"],"updated_at":s["updated_at"],
+            "source_backtest":({"strategy_id":s["source_backtest_strategy_id"],"version_no":s["source_backtest_strategy_version"],
+                "name":s["source_backtest_strategy_name"],"trigger":s["source_backtest_strategy_trigger"]}
+                if s["source_backtest_strategy_id"] is not None else None),
+            "versions":[{"version_no":v["version_no"],"name":v["name"],"formula":v["formula"],"timeframe":v["timeframe"],
+                "created_at":v["created_at"],
+                "source_backtest":({"strategy_id":v["source_backtest_strategy_id"],"version_no":v["source_backtest_strategy_version"],
+                    "name":v["source_backtest_strategy_name"],"trigger":v["source_backtest_strategy_trigger"]}
+                    if v["source_backtest_strategy_id"] is not None else None)} for v in versions],
+        })
+    return {"format":"blinkquant-selection-strategies-v1","exported_at":__import__("datetime").datetime.utcnow().isoformat()+"Z","strategies":result}
+
+
 @router.get("/strategies/{strategy_id}", dependencies=[Depends(verify_internal_token)])
 async def get_strategy(strategy_id: int, user_id: Optional[str] = None) -> dict:
     uid = require_user_id(user_id)
@@ -158,29 +182,6 @@ async def list_strategy_versions(strategy_id: int, user_id: Optional[str] = None
         "FROM strategy_versions WHERE strategy_id=? ORDER BY version_no DESC",strategy_id)
     return {"versions":rows}
 
-@router.get("/strategies/export", dependencies=[Depends(verify_internal_token)])
-async def export_selection_strategies(user_id: Optional[str] = None) -> dict:
-    uid=require_user_id(user_id)
-    rows=await fetch("SELECT * FROM strategies WHERE user_id=? ORDER BY id ASC",uid)
-    result=[]
-    for s in rows:
-        versions=await fetch(
-            "SELECT version_no,name,formula,timeframe,source_backtest_strategy_id,source_backtest_strategy_version,"
-            "source_backtest_strategy_name,source_backtest_strategy_trigger,created_at FROM strategy_versions "
-            "WHERE strategy_id=? ORDER BY version_no ASC",s["id"])
-        result.append({
-            "name":s["name"],"formula":s["formula"],"timeframe":s["timeframe"],"created_at":s["created_at"],"updated_at":s["updated_at"],
-            "source_backtest":({"strategy_id":s["source_backtest_strategy_id"],"version_no":s["source_backtest_strategy_version"],
-                "name":s["source_backtest_strategy_name"],"trigger":s["source_backtest_strategy_trigger"]}
-                if s["source_backtest_strategy_id"] is not None else None),
-            "versions":[{"version_no":v["version_no"],"name":v["name"],"formula":v["formula"],"timeframe":v["timeframe"],
-                "created_at":v["created_at"],
-                "source_backtest":({"strategy_id":v["source_backtest_strategy_id"],"version_no":v["source_backtest_strategy_version"],
-                    "name":v["source_backtest_strategy_name"],"trigger":v["source_backtest_strategy_trigger"]}
-                    if v["source_backtest_strategy_id"] is not None else None)} for v in versions],
-        })
-    return {"format":"blinkquant-selection-strategies-v1","exported_at":__import__("datetime").datetime.utcnow().isoformat()+"Z","strategies":result}
-
 @router.post("/strategies/import", dependencies=[Depends(verify_internal_token)])
 async def import_selection_strategies(body: dict) -> dict:
     uid=require_user_id(body.get("user_id"))
@@ -230,6 +231,17 @@ async def create_watchlist(body: dict) -> dict:
         if "UNIQUE constraint failed: watchlists.user_id, watchlists.name" in str(exc): raise HTTPException(409,"已存在同名的自选股列表")
         raise
     return {"watchlist":{**row,"is_default":bool(row["is_default"]),"item_count":0}}
+
+@router.get("/watchlists/export", dependencies=[Depends(verify_internal_token)])
+async def export_watchlists(user_id:Optional[str]=None)->dict:
+    uid=require_user_id(user_id); await ensure_default_watchlist(uid)
+    rows=await fetch("SELECT w.id,w.name,w.is_default,w.created_at,w.updated_at,wi.code FROM watchlists w LEFT JOIN watchlist_items wi ON wi.watchlist_id=w.id WHERE w.user_id=? ORDER BY w.is_default DESC,w.created_at ASC,wi.created_at ASC,wi.code ASC",uid)
+    grouped={}
+    for r in rows:
+        item=grouped.setdefault(int(r["id"]),{"name":r["name"],"is_default":bool(r["is_default"]),"created_at":r["created_at"],"updated_at":r["updated_at"],"codes":[]})
+        if r["code"] is not None: item["codes"].append(str(r["code"]))
+    return {"format":"blinkquant-watchlists-v1","exported_at":__import__("datetime").datetime.utcnow().isoformat()+"Z","watchlists":list(grouped.values())}
+
 
 @router.get("/watchlists/{watchlist_id}", dependencies=[Depends(verify_internal_token)])
 async def get_watchlist(watchlist_id:int,user_id:Optional[str]=None)->dict:
@@ -295,16 +307,6 @@ async def delete_watchlist_items(user_id:Optional[str]=None,listId:Optional[int]
         if removed: await conn.execute("UPDATE watchlists SET updated_at=datetime('now') WHERE id=? AND user_id=?",list_id,uid)
     return {"success":True,"listId":list_id,"requested_count":len(values),"removed_count":removed}
 
-@router.get("/watchlists/export", dependencies=[Depends(verify_internal_token)])
-async def export_watchlists(user_id:Optional[str]=None)->dict:
-    uid=require_user_id(user_id); await ensure_default_watchlist(uid)
-    rows=await fetch("SELECT w.id,w.name,w.is_default,w.created_at,w.updated_at,wi.code FROM watchlists w LEFT JOIN watchlist_items wi ON wi.watchlist_id=w.id WHERE w.user_id=? ORDER BY w.is_default DESC,w.created_at ASC,wi.created_at ASC,wi.code ASC",uid)
-    grouped={}
-    for r in rows:
-        item=grouped.setdefault(int(r["id"]),{"name":r["name"],"is_default":bool(r["is_default"]),"created_at":r["created_at"],"updated_at":r["updated_at"],"codes":[]})
-        if r["code"] is not None: item["codes"].append(str(r["code"]))
-    return {"format":"blinkquant-watchlists-v1","exported_at":__import__("datetime").datetime.utcnow().isoformat()+"Z","watchlists":list(grouped.values())}
-
 @router.post("/watchlists/import", dependencies=[Depends(verify_internal_token)])
 async def import_watchlists(body:dict)->dict:
     uid=require_user_id(body.get("user_id")); items=body.get("watchlists") if isinstance(body.get("watchlists"),list) else []
@@ -325,61 +327,6 @@ async def import_watchlists(body:dict)->dict:
             imported+=1
         except Exception: skipped.append(name)
     return {"imported":imported,"skipped":skipped}
-
-@router.post("/migrate-legacy", dependencies=[Depends(verify_internal_token)])
-async def migrate_legacy_assets(body: dict) -> dict:
-    strategies = body.get("strategies") if isinstance(body.get("strategies"), list) else []
-    watchlists = body.get("watchlists") if isinstance(body.get("watchlists"), list) else []
-    migrated_strategies = skipped_strategies = migrated_watchlists = merged_watchlist_codes = 0
-    for item in strategies:
-        uid=str(item.get("user_id") or "").strip(); name=str(item.get("name") or "").strip()
-        formula=str(item.get("formula") or "").strip(); timeframe=str(item.get("timeframe") or "D").strip()
-        if not uid or not name or not formula or timeframe not in ("D","W","M"): skipped_strategies+=1; continue
-        try:
-            async with acquire() as conn:
-                if await conn.fetchrow("SELECT id FROM strategies WHERE user_id=? AND name=?",uid,name): skipped_strategies+=1; continue
-                row=await conn.fetchrow(
-                    "INSERT INTO strategies(user_id,name,formula,timeframe,source_backtest_strategy_id,source_backtest_strategy_version,"
-                    "source_backtest_strategy_name,source_backtest_strategy_trigger,source_backtest_artifact_id,source_backtest_artifact_title,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,COALESCE(?,datetime('now')),COALESCE(?,datetime('now'))) RETURNING id",
-                    uid,name,formula,timeframe,item.get("source_backtest_strategy_id"),item.get("source_backtest_strategy_version"),
-                    item.get("source_backtest_strategy_name"),item.get("source_backtest_strategy_trigger"),item.get("source_backtest_artifact_id"),
-                    item.get("source_backtest_artifact_title"),item.get("created_at"),item.get("updated_at"))
-                versions=item.get("versions") if isinstance(item.get("versions"),list) else []
-                clean=[]; seen=set()
-                for v in versions[:100]:
-                    try: vn=int(v.get("version_no"))
-                    except Exception: continue
-                    if vn<=0 or vn in seen: continue
-                    vn_name=str(v.get("name") or name).strip(); vn_formula=str(v.get("formula") or formula).strip(); vn_tf=str(v.get("timeframe") or timeframe).strip()
-                    if not vn_name or not vn_formula or vn_tf not in ("D","W","M"): continue
-                    source=v.get("source_backtest") if isinstance(v.get("source_backtest"),dict) else {}
-                    clean.append((vn,vn_name,vn_formula,vn_tf,source,v.get("created_at"))); seen.add(vn)
-                if not clean: clean=[(1,name,formula,timeframe,{},item.get("created_at"))]
-                for vn,vn_name,vn_formula,vn_tf,source,created_at in sorted(clean):
-                    await conn.execute("INSERT INTO strategy_versions(strategy_id,version_no,name,formula,timeframe,source_backtest_strategy_id,source_backtest_strategy_version,source_backtest_strategy_name,source_backtest_strategy_trigger,created_at) VALUES(?,?,?,?,?,?,?,?,?,COALESCE(?,datetime('now')))",row["id"],vn,vn_name,vn_formula,vn_tf,source.get("strategy_id"),source.get("version_no"),source.get("name"),source.get("trigger"),created_at)
-            migrated_strategies+=1
-        except Exception: skipped_strategies+=1
-    for item in watchlists:
-        uid=str(item.get("user_id") or "").strip(); name=str(item.get("name") or "").strip()
-        if not uid or not name or len(name)>40: continue
-        codes=list(dict.fromkeys(str(x or "").strip() for x in (item.get("codes") or []) if str(x or "").strip()))
-        if len(codes)>5000: continue
-        try:
-            async with acquire() as conn:
-                existing=await conn.fetchrow("SELECT id FROM watchlists WHERE user_id=? AND name=?",uid,name)
-                if existing: list_id=existing["id"]
-                elif item.get("is_default"):
-                    existing_default=await conn.fetchrow("SELECT id FROM watchlists WHERE user_id=? AND is_default=1 LIMIT 1",uid)
-                    if existing_default: list_id=existing_default["id"]
-                    else:
-                        created=await conn.fetchrow("INSERT INTO watchlists(user_id,name,is_default,created_at,updated_at) VALUES(?,?,1,COALESCE(?,datetime('now')),COALESCE(?,datetime('now'))) RETURNING id",uid,name,item.get("created_at"),item.get("updated_at")); list_id=created["id"]; migrated_watchlists+=1
-                else:
-                    created=await conn.fetchrow("INSERT INTO watchlists(user_id,name,is_default,created_at,updated_at) VALUES(?,?,0,COALESCE(?,datetime('now')),COALESCE(?,datetime('now'))) RETURNING id",uid,name,item.get("created_at"),item.get("updated_at")); list_id=created["id"]; migrated_watchlists+=1
-                for code in codes:
-                    cur=await conn.execute("INSERT OR IGNORE INTO watchlist_items(watchlist_id,code) VALUES(?,?)",list_id,code); merged_watchlist_codes+=cur.rowcount
-        except Exception: continue
-    return {"migrated_strategies":migrated_strategies,"skipped_strategies":skipped_strategies,"migrated_watchlists":migrated_watchlists,"merged_watchlist_codes":merged_watchlist_codes}
 
 
 @router.post("/migrate-legacy", dependencies=[Depends(verify_internal_token)])

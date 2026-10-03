@@ -85,8 +85,76 @@ async def _load_schema() -> None:
     await _pool.commit()
 
 
+async def _ensure_columns(table: str, definitions: dict[str, str]) -> None:
+    """Additive SQLite migration for tables that may predate the current schema.
+
+    CREATE TABLE IF NOT EXISTS never changes an existing persistent table.  User
+    asset tables therefore need an explicit column migration before their routes
+    are allowed to query newer fields.
+    """
+    cursor = await _pool.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in definitions.items():
+        if column not in existing:
+            await _pool.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+async def _migrate_user_asset_schema() -> None:
+    await _ensure_columns("strategies", {
+        "timeframe": "TEXT NOT NULL DEFAULT 'D'",
+        "source_backtest_strategy_id": "INTEGER",
+        "source_backtest_strategy_version": "INTEGER",
+        "source_backtest_strategy_name": "TEXT",
+        "source_backtest_strategy_trigger": "TEXT",
+        "source_backtest_artifact_id": "INTEGER",
+        "source_backtest_artifact_title": "TEXT",
+        "created_at": "TEXT DEFAULT (datetime('now'))",
+        "updated_at": "TEXT DEFAULT (datetime('now'))",
+    })
+    await _ensure_columns("strategy_versions", {
+        "timeframe": "TEXT NOT NULL DEFAULT 'D'",
+        "source_backtest_strategy_id": "INTEGER",
+        "source_backtest_strategy_version": "INTEGER",
+        "source_backtest_strategy_name": "TEXT",
+        "source_backtest_strategy_trigger": "TEXT",
+        "source_backtest_artifact_id": "INTEGER",
+        "source_backtest_artifact_title": "TEXT",
+        "created_at": "TEXT DEFAULT (datetime('now'))",
+    })
+    await _ensure_columns("watchlists", {
+        "is_default": "INTEGER NOT NULL DEFAULT 0",
+        "created_at": "TEXT DEFAULT (datetime('now'))",
+        "updated_at": "TEXT DEFAULT (datetime('now'))",
+    })
+    await _ensure_columns("watchlist_items", {
+        "created_at": "TEXT DEFAULT (datetime('now'))",
+    })
+
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_strategies_user_updated "
+        "ON strategies (user_id, updated_at DESC, id DESC)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_strategy_versions_strategy "
+        "ON strategy_versions (strategy_id, version_no DESC)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchlists_user "
+        "ON watchlists (user_id)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchlist_items_list "
+        "ON watchlist_items (watchlist_id)"
+    )
+    await _pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchlist_items_code "
+        "ON watchlist_items (code)"
+    )
+
+
 async def _migrate() -> None:
     """增量迁移：ALTER TABLE ADD COLUMN IF NOT EXISTS（SQLite 不支持 IF NOT EXISTS，用 try/except）"""
+    await _migrate_user_asset_schema()
     cursor = await _pool.execute("PRAGMA table_info(task_queue)")
     existing = {row[1] for row in await cursor.fetchall()}
 

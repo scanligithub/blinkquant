@@ -46,6 +46,13 @@ test('IA5.10 Node1 SQLite schema contains selection strategies and watchlists', 
   assert.match(read('backend/scheduler/user_assets.py'), /migrate-legacy/);
 });
 
+test('artifact import proxy buffers the bounded upload instead of streaming a duplex request', () => {
+  const source = read('frontend/src/app/api/artifacts/import/route.ts');
+  assert.match(source, /await req\.arrayBuffer\(\)/);
+  assert.match(source, /32 \* 1024 \* 1024/);
+  assert.doesNotMatch(source, /duplex: ['"]half['"]/);
+});
+
 test('auth data is the intentional remaining Neon path', () => {
   const source = read('frontend/src/lib/auth.ts');
   assert.match(source, /from ['"]\.\/db['"]/);
