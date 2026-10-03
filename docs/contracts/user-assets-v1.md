@@ -46,3 +46,7 @@ These are protection limits for the unified orchestration layer; individual asse
 ## Non-goals
 
 IA5.10 does not change the Scheduler, task scheduling, three-node compute topology, backtest semantics, SignalTrace semantics, database schema, or the existing single-asset API contracts.
+
+## Production acceptance
+
+After IA5.10 is merged to `main`, the production acceptance target is the Vercel Production deployment of that `main` commit. Production acceptance covers authenticated unified export/import and the Node1 SQLite business-asset storage path; the Neon database remains limited to user registration/authentication data.
