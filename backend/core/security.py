@@ -292,12 +292,17 @@ class BlinkParser:
             name = node.id.upper()
             # 多周期前缀模式：非基础周期原子禁用挂载列
             if not self.mount_enabled:
-                return self.fields.get(name, pl.col(name.lower()))
+                # 非基础周期原子禁止访问任意挂载列；只允许注册表字段。
+                if name in self.fields:
+                    return self.fields[name]
+                raise ValueError(f"Unknown field {name}")
             # 1. 如果该名称已经是内存中的列（如 MA_CLOSE_20），直接引用
             if self.current_df is not None and name in self.current_df.columns:
                 return pl.col(name)
-            # 2. 否则查找基础字段映射
-            return self.fields.get(name, pl.col(name.lower()))
+            # 2. 其余裸名称必须来自公开字段注册表，禁止任意下推为 pl.col(name.lower())。
+            if name in self.fields:
+                return self.fields[name]
+            raise ValueError(f"Unknown field {name}")
 
         elif isinstance(node, ast.Attribute):
             # 多周期前缀语法：W.CLOSE / D.MA(CLOSE,20) / M.MACD_DIF(12,26)
