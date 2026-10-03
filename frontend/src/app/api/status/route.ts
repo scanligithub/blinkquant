@@ -13,7 +13,7 @@ export async function GET() {
     // 并发请求所有节点状态
     const statusPromises = NODES.map(async (url, index) => {
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000), cache: 'no-store' });
         if (!res.ok) throw new Error('Down');
         const data = await res.json();
         return { 
