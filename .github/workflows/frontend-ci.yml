@@ -37,4 +37,8 @@ jobs:
         run: node tests/artifact-assets-contract.test.mjs
       - name: IA5.10 user asset migration contract regression
         run: node tests/user-assets-contract.test.mjs
+      - name: IA5.10 Node1 asset storage contract regression
+        run: node tests/user-assets-storage-contract.test.mjs
+      - name: IA5.10 backend asset route syntax regression
+        run: python -m py_compile ../backend/scheduler/user_assets.py
       - run: npm run build

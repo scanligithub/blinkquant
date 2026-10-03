@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from api.routes import router as api_router
 from scheduler.routes import router as scheduler_router
+from scheduler.user_assets import router as user_assets_router
 from core.data_manager import data_manager
 import os
 import time
@@ -131,6 +132,7 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(scheduler_router)
+app.include_router(user_assets_router)
 
 
 @app.get("/")

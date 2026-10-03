@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { sql } from '@/lib/db';
+import { node1Json, node1Path } from '@/lib/node1Internal';
 
 export const runtime = 'nodejs';
 
@@ -54,25 +54,20 @@ export async function POST(req: NextRequest) {
     if (!Number.isInteger(watchlistId) || watchlistId <= 0) {
       return NextResponse.json({ error: '无效的自选股列表' }, { status: 400 });
     }
-    const list = await sql`
-      SELECT id, name FROM watchlists
-      WHERE id = ${watchlistId} AND user_id = ${userId}
-    `;
-    if (!list.rows.length) {
-      return NextResponse.json({ error: '自选股列表不存在或无权访问' }, { status: 404 });
+    const { response: watchlistResponse, data: watchlistData } = await node1Json(
+      node1Path('/user-assets/watchlists/' + watchlistId, { user_id: userId }),
+    );
+    if (!watchlistResponse.ok || !watchlistData?.watchlist) {
+      return NextResponse.json({ error: String(watchlistData?.detail || watchlistData?.error || '自选股列表不存在或无权访问') }, { status: watchlistResponse.status === 404 ? 404 : 503 });
     }
-    const items = await sql`
-      SELECT code FROM watchlist_items
-      WHERE watchlist_id = ${watchlistId}
-      ORDER BY created_at ASC, id ASC
-    `;
-    const codes = items.rows.map((row) => String(row.code).trim()).filter(Boolean);
+    const list = watchlistData.watchlist;
+    const codes = Array.isArray(list.codes) ? list.codes.map((row: unknown) => String(row).trim()).filter(Boolean) : [];
     if (!codes.length) return NextResponse.json({ error: '自选股列表为空，无法回测' }, { status: 400 });
     if (codes.length > 5000) return NextResponse.json({ error: '自选股列表超过回测允许的 5000 只股票上限' }, { status: 400 });
     normalizedPayload.strategy.universe = {
       type: 'watchlist',
       watchlist_id: watchlistId,
-      watchlist_name: String(list.rows[0].name),
+      watchlist_name: String(list.name),
       watchlist_codes: codes,
     };
     normalizedPayload.universe_type = 'watchlist';
