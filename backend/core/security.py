@@ -334,8 +334,11 @@ class BlinkParser:
             raise ValueError(f"Unary operator not allowed: {type(node.op).__name__}")
 
         elif isinstance(node, ast.Compare):
+            op = self.operators.get(type(node.ops[0]))
+            if op is None:
+                raise ValueError(f"Comparison operator not allowed: {type(node.ops[0]).__name__}")
             left = self._visit(node.left)
-            res = self.operators[type(node.ops[0])](left, self._visit(node.comparators[0]))
+            res = op(left, self._visit(node.comparators[0]))
             return res
 
         elif isinstance(node, ast.BoolOp):
