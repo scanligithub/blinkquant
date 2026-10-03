@@ -287,6 +287,7 @@ async def delete_watchlist_items(user_id:Optional[str]=None,listId:Optional[int]
     if not await fetchrow("SELECT id FROM watchlists WHERE id=? AND user_id=?",list_id,uid): raise HTTPException(404,"自选股列表不存在")
     values=list(dict.fromkeys([x.strip() for x in (codes or "").split(",") if x.strip()])) if codes else ([str(code).strip()] if code else [])
     if not values: raise HTTPException(400,"缺少股票代码")
+    if len(values)>5000: raise HTTPException(400,"一次最多移除 5000 只股票")
     removed=0
     async with acquire() as conn:
         for value in values:

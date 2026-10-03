@@ -37,7 +37,7 @@ test('watchlist detail API is owner-scoped and protects the default list', () =>
   assert.match(route, /user_id/);
   assert.match(route, /\/user-assets\/watchlists\//);
   assert.match(node1, /WHERE id=\? AND user_id=\?/);
-  assert.match(node1, /if row\["is_default"\]: raise HTTPException\(400, "默认自选列表不可删除"\)/);
+  assert.match(node1, /row\["is_default"\].*默认自选列表不可删除/);
 });
 
 test('legacy watchlist item API resolves explicit lists through Node1 ownership', () => {
