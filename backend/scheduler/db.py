@@ -144,6 +144,13 @@ async def _migrate_user_asset_schema() -> None:
     await _pool.execute("UPDATE strategy_versions SET created_at=COALESCE(created_at,datetime('now'))")
     await _pool.execute("UPDATE watchlists SET created_at=COALESCE(created_at,datetime('now')), updated_at=COALESCE(updated_at,datetime('now'))")
     await _pool.execute("UPDATE watchlist_items SET created_at=COALESCE(created_at,datetime('now'))")
+    # A legacy database may contain multiple default lists from before the unique
+    # partial index existed. Keep the oldest default per user before recreating it.
+    await _pool.execute(
+        "UPDATE watchlists SET is_default=0 "
+        "WHERE is_default=1 AND id NOT IN "
+        "(SELECT MIN(id) FROM watchlists WHERE is_default=1 GROUP BY user_id)"
+    )
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_strategies_user_updated "
         "ON strategies (user_id, updated_at DESC, id DESC)"
@@ -155,6 +162,10 @@ async def _migrate_user_asset_schema() -> None:
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_watchlists_user "
         "ON watchlists (user_id)"
+    )
+    await _pool.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlists_one_default "
+        "ON watchlists (user_id) WHERE is_default = 1"
     )
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_watchlist_items_list "
