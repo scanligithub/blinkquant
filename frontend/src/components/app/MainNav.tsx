@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { downloadFromResponse } from '@/lib/download';
 
 export interface NavUser {
@@ -37,7 +37,31 @@ export default function MainNav({
 }: MainNavProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const assetImportRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const importMyAssets = async (file: File) => {
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const res = await fetch('/api/me/assets/import', { method: 'POST', body: form });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 207) throw new Error(json.error || '资产导入失败');
+      const errors = Array.isArray(json.errors) ? json.errors : [];
+      const imported = json.imported || {};
+      const skipped = json.skipped || {};
+      const message = `已导入：选股策略 ${Number(imported.strategies || 0)}、回测策略 ${Number(imported.backtest_strategies || 0)}、自选股 ${Number(imported.watchlists || 0)}、成果 ${Number(imported.artifacts || 0)}。` +
+        ((Number(skipped.strategies || 0) + Number(skipped.backtest_strategies || 0) + Number(skipped.watchlists || 0) + Number(skipped.artifacts || 0)) > 0
+          ? ` 跳过：策略 ${Number(skipped.strategies || 0) + Number(skipped.backtest_strategies || 0)}、自选股 ${Number(skipped.watchlists || 0)}、成果 ${Number(skipped.artifacts || 0)}。`
+          : '') +
+        (errors.length ? ` 错误：${errors.join('；')}` : '');
+      alert(message);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '资产导入失败');
+    } finally {
+      if (assetImportRef.current) assetImportRef.current.value = '';
+    }
+  };
 
   const renderNavItem = (item: typeof NAV_ITEMS[number]) => {
     if (item.enabled) {
@@ -118,15 +142,35 @@ export default function MainNav({
                 >
                   我的策略
                 </button>
+                <input
+                  ref={assetImportRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void importMyAssets(file);
+                  }}
+                />
                 <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    downloadFromResponse('/api/me/export');
+                    void downloadFromResponse('/api/me/assets/export');
                   }}
                   className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                 >
-                  导出我的数据
+                  导出我的资产
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    assetImportRef.current?.click();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  导入我的资产
                 </button>
                 {user.role === 'admin' && (
                   <Link
