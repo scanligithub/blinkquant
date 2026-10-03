@@ -318,7 +318,10 @@ class BlinkParser:
             return self.fields.get(name, pl.col(name.lower()))
 
         elif isinstance(node, ast.BinOp):
-            return self.operators[type(node.op)](self._visit(node.left), self._visit(node.right))
+            op = self.operators.get(type(node.op))
+            if op is None:
+                raise ValueError(f"Binary operator not allowed: {type(node.op).__name__}")
+            return op(self._visit(node.left), self._visit(node.right))
 
         elif isinstance(node, ast.UnaryOp):
             val = self._visit(node.operand)

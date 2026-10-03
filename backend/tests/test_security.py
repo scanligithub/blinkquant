@@ -229,6 +229,25 @@ class TestSignatureRecursion(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.eval_expr("COUNT(CLOSE == 10, 3)")
 
+    def test_unsupported_binary_operators_rejected(self):
+        for formula in (
+            "CLOSE % 2 > 0",
+            "CLOSE ** 2 > 0",
+            "CLOSE // 2 > 0",
+            "CLOSE << 1 > 0",
+            "CLOSE >> 1 > 0",
+        ):
+            with self.assertRaises(ValueError):
+                self.eval_expr(formula)
+
+    def test_unsupported_compare_operator_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("CLOSE != 10")
+
+    def test_unsupported_unary_operator_rejected(self):
+        with self.assertRaises(ValueError):
+            self.eval_expr("~CLOSE > 0")
+
     def test_count_cond_constant_both_sides_rejected(self):
         with self.assertRaises(ValueError):
             self.eval_expr("COUNT(5 > 3, 3)")
