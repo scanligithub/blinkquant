@@ -556,9 +556,15 @@ async def import_artifact_bundle(
     temp_dir = None
     final_dir = None
     committed = False
+    stage = "init"
     try:
+        stage = "read_upload"
+        raw_upload = await file.read()
+        stage = "open_zip"
+        upload_buffer = io.BytesIO(raw_upload)
         temp_dir = tempfile.mkdtemp(prefix="artifact-import-", dir=RESULT_DIR)
-        with zipfile.ZipFile(file.file) as zf:
+        with zipfile.ZipFile(upload_buffer) as zf:
+            stage = "validate_bundle"
             manifest = validate_artifact_bundle(zf)
             if manifest["artifact_type"] == "selection" and "result.json" not in manifest["files"]:
                 raise ValueError("selection artifact is missing result.json")
@@ -567,9 +573,11 @@ async def import_artifact_bundle(
             ):
                 raise ValueError("backtest artifact has no result parquet files")
 
+            stage = "extract_bundle"
             extracted_bytes = extract_artifact_bundle(zf, temp_dir, manifest)
             result_json = None
             if "result.json" in manifest["files"]:
+                stage = "read_result_json"
                 try:
                     result_json_bytes = zf.read("result.json")
                     result_json = json.loads(result_json_bytes.decode("utf-8"))
@@ -579,6 +587,7 @@ async def import_artifact_bundle(
                     raise ValueError("result.json must contain a JSON object")
 
         result_json_size = len(result_json_bytes) if "result_json_bytes" in locals() else 0
+        stage = "validate_parquet"
         for name in ("equity_curve.parquet", "trades.parquet", "positions_daily.parquet"):
             path = os.path.join(temp_dir, name)
             if os.path.exists(path):
@@ -587,6 +596,7 @@ async def import_artifact_bundle(
                     pl.read_parquet_schema(path)
                 except Exception as exc:
                     raise ValueError(f"invalid parquet file {name}: {exc}") from exc
+        stage = "validate_signal_trace"
         trace_path = os.path.join(temp_dir, "signal_trace.json")
         if os.path.exists(trace_path):
             try:
@@ -597,6 +607,7 @@ async def import_artifact_bundle(
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 raise ValueError(f"invalid signal_trace.json: {exc}") from exc
 
+        stage = "prepare_metadata"
         metadata = _portable_value(manifest.get("metadata") or {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -625,7 +636,9 @@ async def import_artifact_bundle(
         metadata_text = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
 
         total_result_bytes = extracted_bytes + result_json_size
+        stage = "begin_db_transaction"
         async with acquire() as conn:
+            stage = "check_quota"
             used = await conn.fetchval(
                 "SELECT COALESCE(SUM(result_bytes), 0) FROM artifacts WHERE user_id = ?",
                 user_id,
@@ -633,6 +646,7 @@ async def import_artifact_bundle(
             if int(used or 0) + total_result_bytes > ARTIFACT_QUOTA_BYTES_PER_USER:
                 raise HTTPException(413, "Artifact import exceeds the user's artifact quota")
 
+            stage = "insert_task"
             task = await conn.fetchrow(
                 """
                 INSERT INTO task_queue (
@@ -651,6 +665,7 @@ async def import_artifact_bundle(
             task_id = int(task["id"])
             result_uri = None
             if artifact_type == "backtest":
+                stage = "move_result_dir"
                 assert_safe_user_id(str(user_id))
                 result_uri = make_result_uri(user_id, task_id)
                 final_dir = os.path.join(RESULT_DIR, result_uri)
@@ -665,6 +680,7 @@ async def import_artifact_bundle(
                     task_id,
                 )
 
+            stage = "insert_artifact"
             row = await conn.fetchrow(
                 """
                 INSERT INTO artifacts (
@@ -685,6 +701,7 @@ async def import_artifact_bundle(
             )
             artifact_id_new = int(row["id"])
             committed = True
+            stage = "commit"
 
         return {
             "ok": True,
@@ -700,7 +717,8 @@ async def import_artifact_bundle(
         raise HTTPException(400, f"Invalid artifact bundle: {exc}") from exc
     except Exception as exc:
         log.exception(
-            "artifact import failed user_id=%s temp_dir=%s final_dir=%s",
+            "artifact import failed stage=%s user_id=%s temp_dir=%s final_dir=%s",
+            stage,
             user_id,
             temp_dir,
             final_dir,
