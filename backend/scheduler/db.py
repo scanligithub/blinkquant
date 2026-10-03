@@ -4,6 +4,7 @@ import os
 import json
 import asyncio
 import aiosqlite
+import traceback
 from contextlib import asynccontextmanager
 from typing import Any, Optional, List, Dict
 
@@ -75,7 +76,15 @@ async def init_pool() -> None:
         try:
             await _load_schema()
             await _migrate()
-        except Exception:
+        except Exception as exc:
+            # Keep the original exception visible in HF Space run logs. The
+            # request layer may otherwise collapse this into a generic 500 {},
+            # hiding the actual legacy-db migration failure.
+            print(
+                f"[db] schema/migration failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            traceback.print_exc()
             # Never leave a partially initialized connection behind. A failed
             # schema/migration must be retried cleanly or fail startup loudly.
             conn = _pool
@@ -145,12 +154,21 @@ async def _migrate_user_asset_schema() -> None:
     await _pool.execute("UPDATE watchlists SET created_at=COALESCE(created_at,datetime('now')), updated_at=COALESCE(updated_at,datetime('now'))")
     await _pool.execute("UPDATE watchlist_items SET created_at=COALESCE(created_at,datetime('now'))")
     # A legacy database may contain multiple default lists from before the unique
-    # partial index existed. Keep the oldest default per user before recreating it.
+    # partial index existed. Materialize the keeper IDs first, then update the
+    # base table from that temporary table. This keeps the migration independent
+    # of same-table subquery planner/locking behavior on old SQLite databases.
+    await _pool.execute("DROP TABLE IF EXISTS temp._watchlist_default_keep")
+    await _pool.execute(
+        "CREATE TEMP TABLE _watchlist_default_keep AS "
+        "SELECT user_id, MIN(id) AS keep_id "
+        "FROM watchlists WHERE is_default=1 GROUP BY user_id"
+    )
     await _pool.execute(
         "UPDATE watchlists SET is_default=0 "
         "WHERE is_default=1 AND id NOT IN "
-        "(SELECT MIN(id) FROM watchlists WHERE is_default=1 GROUP BY user_id)"
+        "(SELECT keep_id FROM _watchlist_default_keep)"
     )
+    await _pool.execute("DROP TABLE temp._watchlist_default_keep")
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_strategies_user_updated "
         "ON strategies (user_id, updated_at DESC, id DESC)"

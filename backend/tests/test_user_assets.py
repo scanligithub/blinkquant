@@ -160,3 +160,51 @@ def test_legacy_schema_indexes_do_not_block_migration(tmp_path, monkeypatch):
             await db.close_pool()
 
     asyncio.run(run())
+
+
+def test_legacy_duplicate_default_watchlists_are_deduped_before_unique_index(tmp_path, monkeypatch):
+    async def run():
+        path = tmp_path / "scheduler.db"
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE watchlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(user_id, name)
+            );
+            INSERT INTO watchlists (user_id, name, is_default)
+            VALUES
+                ('legacy-user', '默认A', 1),
+                ('legacy-user', '默认B', 1),
+                ('legacy-user', '普通列表', 0),
+                ('legacy-user-2', '默认C', 1);
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(db, "SCHEDULER_DB_PATH", str(path))
+        await db.close_pool()
+        await db.init_pool()
+        try:
+            defaults = await db.fetch(
+                "SELECT id, user_id, name FROM watchlists "
+                "WHERE is_default=1 ORDER BY id"
+            )
+            assert [(row["user_id"], row["name"]) for row in defaults] == [
+                ("legacy-user", "默认A"),
+                ("legacy-user-2", "默认C"),
+            ]
+            index_names = {
+                row["name"] for row in await db.fetch(
+                    "PRAGMA index_list(watchlists)"
+                )
+            }
+            assert "idx_watchlists_one_default" in index_names
+        finally:
+            await db.close_pool()
+
+    asyncio.run(run())
