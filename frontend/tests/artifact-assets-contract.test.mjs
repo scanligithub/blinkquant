@@ -16,13 +16,15 @@ test('artifact export proxy keeps authentication and serves the portable bundle 
   assert.match(source, /upstream\.headers\.get\('Content-Type'\)/);
 });
 
-test('artifact import proxy forwards the authenticated multipart ZIP stream to Node1', () => {
+test('artifact import proxy forwards the authenticated multipart ZIP body to Node1', () => {
   const source = read('frontend/src/app/api/artifacts/import/route.ts');
   assert.match(source, /requireAuth\(req\)/);
   assert.match(source, /multipart\/form-data/);
   assert.match(source, /\/internal\/artifacts\/import/);
-  assert.match(source, /body: req\.body/);
-  assert.match(source, /duplex: 'half'/);
+  assert.match(source, /const bodyBytes = await req\.arrayBuffer\(\)/);
+  assert.match(source, /Content-Length/);
+  assert.match(source, /body: bodyBytes/);
+  assert.match(source, /maxUploadBytes = 32 \* 1024 \* 1024/);
 });
 
 test('artifact library exposes import and per-artifact export actions', () => {
