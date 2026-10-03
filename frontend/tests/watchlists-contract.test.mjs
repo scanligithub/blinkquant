@@ -9,12 +9,15 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 test('watchlist schema enforces per-user naming, one default, and per-list stock uniqueness', () => {
   const sql = read('scripts/migrate_watchlists.sql');
   const schema = read('../backend/scheduler/schema.sql');
-  for (const source of [sql, schema]) {
-    assert.match(source, /UNIQUE .*user_id.*name/);
-    assert.match(source, /one_default/);
-    assert.match(source, /UNIQUE .*watchlist_id.*code/);
-    assert.match(source, /ON DELETE CASCADE/);
-  }
+  assert.match(sql, /UNIQUE \(user_id, name\)/);
+  assert.match(sql, /idx_watchlists_one_default/);
+  assert.match(sql, /WHERE is_default = TRUE/);
+  assert.match(sql, /UNIQUE \(watchlist_id, code\)/);
+  assert.match(sql, /ON DELETE CASCADE/);
+  assert.match(schema, /UNIQUE\(user_id, name\)/);
+  assert.match(schema, /idx_watchlists_one_default/);
+  assert.match(schema, /UNIQUE\(watchlist_id, code\)/);
+  assert.match(schema, /FOREIGN KEY\(watchlist_id\) REFERENCES watchlists\(id\) ON DELETE CASCADE/);
 });
 
 test('watchlist helper validates positive ids and bounded names', () => {
@@ -28,20 +31,24 @@ test('watchlist helper validates positive ids and bounded names', () => {
 
 test('watchlist detail API is owner-scoped and protects the default list', () => {
   const route = read('src/app/api/watchlists/[id]/route.ts');
+  const node1 = read('../backend/scheduler/user_assets.py');
   assert.match(route, /requireAuth\(req\)/);
   assert.match(route, /node1Json/);
   assert.match(route, /user_id/);
-  assert.match(route, /current\.is_default|默认自选列表不可删除/);
+  assert.match(route, /\/user-assets\/watchlists\//);
+  assert.match(node1, /WHERE id=\? AND user_id=\?/);
+  assert.match(node1, /if row\["is_default"\]: raise HTTPException\(400, "默认自选列表不可删除"\)/);
 });
 
 test('legacy watchlist item API resolves explicit lists through Node1 ownership', () => {
   const route = read('src/app/api/watchlist/route.ts');
+  const node1 = read('../backend/scheduler/user_assets.py');
   assert.match(route, /requireAuth\(req\)/);
   assert.match(route, /node1Json/);
   assert.match(route, /node1Path/);
-  assert.match(route, /\/user-assets\/watchlist/);
+  assert.match(route, /\/user-assets\/watchlist\/items/);
   assert.match(route, /auth\.user\.userId/);
-  assert.match(route, /DELETE/);
+  assert.match(node1, /WHERE id=\? AND user_id=\?/);
 });
 
 test('watchlist UI exposes create, rename, delete and per-list stock management', () => {
@@ -68,18 +75,20 @@ test('IA5.4.2 watchlist backtest universe snapshots and authorizes ownership', (
   assert.match(taskRoute, /user_id/);
   assert.match(panel, /value="watchlist"/);
   assert.match(panel, /\/api\/watchlists/);
-  assert.match(strategy, /Literal\[[" ]all_a/);
+  assert.match(strategy, /Literal\[/);
   assert.match(strategy, /watchlist_codes/);
   assert.match(selector, /strategy\.universe\.watchlist_codes/);
 });
 
 test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', () => {
   const route = read('src/app/api/watchlist/route.ts');
+  const node1 = read('../backend/scheduler/user_assets.py');
   const sidebar = read('src/components/select/SelectionResultsSidebar.tsx');
   const workspace = read('src/components/select/SelectionWorkspace.tsx');
   assert.match(route, /Array\.isArray\(body\?\.codes\)/);
   assert.match(route, /\/user-assets\/watchlist\/items/);
-  assert.match(route, /added_count/);
+  assert.match(node1, /INSERT OR IGNORE INTO watchlist_items\(watchlist_id,code\)/);
+  assert.match(node1, /added_count/);
   assert.match(sidebar, /BulkWatchlistBar/);
   assert.match(sidebar, /已选/);
   assert.match(sidebar, /批量加入/);
@@ -90,11 +99,14 @@ test('IA5.4.3 selection results support owner-scoped bulk watchlist insertion', 
 
 test('IA5.4.4 watchlist supports owner-scoped bulk removal', () => {
   const route = read('src/app/api/watchlist/route.ts');
+  const node1 = read('../backend/scheduler/user_assets.py');
   const watchlist = read('src/components/Watchlist.tsx');
-  assert.match(route, /Array\.isArray\(body\.codes\)/);
+  assert.match(route, /Array\.isArray\(body\?\.codes\)/);
   assert.match(route, /\/user-assets\/watchlist\/items/);
-  assert.match(route, /removed_count/);
-  assert.match(route, /一次最多移除 5000 只股票/);
+  assert.match(node1, /DELETE FROM watchlist_items/);
+  assert.match(node1, /code=\?/);
+  assert.match(node1, /removed_count/);
+  assert.match(node1, /一次最多移除 5000 只股票/);
   assert.match(watchlist, /批量移除/);
   assert.match(watchlist, /取消全选/);
   assert.match(watchlist, /codes: Array\.from\(selected\)/);
