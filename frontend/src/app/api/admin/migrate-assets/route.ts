@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       for (const row of oldRows.rows) {
         const key=String(row.user_id); const arr=oldByUser.get(key)||[]; arr.push(String(row.code)); oldByUser.set(key,arr);
       }
-      for (const [uid,codes] of oldByUser) {
+      for (const [uid,codes] of Array.from(oldByUser.entries())) {
         if (!Array.from(byWatchlist.values()).some((x:any)=>x.user_id===uid && x.is_default)) {
           byWatchlist.set(uid+'::legacy-default',{user_id:uid,name:'默认自选',is_default:true,created_at:null,updated_at:null,codes:Array.from(new Set(codes))});
         }
