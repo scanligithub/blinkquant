@@ -1,4 +1,4 @@
-import { sql } from '@/lib/db';
+import { node1Json, node1Path } from '@/lib/node1Internal';
 
 export const DEFAULT_WATCHLIST_NAME = '默认自选';
 export const MAX_WATCHLIST_NAME_LENGTH = 40;
@@ -17,36 +17,15 @@ export function validateWatchlistName(value: unknown): string {
 }
 
 export async function ensureDefaultWatchlist(userId: string) {
-  const existing = await sql`
-    SELECT id, user_id, name, is_default, created_at, updated_at
-    FROM watchlists
-    WHERE user_id = ${userId} AND is_default = TRUE
-    ORDER BY created_at ASC
-    LIMIT 1
-  `;
-  if (existing.rows[0]) return existing.rows[0];
-
-  await sql`
-    INSERT INTO watchlists (user_id, name, is_default)
-    VALUES (${userId}, ${DEFAULT_WATCHLIST_NAME}, TRUE)
-    ON CONFLICT DO NOTHING
-  `;
-  const created = await sql`
-    SELECT id, user_id, name, is_default, created_at, updated_at
-    FROM watchlists
-    WHERE user_id = ${userId} AND is_default = TRUE
-    ORDER BY created_at ASC
-    LIMIT 1
-  `;
-  return created.rows[0] ?? null;
+  const { response, data } = await node1Json(node1Path('/user-assets/watchlists', { user_id: userId }));
+  if (!response.ok) throw new Error(String(data?.detail || data?.error || '加载自选股失败'));
+  const list = Array.isArray(data?.watchlists) ? data.watchlists.find((item: any) => item.is_default) : null;
+  return list ?? null;
 }
 
 export async function getOwnedWatchlist(userId: string, id: number) {
-  const result = await sql`
-    SELECT id, user_id, name, is_default, created_at, updated_at
-    FROM watchlists
-    WHERE id = ${id} AND user_id = ${userId}
-    LIMIT 1
-  `;
-  return result.rows[0] ?? null;
+  const { response, data } = await node1Json(node1Path('/user-assets/watchlists/' + id, { user_id: userId }));
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(String(data?.detail || data?.error || '加载自选股失败'));
+  return data?.watchlist ?? null;
 }
