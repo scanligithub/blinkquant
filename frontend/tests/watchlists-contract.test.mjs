@@ -9,13 +9,16 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 test('watchlist schema enforces per-user naming, one default, and per-list stock uniqueness', () => {
   const sql = read('scripts/migrate_watchlists.sql');
   const schema = read('../backend/scheduler/schema.sql');
+  const db = read('../backend/scheduler/db.py');
   assert.match(sql, /UNIQUE \(user_id, name\)/);
   assert.match(sql, /idx_watchlists_one_default/);
   assert.match(sql, /WHERE is_default = TRUE/);
   assert.match(sql, /UNIQUE \(watchlist_id, code\)/);
   assert.match(sql, /ON DELETE CASCADE/);
   assert.match(schema, /UNIQUE\(user_id, name\)/);
-  assert.match(schema, /idx_watchlists_one_default/);
+  // The default-list unique index is intentionally created after legacy-column migration.
+  assert.match(db, /CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlists_one_default/);
+  assert.match(db, /WHERE is_default = 1/);
   assert.match(schema, /UNIQUE\(watchlist_id, code\)/);
   assert.match(schema, /FOREIGN KEY\(watchlist_id\) REFERENCES watchlists\(id\) ON DELETE CASCADE/);
 });
