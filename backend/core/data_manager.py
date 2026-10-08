@@ -81,12 +81,17 @@ class DataManager:
             logger.warning(f"Invalid NODE_INDEX {self.node_index} (out of bounds), resetting to 0")
             self.node_index = 0
 
-        # ---- 核心修改：读取本次容器唯一的 build_id.txt (用于部署版本校验) ----
+        # ---- 读取部署脚本写入的 .build_git_sha，用于版本追踪与滚动更新验收 ----
         self.build_id = "unknown"
         try:
-            if os.path.exists("build_id.txt"):
-                with open("build_id.txt", "r") as f:
-                    self.build_id = f.read().strip()
+            build_sha_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".build_git_sha")
+            if os.path.exists(build_sha_path):
+                with open(build_sha_path, "r", encoding="utf-8") as f:
+                    self.build_id = f.read().strip() or "unknown"
+            elif os.path.exists("build_id.txt"):
+                # 兼容旧版容器中的历史文件名。
+                with open("build_id.txt", "r", encoding="utf-8") as f:
+                    self.build_id = f.read().strip() or "unknown"
         except Exception:
             pass
 

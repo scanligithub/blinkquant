@@ -18,20 +18,35 @@ jobs:
       - name: Wait for Node1 to become ready
         env:
           NODE1: https://scanli-blinkquant-node1.hf.space
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           healthy_count=0
-          for i in $(seq 1 60); do
-            body=$(curl -fsS --max-time 15 "$NODE1/api/v1/health" || true)
+          for i in $(seq 1 90); do
+            body=$(curl -fsS --max-time 20 "$NODE1/api/v1/status" || true)
             echo "$body"
-            if echo "$body" | grep -q '"status":"healthy"'; then
+            matched=$(BODY="$body" EXPECTED_SHA="$EXPECTED_SHA" python - <<'PY'
+          import json, os
+          try:
+              body = json.loads(os.environ.get("BODY", ""))
+          except Exception:
+              print("0")
+              raise SystemExit
+          print("1" if body.get("status") == "healthy" and body.get("git_sha") == os.environ["EXPECTED_SHA"] else "0")
+          PY
+            )
+            if [ "$matched" = "1" ]; then
               healthy_count=$((healthy_count + 1))
-              if [ "$healthy_count" -ge 3 ]; then exit 0; fi
+              if [ "$healthy_count" -ge 3 ]; then
+                echo "Node1 is healthy on deployed commit $EXPECTED_SHA"
+                exit 0
+              fi
             else
               healthy_count=0
             fi
             sleep 10
           done
+          echo "Node1 did not become healthy on deployed commit $EXPECTED_SHA" >&2
           exit 1
 
       - name: Submit 2024 target-portfolio backtest
