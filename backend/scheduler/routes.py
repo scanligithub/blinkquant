@@ -357,8 +357,6 @@ async def rerun_task(
         raise HTTPException(500, "Stored task payload is invalid")
 
     candidate_template_id = row.get("strategy_template_id")
-    if not payload.get("strategy_name"):
-        payload["strategy_name"] = str(row.get("strategy_template_name") or f"回测策略 #{task_id}").strip()[:80]
     if candidate_template_id is not None:
         current = await fetchrow(
             "SELECT id FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
