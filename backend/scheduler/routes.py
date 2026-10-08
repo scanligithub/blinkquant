@@ -838,9 +838,32 @@ async def get_artifact_part(
         if name not in ("result", "selection_result"):
             raise HTTPException(400, "Selection Artifact only supports result")
         return stored
+    if name == "signal_trace":
+        candidate_trace_uris: list[str] = []
+        if row.get("result_uri"):
+            candidate_trace_uris.append(str(row["result_uri"]))
+        try:
+            derived_uri = make_result_uri(str(row["user_id"]), int(row["task_id"]))
+            if derived_uri not in candidate_trace_uris:
+                candidate_trace_uris.append(derived_uri)
+        except (TypeError, ValueError):
+            pass
+        for candidate in candidate_trace_uris:
+            trace = load_signal_trace(candidate, RESULT_DIR)
+            if trace is not None:
+                if candidate != row.get("result_uri"):
+                    await execute(
+                        "UPDATE artifacts SET result_uri = ?, updated_at = datetime('now') WHERE id = ?",
+                        candidate, artifact_id,
+                    )
+                if fmt != "json":
+                    raise HTTPException(400, "SignalTrace only supports JSON format")
+                return trace
+        raise HTTPException(404, "Artifact 'signal_trace' not found")
+
     if name not in ARTIFACT_NAMES:
         raise HTTPException(400, f"Unknown artifact: {name}")
-    
+
     # Historical artifacts must remain readable even when their originating task
     # row has been removed or an older artifact record has a missing/stale result_uri.
     candidate_uris: list[str] = []
@@ -874,13 +897,6 @@ async def get_artifact_part(
             resolved_uri, artifact_id,
         )
 
-    if name == "signal_trace":
-        trace = load_signal_trace(resolved_uri, RESULT_DIR)
-        if trace is None:
-            raise HTTPException(404, "Artifact 'signal_trace' not found")
-        if fmt != "json":
-            raise HTTPException(400, "SignalTrace only supports JSON format")
-        return trace
     import polars as pl
     if code and "code" in df.columns: df = df.filter(pl.col("code").cast(pl.Utf8) == code)
     if side and "side" in df.columns: df = df.filter(pl.col("side").cast(pl.Utf8).str.to_uppercase() == side.upper())
