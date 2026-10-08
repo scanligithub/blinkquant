@@ -511,10 +511,18 @@ async def export_artifact_bundle(
 ):
     from .config import RESULT_DIR
     from .result_store import build_artifact_bundle
+    from .result_persistence import ensure_result_tree_local
     row = await fetchrow("SELECT * FROM artifacts WHERE id = ?", artifact_id)
     if not row:
         raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
+    if row["artifact_type"] == "backtest" and row.get("result_uri"):
+        try:
+            available = await ensure_result_tree_local(str(row["result_uri"]), RESULT_DIR)
+        except Exception as exc:
+            raise HTTPException(503, "Artifact result storage is temporarily unavailable") from exc
+        if not available:
+            raise HTTPException(404, "Artifact result files not found")
     try:
         payload = build_artifact_bundle(row, RESULT_DIR)
     except ValueError as exc:
@@ -552,6 +560,7 @@ async def import_artifact_bundle(
         make_result_uri,
         validate_artifact_bundle,
     )
+    from .result_persistence import persist_result_tree
 
     temp_dir = None
     final_dir = None
@@ -700,6 +709,11 @@ async def import_artifact_bundle(
                 extracted_bytes + result_json_size,
             )
             artifact_id_new = int(row["id"])
+
+            if result_uri:
+                stage = "persist_durable_result"
+                await persist_result_tree(result_uri, RESULT_DIR)
+
             committed = True
             stage = "commit"
 
@@ -820,6 +834,7 @@ async def get_artifact_part(
 ):
     from .config import RESULT_DIR
     from .result_store import ARTIFACT_NAMES, load_part, load_signal_trace, make_result_uri
+    from .result_persistence import ensure_result_part_local
     row = await fetchrow("SELECT result_uri, task_id, result_json, user_id, artifact_type FROM artifacts WHERE id = ?", artifact_id)
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
@@ -849,6 +864,7 @@ async def get_artifact_part(
         except (TypeError, ValueError):
             pass
         for candidate in candidate_trace_uris:
+            await ensure_result_part_local(candidate, "signal_trace", RESULT_DIR)
             trace = load_signal_trace(candidate, RESULT_DIR)
             if trace is not None:
                 if candidate != row.get("result_uri"):
@@ -879,6 +895,7 @@ async def get_artifact_part(
     resolved_uri = None
     df = None
     for candidate in candidate_uris:
+        await ensure_result_part_local(candidate, name, RESULT_DIR)
         df = load_part(candidate, name, RESULT_DIR)
         if df is not None:
             resolved_uri = candidate
@@ -930,6 +947,7 @@ async def get_task_artifact(
 ):
     from .config import RESULT_DIR
     from .result_store import load_part, load_as_legacy_json, load_signal_trace, ARTIFACT_NAMES
+    from .result_persistence import ensure_result_part_local
 
     row = await fetchrow("SELECT result_uri, result, user_id FROM task_queue WHERE id = ?", task_id)
     if not row:
@@ -973,6 +991,7 @@ async def get_task_artifact(
     if name not in ARTIFACT_NAMES:
         raise HTTPException(400, f"Unknown artifact: {name}. Valid: {ARTIFACT_NAMES}")
 
+    await ensure_result_part_local(row["result_uri"], name, RESULT_DIR)
     df = load_part(row["result_uri"], name, RESULT_DIR)
     if df is None:
         raise HTTPException(404, f"Artifact '{name}' not found")
