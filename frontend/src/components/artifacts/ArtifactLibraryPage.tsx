@@ -51,9 +51,10 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const [search, setSearch] = useState('');
   const pageSize = 20;
   const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number; total: number; filteredTotal: number; selectionTotal: number; backtestTotal: number }>({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
+  const snapshotRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+    if (!background) setLoading(true);
     try {
       const query = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) });
       if (kind !== 'all') query.set('artifact_type', kind);
@@ -62,21 +63,33 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加载成果失败');
       const done = Array.isArray(json?.artifacts) ? json.artifacts : [];
-      setTasks(done);
-      setStorage({
+      const nextStorage = {
         usedBytes: Number(json?.global_used_bytes ?? json?.used_bytes ?? 0),
         quotaBytes: Number(json?.quota_bytes || 0),
         total: Number(json?.global_total ?? json?.total ?? done.length),
         filteredTotal: Number(json?.total || 0),
         selectionTotal: Number(json?.selection_total || 0),
         backtestTotal: Number(json?.backtest_total || 0),
-      });
+      };
+
+      // Background polling must be a no-op when the actual artifact data did not change.
+      // This prevents the page from flashing/loading and preserves the current UI state.
+      const snapshot = JSON.stringify({ artifacts: done, storage: nextStorage });
+      if (snapshot !== snapshotRef.current) {
+        snapshotRef.current = snapshot;
+        setTasks(done);
+        setStorage(nextStorage);
+      }
     } catch (e) {
       console.error('load artifacts failed', e);
-      setTasks([]);
-      setStorage({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
+      // Keep the last good library visible during transient background/network failures.
+      if (!background) {
+        snapshotRef.current = null;
+        setTasks([]);
+        setStorage({ usedBytes: 0, quotaBytes: 0, total: 0, filteredTotal: 0, selectionTotal: 0, backtestTotal: 0 });
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [kind, page, pageSize, search]);
 
@@ -103,7 +116,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   useEffect(() => { if (user) void load(); }, [user, load]);
   useEffect(() => {
     if (!user) return;
-    const timer = window.setInterval(() => void load(), 5000);
+    const timer = window.setInterval(() => void load({ background: true }), 5000);
     return () => window.clearInterval(timer);
   }, [user, load]);
 
