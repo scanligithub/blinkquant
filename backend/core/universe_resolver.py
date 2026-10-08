@@ -97,10 +97,8 @@ class UniverseResolver:
             .with_columns(
                 pl.col("index_id").cast(pl.Utf8).str.strip_chars(),
                 pl.col("stock_id").cast(pl.Utf8).str.strip_chars(),
-                # Polars 2 removed direct Utf8 -> Date casts; normalize through
-                # Utf8 and parse explicitly while remaining compatible with Parquet Date columns.
-                pl.col("start_date").cast(pl.Utf8).str.to_date(strict=False),
-                pl.col("end_date").cast(pl.Utf8).str.to_date(strict=False),
+                pl.col("start_date").cast(pl.Date, strict=False),
+                pl.col("end_date").cast(pl.Date, strict=False),
             )
         )
 
