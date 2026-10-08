@@ -23,6 +23,8 @@ SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "/data/scheduler.db")
 SCHEDULER_HF_REPO = os.getenv("SCHEDULER_HF_REPO", "scanli/blinkquant-scheduler-state")
 SCHEDULER_HF_FILE = os.getenv("SCHEDULER_HF_FILE", "scheduler.db")
 CHECKPOINT_INTERVAL_SEC = int(os.getenv("CHECKPOINT_INTERVAL_SEC", "600"))
+# Durable result store for Artifact files; mirrors RESULT_DIR in a HF Dataset.
+SCHEDULER_RESULTS_HF_REPO = os.getenv("SCHEDULER_RESULTS_HF_REPO", "scanli/blinkquant-results")
 
 SCHEDULE_INTERVAL_SEC = int(os.getenv("SCHEDULE_INTERVAL_SEC", "15"))
 HEARTBEAT_TIMEOUT_SEC = 30
