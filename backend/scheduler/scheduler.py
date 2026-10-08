@@ -844,7 +844,8 @@ class ClusterScheduler:
         try: payload = json.loads(row["payload"]) if row.get("payload") else {}
         except (TypeError, json.JSONDecodeError): payload = {}
         source = payload.get("selection_strategy_snapshot") or {}
-        title = (f"{source.get('name')} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (row.get("strategy_template_name") or f"回测成果 #{task_id}")
+        strategy_name = str(payload.get("strategy_name") or "").strip()
+        title = (f"{source.get('name')} 选股成果" if source.get("name") else f"选股成果 #{task_id}") if row["task_type"] == "selection" else (f"{strategy_name} 回测成果" if strategy_name else (row.get("strategy_template_name") or f"回测成果 #{task_id}"))
         result_json = row.get("result") if row["task_type"] == "selection" else None
         # Selection results live in SQLite, so count their serialized bytes for logical quota
         # accounting. Backtest artifacts use the physical result-store byte count.
