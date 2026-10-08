@@ -93,6 +93,13 @@ def test_backtest_artifact_export_can_be_imported_roundtrip(tmp_path, monkeypatc
         monkeypatch.setattr(db, "SCHEDULER_DB_PATH", str(db_path))
         monkeypatch.setattr(config, "RESULT_DIR", str(result_dir))
 
+        # Artifact persistence is an external HF side effect; this roundtrip test
+        # validates local export/import semantics and must not require CI secrets.
+        import scheduler.result_persistence as result_persistence
+        async def fake_persist_result_tree(*args, **kwargs):
+            return None
+        monkeypatch.setattr(result_persistence, "persist_result_tree", fake_persist_result_tree)
+
         await db.close_pool()
         await db.init_pool()
         try:
