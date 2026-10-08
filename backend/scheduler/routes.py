@@ -1180,6 +1180,7 @@ def _task_brief(row: dict) -> dict:
         except Exception:
             payload = {}
     payload = payload or {}
+    strategy_name = str(payload.get("strategy_name") or "").strip() or None
     formula = (payload.get("formula") or "")[:48]
     start = payload.get("start_date") or payload.get("start")
     end = payload.get("end_signal_date") or payload.get("end_date") or payload.get("signal_end_date")
@@ -1194,6 +1195,7 @@ def _task_brief(row: dict) -> dict:
         "priority": row.get("priority"),
         "progress_pct": row.get("progress_pct"),
         "formula_preview": formula or None,
+        "strategy_name": strategy_name,
         "date_range": range_s,
         "created_at": row.get("created_at"),
         "queued_at": row.get("queued_at"),
