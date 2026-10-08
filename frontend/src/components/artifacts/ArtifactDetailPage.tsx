@@ -299,7 +299,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     <div className="text-xs text-slate-400 mt-1">大型结果文件仍由 Node1 结果存储提供，本页使用现有权限控制读取。</div>
                     <div className="flex flex-wrap gap-2 mt-4">
                       {(['equity_curve', 'trades', 'positions_daily'] as const).map(name => (
-                        <button key={name} type="button" onClick={() => void downloadArtifact(Number(task.task_id ?? task.id), name)} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
+                        <button key={name} type="button" onClick={() => void downloadArtifact(task.id, name, { artifact: true })} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
                           {name === 'equity_curve' ? '下载权益曲线' : name === 'trades' ? '下载成交明细' : '下载持仓明细'}
                         </button>
                       ))}
