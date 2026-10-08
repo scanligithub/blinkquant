@@ -96,6 +96,7 @@ class TaskResponse(BaseModel):
     strategy_template_name: Optional[str] = None
     strategy_template_updated_at: Optional[str] = None
     strategy_template_version: Optional[int] = None
+    strategy_name: Optional[str] = None
     source_task_id: Optional[int] = None
     artifact_id: Optional[int] = None
     progress_pct: Optional[float] = None
@@ -139,6 +140,10 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         except (json.JSONDecodeError, TypeError):
             result_summary = None
 
+    payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else (row.get("payload") or {})
+    if not isinstance(payload, dict):
+        payload = {}
+
     progress = None
     if row.get("progress_json"):
         try:
@@ -150,7 +155,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         id=row["id"],
         user_id=row["user_id"],
         task_type=row["task_type"],
-        payload=json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"],
+        payload=payload,
         priority=row["priority"],
         status=row["status"],
         assigned_node=row.get("assigned_node"),
@@ -163,6 +168,7 @@ def _row_to_task(row: dict, slim: bool = False) -> TaskResponse:
         strategy_template_name=row.get("strategy_template_name"),
         strategy_template_updated_at=row.get("strategy_template_updated_at"),
         strategy_template_version=row.get("strategy_template_version"),
+        strategy_name=(str(payload.get("strategy_name") or "").strip() or None),
         source_task_id=row.get("source_task_id"),
         artifact_id=row.get("artifact_id"),
         progress_pct=row.get("progress_pct"),
@@ -245,6 +251,12 @@ async def _resolve_strategy_template(task: TaskCreate) -> tuple[int | None, str 
 @router.post("/tasks", dependencies=[Depends(verify_internal_token)])
 async def create_task(task: TaskCreate) -> dict:
     """创建任务，返回 task_id"""
+    if task.task_type == "backtest":
+        strategy_name = str(task.payload.get("strategy_name") or "").strip()
+        if not strategy_name:
+            raise HTTPException(400, "回测策略名称必填")
+        if len(strategy_name) > 80:
+            raise HTTPException(400, "回测策略名称不能超过 80 个字符")
     from .config import compute_task_timeout_sec
     template_id, template_name, template_updated_at, template_version = await _resolve_strategy_template(task)
     timeout_sec = compute_task_timeout_sec(task.task_type, task.payload)
@@ -345,6 +357,8 @@ async def rerun_task(
         raise HTTPException(500, "Stored task payload is invalid")
 
     candidate_template_id = row.get("strategy_template_id")
+    if not payload.get("strategy_name"):
+        payload["strategy_name"] = str(row.get("strategy_template_name") or f"回测策略 #{task_id}").strip()[:80]
     if candidate_template_id is not None:
         current = await fetchrow(
             "SELECT id FROM backtest_strategy_templates WHERE id = ? AND user_id = ?",
