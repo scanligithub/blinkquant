@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
@@ -50,19 +50,29 @@ export default function TaskCenterPage() {
   const [type, setType] = useState('all');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const tasksSnapshotRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+    if (!background) setLoading(true);
     try {
       const res = await fetch('/api/v1/tasks', { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '加载任务失败');
-      setTasks(Array.isArray(json?.tasks) ? json.tasks : []);
+
+      const nextTasks = Array.isArray(json?.tasks) ? json.tasks : [];
+      const snapshot = JSON.stringify(nextTasks);
+      if (snapshot !== tasksSnapshotRef.current) {
+        tasksSnapshotRef.current = snapshot;
+        setTasks(nextTasks);
+      }
     } catch (e) {
       console.error('load tasks failed', e);
-      setTasks([]);
+      if (!background) {
+        tasksSnapshotRef.current = null;
+        setTasks([]);
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
@@ -92,7 +102,7 @@ export default function TaskCenterPage() {
 
   useEffect(() => {
     if (!user) return;
-    const id = window.setInterval(() => void load(), 3000);
+    const id = window.setInterval(() => void load({ background: true }), 3000);
     return () => window.clearInterval(id);
   }, [user, load]);
 
