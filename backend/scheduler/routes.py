@@ -819,8 +819,8 @@ async def get_artifact_part(
     user_id: str | None = None, role: str | None = None,
 ):
     from .config import RESULT_DIR
-    from .result_store import ARTIFACT_NAMES, load_part, load_signal_trace
-    row = await fetchrow("SELECT result_uri, result_json, user_id, artifact_type FROM artifacts WHERE id = ?", artifact_id)
+    from .result_store import ARTIFACT_NAMES, load_part, load_signal_trace, make_result_uri
+    row = await fetchrow("SELECT result_uri, task_id, result_json, user_id, artifact_type FROM artifacts WHERE id = ?", artifact_id)
     if not row: raise HTTPException(404, "Artifact not found")
     _assert_task_access(row, user_id, role)
     if row["artifact_type"] == "selection":
@@ -838,17 +838,49 @@ async def get_artifact_part(
         if name not in ("result", "selection_result"):
             raise HTTPException(400, "Selection Artifact only supports result")
         return stored
-    if not row["result_uri"]: raise HTTPException(404, "Artifact result files are unavailable")
+    if name not in ARTIFACT_NAMES:
+        raise HTTPException(400, f"Unknown artifact: {name}")
+    
+    # Historical artifacts must remain readable even when their originating task
+    # row has been removed or an older artifact record has a missing/stale result_uri.
+    candidate_uris: list[str] = []
+    if row.get("result_uri"):
+        candidate_uris.append(str(row["result_uri"]))
+    try:
+        derived_uri = make_result_uri(str(row["user_id"]), int(row["task_id"]))
+        if derived_uri not in candidate_uris:
+            candidate_uris.append(derived_uri)
+    except (TypeError, ValueError):
+        derived_uri = None
+
+    resolved_uri = None
+    df = None
+    for candidate in candidate_uris:
+        df = load_part(candidate, name, RESULT_DIR)
+        if df is not None:
+            resolved_uri = candidate
+            break
+    if df is None:
+        log.warning(
+            "artifact part missing: artifact_id=%s task_id=%s user_id=%s result_uri=%s candidates=%s name=%s result_dir=%s",
+            artifact_id, row.get("task_id"), row.get("user_id"), row.get("result_uri"),
+            candidate_uris, name, RESULT_DIR,
+        )
+        raise HTTPException(404, f"Artifact '{name}' not found")
+
+    if resolved_uri != row.get("result_uri"):
+        await execute(
+            "UPDATE artifacts SET result_uri = ?, updated_at = datetime('now') WHERE id = ?",
+            resolved_uri, artifact_id,
+        )
+
     if name == "signal_trace":
-        trace = load_signal_trace(row["result_uri"], RESULT_DIR)
+        trace = load_signal_trace(resolved_uri, RESULT_DIR)
         if trace is None:
             raise HTTPException(404, "Artifact 'signal_trace' not found")
         if fmt != "json":
             raise HTTPException(400, "SignalTrace only supports JSON format")
         return trace
-    if name not in ARTIFACT_NAMES: raise HTTPException(400, f"Unknown artifact: {name}")
-    df = load_part(row["result_uri"], name, RESULT_DIR)
-    if df is None: raise HTTPException(404, f"Artifact '{name}' not found")
     import polars as pl
     if code and "code" in df.columns: df = df.filter(pl.col("code").cast(pl.Utf8) == code)
     if side and "side" in df.columns: df = df.filter(pl.col("side").cast(pl.Utf8).str.to_uppercase() == side.upper())
