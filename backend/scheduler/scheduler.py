@@ -790,10 +790,12 @@ class ClusterScheduler:
             }
             summary, uri, nbytes = persist(task_id, legacy_data, RESULT_DIR, user_id=user_id)
 
-        # Artifact result files are durable before the task can become done.
-        try:
-            await persist_result_tree(uri, RESULT_DIR)
-        except Exception as exc:
+        durable_persist = bool(data and "summary" in data and "meta" in data)
+        if durable_persist:
+            # Artifact result files are durable before the task can become done.
+            try:
+                await persist_result_tree(uri, RESULT_DIR)
+            except Exception as exc:
             log.exception("durable result persistence failed task=%s uri=%s", task_id, uri)
             await self._fail_backtest(
                 task_id,
