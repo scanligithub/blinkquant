@@ -684,6 +684,7 @@ class ClusterScheduler:
         from .db import execute, fetchrow
         from .config import RESULT_DIR
         from .result_store import persist, make_result_uri, dir_size
+        from .result_persistence import persist_result_tree
         from .dispatcher import fetch_backtest_artifact
 
         trow = await fetchrow(
@@ -788,6 +789,20 @@ class ClusterScheduler:
                 "source_task_id": trow.get("source_task_id") if trow else None,
             }
             summary, uri, nbytes = persist(task_id, legacy_data, RESULT_DIR, user_id=user_id)
+
+        durable_persist = bool(data and "summary" in data and "meta" in data)
+        if durable_persist:
+            # Artifact result files are durable before the task can become done.
+            try:
+                await persist_result_tree(uri, RESULT_DIR)
+            except Exception as exc:
+            log.exception("durable result persistence failed task=%s uri=%s", task_id, uri)
+            await self._fail_backtest(
+                task_id,
+                f"durable artifact persistence failed: {type(exc).__name__}: {exc}",
+                generation,
+            )
+            return
 
         await execute("""
             UPDATE task_queue
