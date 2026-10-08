@@ -796,13 +796,13 @@ class ClusterScheduler:
             try:
                 await persist_result_tree(uri, RESULT_DIR)
             except Exception as exc:
-            log.exception("durable result persistence failed task=%s uri=%s", task_id, uri)
-            await self._fail_backtest(
-                task_id,
-                f"durable artifact persistence failed: {type(exc).__name__}: {exc}",
-                generation,
-            )
-            return
+                log.exception("durable result persistence failed task=%s uri=%s", task_id, uri)
+                await self._fail_backtest(
+                    task_id,
+                    f"durable artifact persistence failed: {type(exc).__name__}: {exc}",
+                    generation,
+                )
+                return
 
         await execute("""
             UPDATE task_queue
