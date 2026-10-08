@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import BacktestStrategyTemplates, { type BacktestTemplateConfig, type SelectionStrategySource } from './BacktestStrategyTemplates';
 
 export interface BacktestParams {
+  strategy_name: string;
   formula: string;
   source_selection_strategy?: SelectionStrategySource;
   start_date: string;
@@ -87,6 +88,7 @@ const INDEX_OPTIONS = [
 ] as const;
 
 export default function BacktestPanel({ initialFormula = '', onRun, loading, onTemplateSelected }: BacktestPanelProps) {
+  const [strategyName, setStrategyName] = useState('新建回测策略');
   const [formula, setFormula] = useState(initialFormula || 'MA(CLOSE,10) > MA(CLOSE,60)');
   const [exitFormula, setExitFormula] = useState('MA(CLOSE,5) < MA(CLOSE,20)');
   const [entryTrigger, setEntryTrigger] = useState<typeof TRIGGERS[number]>('cross_above');
@@ -304,10 +306,11 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const strategyNameValue = strategyName.trim();
     const entryCondition = formula.trim();
     const exitCondition = exitFormula.trim();
 
-    if (!entryCondition || (mode === 'event_driven' && !exitCondition)) return;
+    if (!strategyNameValue || !entryCondition || (mode === 'event_driven' && !exitCondition)) return;
     if (universeType === 'watchlist' && (!Number.isInteger(Number(watchlistId)) || Number(watchlistId) <= 0)) return;
 
     const maxPositions = Math.max(1, parseInt(topN, 10) || 20);
@@ -334,6 +337,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     }
 
     onRun({
+      strategy_name: strategyNameValue,
       formula: entryCondition,
       start_date: startDate,
       end_signal_date: endDate,
@@ -375,6 +379,19 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
           <div className="mt-0.5 text-[10px] text-slate-500">仅保存版本快照；修改 Entry 不会修改源选股策略。</div>
         </div>
       )}
+      <div>
+        <label className="block text-xs font-medium text-gray-500 mb-1">策略名称（必填）</label>
+        <input
+          type="text"
+          value={strategyName}
+          onChange={(e) => setStrategyName(e.target.value)}
+          placeholder="例如：10/60均线金叉策略"
+          maxLength={80}
+          className={inputClass}
+          required
+        />
+      </div>
+
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-1">Entry 条件（必填）</label>
         <input
@@ -588,7 +605,7 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
 
       <button
         type="submit"
-        disabled={loading || !formula.trim() || (mode === 'event_driven' && !exitFormula.trim()) || (universeType === 'watchlist' && !watchlistId)}
+        disabled={loading || !strategyName.trim() || !formula.trim() || (mode === 'event_driven' && !exitFormula.trim()) || (universeType === 'watchlist' && !watchlistId)}
         className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? '回测中...' : '运行回测'}
