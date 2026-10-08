@@ -12,10 +12,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ arti
   const sp = req.nextUrl.searchParams;
   const name = sp.get('name') || 'equity_curve';
   if (!ALLOWED.has(name)) return NextResponse.json({ error: 'Invalid artifact name' }, { status: 400 });
+
+  const authQs = new URLSearchParams({ user_id: auth.user.userId });
+  if (auth.user.role) authQs.set('role', auth.user.role);
+  const artifactResponse = await fetch(NODE1_URL + '/internal/artifacts/' + id + '?' + authQs.toString(), {
+    headers: { Authorization: 'Bearer ' + INTERNAL_TOKEN }, cache: 'no-store',
+  });
+  if (!artifactResponse.ok) {
+    const text = await artifactResponse.text().catch(() => '');
+    return NextResponse.json({ error: text || ('upstream ' + artifactResponse.status) }, { status: artifactResponse.status });
+  }
+  const artifact = await artifactResponse.json().catch(() => null);
+  const taskId = Number(artifact?.task_id);
+  if (!Number.isInteger(taskId) || taskId <= 0) {
+    return NextResponse.json({ error: 'Artifact task ID unavailable' }, { status: 404 });
+  }
+
   const qs = new URLSearchParams(sp);
   qs.set('name', name); qs.set('user_id', auth.user.userId);
   if (auth.user.role) qs.set('role', auth.user.role);
-  const upstream = await fetch(NODE1_URL + '/internal/artifacts/' + id + '/part?' + qs.toString(), {
+  const upstream = await fetch(NODE1_URL + '/internal/tasks/' + taskId + '/artifact?' + qs.toString(), {
     headers: { Authorization: 'Bearer ' + INTERNAL_TOKEN }, cache: 'no-store',
   });
   if (!upstream.ok) {
@@ -24,10 +40,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ arti
   }
   const ct = upstream.headers.get('Content-Type') || '';
   if (ct.includes('application/json')) return NextResponse.json(await upstream.json());
-
-  if (!upstream.body) {
-    return NextResponse.json({ error: 'Artifact download stream unavailable' }, { status: 502 });
-  }
+  if (!upstream.body) return NextResponse.json({ error: 'Artifact download stream unavailable' }, { status: 502 });
 
   const headers: Record<string, string> = {
     'Content-Type': ct || 'application/octet-stream',
@@ -38,6 +51,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ arti
   };
   const contentLength = upstream.headers.get('Content-Length');
   if (contentLength) headers['Content-Length'] = contentLength;
-
   return new NextResponse(upstream.body, { status: 200, headers });
 }
