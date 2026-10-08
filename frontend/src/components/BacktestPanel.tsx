@@ -87,10 +87,10 @@ const INDEX_OPTIONS = [
 ] as const;
 
 export default function BacktestPanel({ initialFormula = '', onRun, loading, onTemplateSelected }: BacktestPanelProps) {
-  const [formula, setFormula] = useState(initialFormula);
-  const [exitFormula, setExitFormula] = useState('');
-  const [entryTrigger, setEntryTrigger] = useState<typeof TRIGGERS[number]>('condition');
-  const [exitTrigger, setExitTrigger] = useState<typeof TRIGGERS[number]>('condition');
+  const [formula, setFormula] = useState(initialFormula || 'MA(CLOSE,10) > MA(CLOSE,60)');
+  const [exitFormula, setExitFormula] = useState('MA(CLOSE,5) < MA(CLOSE,20)');
+  const [entryTrigger, setEntryTrigger] = useState<typeof TRIGGERS[number]>('cross_above');
+  const [exitTrigger, setExitTrigger] = useState<typeof TRIGGERS[number]>('cross_below');
   const [mode, setMode] = useState<'target_portfolio' | 'event_driven'>('target_portfolio');
   const [universeType, setUniverseType] = useState<'all_a' | 'index' | 'watchlist'>('all_a');
   const [watchlists, setWatchlists] = useState<WatchlistOption[]>([]);
