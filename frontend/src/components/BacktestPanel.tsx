@@ -44,6 +44,48 @@ interface BacktestPanelProps {
 const TRIGGERS = ['condition', 'cross_above', 'cross_below'] as const;
 const TIMEFRAMES = ['D', 'W', 'M'] as const;
 
+// 与 stockA 当前生产数据源的 37 个 TARGET_INDEXES 保持一致。
+// 指数成分股只允许选择数据源实际提供历史成分数据的指数。
+const INDEX_OPTIONS = [
+  { id: '000001', name: '上证指数' },
+  { id: '399001', name: '深证成指' },
+  { id: '399006', name: '创业板指' },
+  { id: '000688', name: '科创50' },
+  { id: '899050', name: '北证50' },
+  { id: '000016', name: '上证50' },
+  { id: '000300', name: '沪深300' },
+  { id: '000905', name: '中证500' },
+  { id: '000852', name: '中证1000' },
+  { id: '000851', name: '中证2000' },
+  { id: '399303', name: '国证2000' },
+  { id: '399330', name: '深证100' },
+  { id: '000010', name: '上证180' },
+  { id: '399324', name: '深证红利' },
+  { id: '000015', name: '红利指数' },
+  { id: '000904', name: '中证中盘200' },
+  { id: '399311', name: '国证1000' },
+  { id: '930713', name: '中证人工智能主题' },
+  { id: '980017', name: '国证芯片' },
+  { id: '399354', name: '分析师指数' },
+  { id: '399673', name: '创业板50' },
+  { id: '399412', name: '国证新能源' },
+  { id: '399005', name: '中小100' },
+  { id: '399994', name: '中证信息安全' },
+  { id: '399975', name: '证券公司' },
+  { id: '399986', name: '中证银行' },
+  { id: '399932', name: '中证消费' },
+  { id: '399933', name: '中证医药' },
+  { id: '399967', name: '中证军工' },
+  { id: '399989', name: '中证医疗' },
+  { id: '399971', name: '中证传媒' },
+  { id: '399997', name: '中证白酒' },
+  { id: '000928', name: '中证能源' },
+  { id: '000929', name: '中证原材料' },
+  { id: '399990', name: '煤炭等权' },
+  { id: '930708', name: '中证有色' },
+  { id: '399974', name: '国证国企' },
+] as const;
+
 export default function BacktestPanel({ initialFormula = '', onRun, loading, onTemplateSelected }: BacktestPanelProps) {
   const [formula, setFormula] = useState(initialFormula);
   const [exitFormula, setExitFormula] = useState('');
@@ -414,7 +456,13 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
       </div>
 
       {universeType === 'index' && (
-        <input value={indexId} onChange={(e) => setIndexId(e.target.value)} placeholder="指数代码，例如 000300" className={inputClass} required />
+        <select value={indexId} onChange={(e) => setIndexId(e.target.value)} className={selectClass} required>
+          {INDEX_OPTIONS.map((index) => (
+            <option key={index.id} value={index.id}>
+              {index.id} · {index.name}
+            </option>
+          ))}
+        </select>
       )}
 
       {universeType === 'watchlist' && (
