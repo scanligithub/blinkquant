@@ -549,14 +549,14 @@ class DataManager:
         ]
 
         base = self.df_daily.sort("date")
-        self.df_weekly = base.group_by_dynamic("date", every="1w", group_by="code").agg(aggs)
-        self.df_monthly = base.group_by_dynamic("date", every="1mo", group_by="code").agg(aggs)
+        self.df_weekly = base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+        self.df_monthly = base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
         # 板块重采样
         if self.df_sector_daily is not None:
             s_base = self.df_sector_daily.sort("date")
-            self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", group_by="code").agg(aggs)
-            self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", group_by="code").agg(aggs)
+            self.df_sector_weekly = s_base.group_by_dynamic("date", every="1w", by="code").agg(aggs)
+            self.df_sector_monthly = s_base.group_by_dynamic("date", every="1mo", by="code").agg(aggs)
 
     def get_limit_flags(self, date: datetime.date, codes: list[str]) -> dict[str, dict]:
         """
