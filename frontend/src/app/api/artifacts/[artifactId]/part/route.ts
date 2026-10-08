@@ -24,10 +24,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ arti
   }
   const ct = upstream.headers.get('Content-Type') || '';
   if (ct.includes('application/json')) return NextResponse.json(await upstream.json());
-  const buf = await upstream.arrayBuffer();
-  return new NextResponse(buf, { status: 200, headers: {
+
+  if (!upstream.body) {
+    return NextResponse.json({ error: 'Artifact download stream unavailable' }, { status: 502 });
+  }
+
+  const headers: Record<string, string> = {
     'Content-Type': ct || 'application/octet-stream',
-    'Content-Disposition': upstream.headers.get('Content-Disposition') || ('attachment; filename="artifact_' + id + '_' + name + '.parquet"'),
+    'Content-Disposition':
+      upstream.headers.get('Content-Disposition') ||
+      ('attachment; filename="artifact_' + id + '_' + name + '.parquet"'),
     'Cache-Control': 'no-store',
-  } });
+  };
+  const contentLength = upstream.headers.get('Content-Length');
+  if (contentLength) headers['Content-Length'] = contentLength;
+
+  return new NextResponse(upstream.body, { status: 200, headers });
 }
