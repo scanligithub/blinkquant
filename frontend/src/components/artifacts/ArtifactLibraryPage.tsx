@@ -8,8 +8,6 @@ import type { Task } from '@/hooks/useCluster';
 
 type ArtifactKind = 'all' | 'selection' | 'backtest';
 
-const TYPE_LABELS: Record<string, string> = { selection: '选股成果', backtest: '回测成果' };
-
 function fmtTime(value?: string | null) {
   return value ? new Date(value).toLocaleString() : '—';
 }
@@ -37,6 +35,62 @@ function backtestMeta(task: Task) {
     end: payload.end_signal_date ? String(payload.end_signal_date) : '—',
     source: source && source.id ? source : null,
   };
+}
+
+function pct(value?: number | null) {
+  return value == null ? '—' : `${(value * 100).toFixed(2)}%`;
+}
+
+function num(value?: number | null, digits = 2) {
+  return value == null ? '—' : value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function int(value?: number | null) {
+  return value == null ? '—' : value.toLocaleString();
+}
+
+function BacktestSummary({ task }: { task: Task }) {
+  const s = task.result_summary;
+  if (!s) return null;
+
+  const primary = [
+    { label: '最终权益', value: s.final_equity == null ? '—' : s.final_equity.toLocaleString(undefined, { maximumFractionDigits: 0 }) },
+    { label: '总收益', value: pct(s.total_return) },
+    { label: '年化收益', value: pct(s.cagr) },
+    { label: '最大回撤', value: pct(s.max_drawdown) },
+    { label: '夏普', value: num(s.sharpe) },
+    { label: '交易笔数', value: int(s.n_trades) },
+  ];
+
+  const secondary = [
+    ['初始资金', s.initial_cash == null ? '—' : s.initial_cash.toLocaleString(undefined, { maximumFractionDigits: 0 })],
+    ['索提诺', num(s.sortino)],
+    ['卡尔玛', num(s.calmar)],
+    ['最长回撤', s.drawdown_duration == null ? '—' : `${int(s.drawdown_duration)} 天`],
+    ['换手率', num(s.turnover)],
+    ['总费用', s.total_fees == null ? '—' : s.total_fees.toLocaleString(undefined, { maximumFractionDigits: 0 })],
+    ['买入 / 卖出', `${int(s.buy_count)} / ${int(s.sell_count)}`],
+    ['持仓记录', int(s.n_positions)],
+    ['回测天数', int(s.total_days)],
+  ];
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        {primary.map(item => (
+          <div key={item.label} className="rounded-lg bg-white border border-slate-100 px-2.5 py-2">
+            <div className="text-[10px] text-slate-400">{item.label}</div>
+            <div className="text-xs font-bold text-slate-700 mt-0.5">{item.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        {secondary.map(([label, value]) => (
+          <span key={label}><span className="text-slate-400">{label}：</span>{value}</span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactKind }) {
@@ -71,9 +125,6 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
         selectionTotal: Number(json?.selection_total || 0),
         backtestTotal: Number(json?.backtest_total || 0),
       };
-
-      // Background polling must be a no-op when the actual artifact data did not change.
-      // This prevents the page from flashing/loading and preserves the current UI state.
       const snapshot = JSON.stringify({ artifacts: done, storage: nextStorage });
       if (snapshot !== snapshotRef.current) {
         snapshotRef.current = snapshot;
@@ -82,7 +133,6 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       }
     } catch (e) {
       console.error('load artifacts failed', e);
-      // Keep the last good library visible during transient background/network failures.
       if (!background) {
         snapshotRef.current = null;
         setTasks([]);
@@ -119,16 +169,11 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
     const timer = window.setInterval(() => void load({ background: true }), 5000);
     return () => window.clearInterval(timer);
   }, [user, load]);
-
-  useEffect(() => {
-    setPage(0);
-  }, [kind, search]);
-
+  useEffect(() => { setPage(0); }, [kind, search]);
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(storage.filteredTotal / pageSize) - 1);
     if (page > lastPage) setPage(lastPage);
   }, [page, storage.filteredTotal, pageSize]);
-
 
   const exportArtifact = async (artifactId: number) => {
     try {
@@ -138,7 +183,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `blinkquant_artifact_\${artifactId}.zip`;
+      a.download = `blinkquant_artifact_${artifactId}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -156,7 +201,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || '导入失败');
       await load();
-      alert(`已导入成果：\${json.title || '新成果'}`);
+      alert(`已导入成果：${json.title || '新成果'}`);
     } catch (error) {
       alert(error instanceof Error ? error.message : '导入失败');
     } finally {
@@ -172,7 +217,6 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
   const pageCount = Math.max(1, Math.ceil(storage.filteredTotal / pageSize));
   const selectionCount = storage.selectionTotal;
   const backtestCount = storage.backtestTotal;
-
   const storagePct = storage.quotaBytes > 0 ? Math.min(100, (storage.usedBytes / storage.quotaBytes) * 100) : 0;
   const fmtBytes = (n: number) => n < 1024 * 1024
     ? Math.round(n / 1024) + ' KB'
@@ -181,7 +225,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
       : (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
 
   const tabs: Array<{ key: ArtifactKind; label: string; count?: number }> = [
-    { key: 'all', label: '全部成果', count: tasks.length },
+    { key: 'all', label: '全部成果', count: storage.total },
     { key: 'selection', label: '选股成果', count: selectionCount },
     { key: 'backtest', label: '回测成果', count: backtestCount },
   ];
@@ -206,41 +250,20 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Link href="/artifacts" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200">
-              <div className="text-xs text-slate-400">全部成果</div>
-              <div className="text-2xl font-black mt-1">{storage.total}</div>
-            </Link>
-            <Link href="/artifacts/selections" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200">
-              <div className="text-xs text-slate-400">选股成果</div>
-              <div className="text-2xl font-black mt-1">{selectionCount}</div>
-            </Link>
-            <Link href="/artifacts/backtests" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200">
-              <div className="text-xs text-slate-400">回测成果</div>
-              <div className="text-2xl font-black mt-1">{backtestCount}</div>
-            </Link>
+            <Link href="/artifacts" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200"><div className="text-xs text-slate-400">全部成果</div><div className="text-2xl font-black mt-1">{storage.total}</div></Link>
+            <Link href="/artifacts/selections" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200"><div className="text-xs text-slate-400">选股成果</div><div className="text-2xl font-black mt-1">{selectionCount}</div></Link>
+            <Link href="/artifacts/backtests" className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-blue-200"><div className="text-xs text-slate-400">回测成果</div><div className="text-2xl font-black mt-1">{backtestCount}</div></Link>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>成果存储</span><span>{fmtBytes(storage.usedBytes)} / {fmtBytes(storage.quotaBytes)}</span>
-            </div>
-            <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full bg-blue-600" style={{ width: storagePct + '%' }} />
-            </div>
+            <div className="flex items-center justify-between text-xs text-slate-500"><span>成果存储</span><span>{fmtBytes(storage.usedBytes)} / {fmtBytes(storage.quotaBytes)}</span></div>
+            <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-blue-600" style={{ width: storagePct + '%' }} /></div>
             <div className="mt-2 text-xs text-slate-400">{storage.total} 个成果；已删除的成果不占用成果库容量。</div>
           </div>
 
           <section className="bg-white rounded-2xl border border-slate-200 p-4">
-            <form
-              onSubmit={(e) => { e.preventDefault(); setPage(0); setSearch(searchInput.trim()); }}
-              className="flex flex-col sm:flex-row gap-2"
-            >
-              <input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="搜索成果名称、公式或来源策略…"
-                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400"
-              />
+            <form onSubmit={(e) => { e.preventDefault(); setPage(0); setSearch(searchInput.trim()); }} className="flex flex-col sm:flex-row gap-2">
+              <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="搜索成果名称、公式或来源策略…" className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400" />
               <button type="submit" className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">搜索</button>
               {search && <button type="button" onClick={() => { setSearchInput(''); setSearch(''); setPage(0); }} className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-600">清除</button>}
             </form>
@@ -250,11 +273,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-2">
               {tabs.map(tab => (
-                <Link
-                  key={tab.key}
-                  href={tab.key === 'all' ? '/artifacts' : tab.key === 'selection' ? '/artifacts/selections' : '/artifacts/backtests'}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg ${kind === tab.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-                >
+                <Link key={tab.key} href={tab.key === 'all' ? '/artifacts' : tab.key === 'selection' ? '/artifacts/selections' : '/artifacts/backtests'} className={`px-3 py-1.5 text-xs font-bold rounded-lg ${kind === tab.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
                   {tab.label}{typeof tab.count === 'number' ? ' · ' + tab.count : ''}
                 </Link>
               ))}
@@ -271,7 +290,7 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                       <div key={task.id} className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Link href={'/artifacts/selections/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">{(task as any).title || ('选股成果 #' + task.id)}</Link>
+                            <Link href={'/artifacts/selections/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">{task.title || ('选股成果 #' + task.id)}</Link>
                             <span className="text-[10px] px-2 py-1 rounded-full bg-blue-50 text-blue-700">选股成果</span>
                             {meta.source && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600">策略 v{meta.source.version_no}</span>}
                           </div>
@@ -282,17 +301,8 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                         <div className="flex gap-2 shrink-0">
                           <Link href={'/artifacts/selections/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看成果</Link>
                           <button type="button" onClick={() => void exportArtifact(Number(task.id))} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">导出</button>
-                          <button type="button" onClick={async () => {
-                            const title = window.prompt('成果名称', (task as any).title || ('选股成果 #' + task.id));
-                            if (!title || !title.trim()) return;
-                            const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
-                            if (res.ok) void load();
-                          }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
-                          <button type="button" onClick={async () => {
-                            if (!window.confirm('删除该成果？此操作不会删除原任务。')) return;
-                            const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' });
-                            if (res.ok) void load(); else alert('删除失败');
-                          }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
+                          <button type="button" onClick={async () => { const title = window.prompt('成果名称', task.title || ('选股成果 #' + task.id)); if (!title || !title.trim()) return; const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) }); if (res.ok) void load(); }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
+                          <button type="button" onClick={async () => { if (!window.confirm('删除该成果？此操作不会删除原任务。')) return; const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' }); if (res.ok) void load(); else alert('删除失败'); }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
                         </div>
                       </div>
                     );
@@ -303,60 +313,32 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                     <div key={task.id} className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Link href={'/artifacts/backtests/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">
-                            {(task as any).title || task.strategy_template_name || ('回测成果 #' + task.id)}
-                          </Link>
+                          <Link href={'/artifacts/backtests/' + task.id} className="font-bold text-slate-800 hover:text-blue-600">{task.title || task.strategy_template_name || ('回测成果 #' + task.id)}</Link>
                           <span className="text-[10px] px-2 py-1 rounded-full bg-amber-50 text-amber-700">回测成果</span>
                           {task.strategy_template_version && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600">策略 v{task.strategy_template_version}</span>}
                         </div>
                         <div className="text-xs font-mono text-slate-500 mt-2 break-all">{meta.formula || '—'}</div>
-                        <div className="text-xs text-slate-400 mt-2">区间：{meta.start} → {meta.end} · 完成：{fmtTime(task.finished_at)}</div>
-                        {task.result_summary && (
-                          <div className="text-xs text-slate-600 mt-1">
-                            {task.result_summary.total_return != null && <>收益 {(task.result_summary.total_return * 100).toFixed(2)}%</>}
-                            {task.result_summary.max_drawdown != null && <> · 最大回撤 {(task.result_summary.max_drawdown * 100).toFixed(2)}%</>}
-                            {task.result_summary.n_trades != null && <> · {task.result_summary.n_trades} 笔</>}
-                          </div>
-                        )}
-                        {meta.source && <div className="text-xs text-blue-600 mt-1">基础选股策略：{meta.source.name} · v{meta.source.version_no}</div>}
+                        <div className="text-xs text-slate-400 mt-2">区间：{meta.start} → {meta.end} · 周期：{meta.timeframe} · 完成：{fmtTime(task.finished_at)}</div>
+                        <BacktestSummary task={task} />
+                        {meta.source && <div className="text-xs text-blue-600 mt-2">基础选股策略：{meta.source.name} · v{meta.source.version_no}</div>}
                       </div>
                       <div className="flex gap-2 shrink-0">
                         <Link href={'/artifacts/backtests/' + task.id} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">查看成果</Link>
-                        <button type="button" onClick={async () => {
-                          const title = window.prompt('成果名称', (task as any).title || (task.strategy_template_name || ('回测成果 #' + task.id)));
-                          if (!title || !title.trim()) return;
-                          const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) });
-                          if (res.ok) void load();
-                        }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
-                        <button type="button" onClick={async () => {
-                          if (!window.confirm('删除该成果？此操作不会删除原任务。')) return;
-                          const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' });
-                          if (res.ok) void load(); else alert('删除失败');
-                        }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
+                        <button type="button" onClick={async () => { const title = window.prompt('成果名称', task.title || (task.strategy_template_name || ('回测成果 #' + task.id))); if (!title || !title.trim()) return; const res = await fetch('/api/artifacts/' + task.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() }) }); if (res.ok) void load(); }} className="px-3 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">重命名</button>
+                        <button type="button" onClick={async () => { if (!window.confirm('删除该成果？此操作不会删除原任务。')) return; const res = await fetch('/api/artifacts/' + task.id, { method: 'DELETE' }); if (res.ok) void load(); else alert('删除失败'); }} className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">删除</button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
+
             {!loading && storage.filteredTotal > 0 && (
               <div className="px-5 py-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-slate-500">
-                  共 {storage.filteredTotal} 条 · 第 {page + 1}/{pageCount} 页 · 每页 {pageSize} 条
-                </div>
+                <div className="text-xs text-slate-500">共 {storage.filteredTotal} 条 · 第 {page + 1}/{pageCount} 页 · 每页 {pageSize} 条</div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPage(current => Math.max(0, current - 1))}
-                    disabled={page <= 0}
-                    className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40"
-                  >上一页</button>
-                  <button
-                    type="button"
-                    onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
-                    disabled={page >= pageCount - 1}
-                    className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40"
-                  >下一页</button>
+                  <button type="button" onClick={() => setPage(current => Math.max(0, current - 1))} disabled={page <= 0} className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40">上一页</button>
+                  <button type="button" onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))} disabled={page >= pageCount - 1} className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40">下一页</button>
                 </div>
               </div>
             )}
