@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
+import NodeHealthCards from '@/components/system/NodeHealthCards';
 
 interface User { id: string; email: string; role: string }
 interface ClusterNode {
@@ -159,6 +160,8 @@ export default function SystemStatusPage() {
   return (
     <AppShell user={user} onLogout={logout}>
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 md:px-8">
+        <NodeHealthCards />
+
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-blue-600">运行监控</p>
