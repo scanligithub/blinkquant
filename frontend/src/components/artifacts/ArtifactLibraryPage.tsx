@@ -37,62 +37,6 @@ function backtestMeta(task: Task) {
   };
 }
 
-function pct(value?: number | null) {
-  return value == null ? '—' : `${(value * 100).toFixed(2)}%`;
-}
-
-function num(value?: number | null, digits = 2) {
-  return value == null ? '—' : value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
-}
-
-function int(value?: number | null) {
-  return value == null ? '—' : value.toLocaleString();
-}
-
-function BacktestSummary({ task }: { task: Task }) {
-  const s = task.result_summary;
-  if (!s) return null;
-
-  const primary = [
-    { label: '最终权益', value: s.final_equity == null ? '—' : s.final_equity.toLocaleString(undefined, { maximumFractionDigits: 0 }) },
-    { label: '总收益', value: pct(s.total_return) },
-    { label: '年化收益', value: pct(s.cagr) },
-    { label: '最大回撤', value: pct(s.max_drawdown) },
-    { label: '夏普', value: num(s.sharpe) },
-    { label: '交易笔数', value: int(s.n_trades) },
-  ];
-
-  const secondary = [
-    ['初始资金', s.initial_cash == null ? '—' : s.initial_cash.toLocaleString(undefined, { maximumFractionDigits: 0 })],
-    ['索提诺', num(s.sortino)],
-    ['卡尔玛', num(s.calmar)],
-    ['最长回撤', s.drawdown_duration == null ? '—' : `${int(s.drawdown_duration)} 天`],
-    ['换手率', num(s.turnover)],
-    ['总费用', s.total_fees == null ? '—' : s.total_fees.toLocaleString(undefined, { maximumFractionDigits: 0 })],
-    ['买入 / 卖出', `${int(s.buy_count)} / ${int(s.sell_count)}`],
-    ['持仓记录', int(s.n_positions)],
-    ['回测天数', int(s.total_days)],
-  ];
-
-  return (
-    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        {primary.map(item => (
-          <div key={item.label} className="rounded-lg bg-white border border-slate-100 px-2.5 py-2">
-            <div className="text-[10px] text-slate-400">{item.label}</div>
-            <div className="text-xs font-bold text-slate-700 mt-0.5">{item.value}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
-        {secondary.map(([label, value]) => (
-          <span key={label}><span className="text-slate-400">{label}：</span>{value}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactKind }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -319,7 +263,6 @@ export default function ArtifactLibraryPage({ kind = 'all' }: { kind?: ArtifactK
                         </div>
                         <div className="text-xs font-mono text-slate-500 mt-2 break-all">{meta.formula || '—'}</div>
                         <div className="text-xs text-slate-400 mt-2">区间：{meta.start} → {meta.end} · 周期：{meta.timeframe} · 完成：{fmtTime(task.finished_at)}</div>
-                        <BacktestSummary task={task} />
                         {meta.source && <div className="text-xs text-blue-600 mt-2">基础选股策略：{meta.source.name} · v{meta.source.version_no}</div>}
                       </div>
                       <div className="flex gap-2 shrink-0">
