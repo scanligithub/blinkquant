@@ -63,8 +63,20 @@ export interface Task {
   result_summary?: {
     total_return?: number;
     max_drawdown?: number;
+    cagr?: number;
+    sharpe?: number;
+    sortino?: number;
+    calmar?: number;
+    drawdown_duration?: number;
+    turnover?: number;
+    total_fees?: number;
+    buy_count?: number;
+    sell_count?: number;
     n_trades?: number;
+    n_positions?: number;
     final_equity?: number;
+    initial_cash?: number;
+    total_days?: number;
   } | null;
   result_uri?: string | null;
   strategy_template_id?: number | null;
@@ -93,14 +105,13 @@ export interface Task {
 }
 
 export function useCluster() {
-  const [clusterState, setClusterState] = useState<ClusterState>({ 
-    nodes: [], 
-    queueStats: { pending_selection: 0, pending_backtest: 0, running: 0 } 
+  const [clusterState, setClusterState] = useState<ClusterState>({
+    nodes: [],
+    queueStats: { pending_selection: 0, pending_backtest: 0, running: 0 }
   });
   const [myTasks, setMyTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 轮询集群状态
   useEffect(() => {
     let mounted = true;
     const pollCluster = async () => {
@@ -114,13 +125,11 @@ export function useCluster() {
         console.error('Cluster status poll error:', e);
       }
     };
-    
     pollCluster();
     const interval = setInterval(pollCluster, 2000);
     return () => { mounted = false; clearInterval(interval); };
   }, []);
 
-  // 轮询我的任务
   useEffect(() => {
     let mounted = true;
     const pollTasks = async () => {
@@ -128,7 +137,6 @@ export function useCluster() {
         const res = await fetch('/api/v1/tasks', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
-          // Node1 返回 { tasks: [...] }；兼容万一仍是数组
           const list = Array.isArray(data) ? data : (Array.isArray(data?.tasks) ? data.tasks : []);
           if (mounted) setMyTasks(list);
         }
@@ -136,7 +144,6 @@ export function useCluster() {
         console.error('Tasks poll error:', e);
       }
     };
-    
     pollTasks();
     const interval = setInterval(pollTasks, 3000);
     return () => { mounted = false; clearInterval(interval); };
@@ -166,9 +173,7 @@ export function useCluster() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       return data.task_id;
     } finally {
       setLoading(false);
