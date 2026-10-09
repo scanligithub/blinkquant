@@ -190,7 +190,8 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
     setStampTaxRate(String(fee.stamp_tax_rate ?? '0.0005'));
     setTransferFeeRate(String(fee.transfer_fee_rate ?? '0.00001'));
     setBenchmarkEnabled(benchmark.enabled !== false);
-    setBenchmarkIndex(String(benchmark.index_id || '000300'));
+    const benchmarkId = String(benchmark.index_id || '000300');
+    setBenchmarkIndex(INDEX_OPTIONS.some((index) => index.id === benchmarkId) ? benchmarkId : '000300');
     setMinListingDays(String(config.min_listing_days || 0));
     setExcludeSt(!!config.exclude_st);
     const source = config.source_selection_strategy;
@@ -558,12 +559,17 @@ export default function BacktestPanel({ initialFormula = '', onRun, loading, onT
       {benchmarkEnabled && (
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">基准指数</label>
-          <input
+          <select
             value={benchmarkIndex}
             onChange={(e) => setBenchmarkIndex(e.target.value)}
-            placeholder="例如 000300（沪深300）"
-            className={inputClass}
-          />
+            className={selectClass}
+          >
+            {INDEX_OPTIONS.map((index) => (
+              <option key={index.id} value={index.id}>
+                {index.id} · {index.name}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
