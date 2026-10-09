@@ -21,15 +21,7 @@ function queueForSlot(
   return queues.running;
 }
 
-function queueItemLine(it: {
-  id: number;
-  status: string;
-  task_type_zh?: string;
-  assigned_node?: string | null;
-  progress_pct?: number | null;
-  date_range?: string | null;
-  formula_preview?: string | null;
-}): string {
+function queueItemLine(it: { id: number; status: string; task_type_zh?: string; assigned_node?: string | null; progress_pct?: number | null; date_range?: string | null; formula_preview?: string | null }): string {
   if (it.status === 'running') {
     const pct = it.progress_pct != null ? ` ${Math.round(it.progress_pct)}%` : '';
     const where = it.assigned_node ? `@${it.assigned_node}` : '';
@@ -65,69 +57,34 @@ export default function NodeHealthCards() {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap justify-center gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {clusterStatus?.nodes?.map((node: any, idx: number) => {
             const slot = nodeIdFromHealthCard(node, idx);
             const role = (clusterNodes || []).find((n) => n.node_id === slot);
             const q = queueForSlot(queues, slot);
 
             return (
-              <div
-                key={idx}
-                className={`text-xs md:text-sm font-mono px-3 py-2 rounded-lg border shadow-sm min-w-[200px] max-w-[280px] ${
-                  node.online ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'
-                }`}
-              >
+              <div key={idx} className={`w-full text-xs md:text-sm font-mono px-3 py-2 rounded-lg border shadow-sm ${node.online ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${node.online ? 'bg-green-500' : 'bg-red-500'}`} />
                   <span className="font-bold text-slate-700 text-sm md:text-base">Node {node.node ?? idx}</span>
-                  <span className={`text-xs uppercase font-bold px-2 py-0.5 rounded-full ${
-                    node.status === 'healthy' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                  }`}>
+                  <span className={`text-xs uppercase font-bold px-2 py-0.5 rounded-full ${node.status === 'healthy' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
                     {node.status || 'OFFLINE'}
                   </span>
                 </div>
-
-                <div className="mt-1.5 text-sm font-semibold text-slate-800">
-                  {role?.display_label || (node.online ? '—' : '离线')}
-                </div>
-
+                <div className="mt-1.5 text-sm font-semibold text-slate-800">{role?.display_label || (node.online ? '—' : '离线')}</div>
                 {node.online ? (
                   <div className="mt-2 space-y-1">
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs">进程内存</span>
-                      <span className="font-mono font-medium text-slate-900">{node.process_memory_gb} GB</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs">系统空闲</span>
-                      <span className="font-mono font-bold text-blue-600">{node.system_memory_free_gb ?? node.system_memory_available_gb} GB</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs">磁盘空闲</span>
-                      <span className="font-mono text-slate-900">{node.disk_free_gb} GB</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-slate-500 text-xs">数据行</span>
-                      <span className="font-mono text-slate-500">{node.rows_daily?.toLocaleString()}</span>
-                    </div>
+                    <div className="flex justify-between gap-3"><span className="text-slate-500 text-xs">进程内存</span><span className="font-mono font-medium text-slate-900">{node.process_memory_gb} GB</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-slate-500 text-xs">系统空闲</span><span className="font-mono font-bold text-blue-600">{node.system_memory_free_gb ?? node.system_memory_available_gb} GB</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-slate-500 text-xs">磁盘空闲</span><span className="font-mono text-slate-900">{node.disk_free_gb} GB</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-slate-500 text-xs">数据行</span><span className="font-mono text-slate-500">{node.rows_daily?.toLocaleString()}</span></div>
                   </div>
                 ) : null}
-
                 {q && (
                   <div className="mt-2 pt-2 border-t border-slate-100">
-                    <div className="font-medium text-slate-600 text-xs">
-                      {q.title}{' '}
-                      <span className={q.count > 0 ? 'text-slate-900' : 'text-slate-400'}>{q.count}</span>
-                    </div>
-                    {q.count > 0 && (
-                      <div className="mt-1 space-y-0.5 max-h-24 overflow-y-auto">
-                        {q.items.map((it) => (
-                          <div key={it.id} className="pl-1 text-slate-600 truncate text-xs">
-                            {queueItemLine(it)}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <div className="font-medium text-slate-600 text-xs">{q.title}{' '}<span className={q.count > 0 ? 'text-slate-900' : 'text-slate-400'}>{q.count}</span></div>
+                    {q.count > 0 && <div className="mt-1 space-y-0.5 max-h-24 overflow-y-auto">{q.items.map((it) => <div key={it.id} className="pl-1 text-slate-600 truncate text-xs">{queueItemLine(it)}</div>)}</div>}
                   </div>
                 )}
               </div>
