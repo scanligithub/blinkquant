@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import AppShell from '@/components/app/AppShell';
 import type { Task } from '@/hooks/useCluster';
-import { downloadArtifact } from '@/lib/backtestArtifacts';
+import ArtifactDataViewer from '@/components/artifacts/ArtifactDataViewer';
 import SignalTracePanel from '@/components/artifacts/SignalTracePanel';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -121,6 +121,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
   const backtestStrategy = payload.strategy || {};
   const backtestEntry = backtestStrategy.entry || {};
   const backtestUniverse = backtestStrategy.universe || {};
+  const backtestExit = backtestStrategy.exit || {};
   const extractSelectionStrategy = async () => {
     if (!task) return;
     const defaultName = ((task as any).title || '回测成果') + ' · 选股策略';
@@ -267,8 +268,12 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <h2 className="font-bold text-slate-800">研究配置快照</h2>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
-                      <div className="col-span-2 md:col-span-4"><div className="text-xs text-slate-400">Entry</div><div className="mt-1 font-mono break-all">{backtestEntry.condition || '—'}</div></div>
-                      <div><div className="text-xs text-slate-400">信号周期</div><div className="mt-1">{backtestEntry.timeframe || 'D'}</div></div>
+                      <div className="col-span-2 md:col-span-4"><div className="text-xs text-slate-400">买入条件（Entry）</div><div className="mt-1 font-mono break-all">{backtestEntry.condition || '—'}</div></div>
+                      <div><div className="text-xs text-slate-400">买入触发</div><div className="mt-1">{backtestEntry.trigger === 'cross_above' ? '上穿' : backtestEntry.trigger === 'cross_below' ? '下穿' : backtestEntry.trigger === 'condition' ? '条件成立' : backtestEntry.trigger || '—'}</div></div>
+                      <div><div className="text-xs text-slate-400">买入信号周期</div><div className="mt-1">{backtestEntry.timeframe || 'D'}</div></div>
+                      <div className="col-span-2 md:col-span-4"><div className="text-xs text-slate-400">卖出条件（Exit）</div><div className="mt-1 font-mono break-all">{backtestExit.condition || '—'}</div></div>
+                      <div><div className="text-xs text-slate-400">卖出触发</div><div className="mt-1">{backtestExit.trigger === 'cross_above' ? '上穿' : backtestExit.trigger === 'cross_below' ? '下穿' : backtestExit.trigger === 'condition' ? '条件成立' : backtestExit.trigger || '—'}</div></div>
+                      <div><div className="text-xs text-slate-400">卖出信号周期</div><div className="mt-1">{backtestExit.timeframe || '—'}</div></div>
                       <div><div className="text-xs text-slate-400">股票池</div><div className="mt-1">{backtestUniverse.type === 'index' ? '指数 ' + (backtestUniverse.index_id || '—') : '全 A'}</div></div>
                       <div><div className="text-xs text-slate-400">回测区间</div><div className="mt-1">{payload.start_date || '—'} → {payload.end_signal_date || '—'}</div></div>
                       <div><div className="text-xs text-slate-400">初始资金</div><div className="mt-1 font-mono">{payload.initial_cash != null ? Number(payload.initial_cash).toLocaleString() : '—'}</div></div>
@@ -294,18 +299,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     </div>
                   </section>
 
-                  <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <h2 className="font-bold text-slate-800">Artifact 数据</h2>
-                    <div className="text-xs text-slate-400 mt-1">大型结果文件仍由 Node1 结果存储提供，本页使用现有权限控制读取。</div>
-                    <div className="flex flex-wrap gap-2 mt-4">
-                      {(['equity_curve', 'trades', 'positions_daily'] as const).map(name => (
-                        <button key={name} type="button" onClick={() => void downloadArtifact(task.id, name, { artifact: true })} className="px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
-                          {name === 'equity_curve' ? '下载权益曲线' : name === 'trades' ? '下载成交明细' : '下载持仓明细'}
-                        </button>
-                      ))}
-                    </div>
-                    {task.result_uri && <div className="mt-4 text-xs font-mono text-slate-400 break-all">引用：{task.result_uri}</div>}
-                  </section>
+                  <ArtifactDataViewer artifactId={Number(task.id)} resultUri={task.result_uri} />
                 </>
               )}
 
