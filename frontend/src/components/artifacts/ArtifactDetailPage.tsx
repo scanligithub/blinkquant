@@ -257,12 +257,45 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                 <>
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <h2 className="font-bold text-slate-800">回测结果摘要</h2>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                      {task.result_summary?.final_equity != null && <div><div className="text-xs text-slate-400">最终权益</div><div className="font-mono font-bold mt-1">{Number(task.result_summary.final_equity).toLocaleString()}</div></div>}
-                      {task.result_summary?.total_return != null && <div><div className="text-xs text-slate-400">总收益</div><div className="font-mono font-bold mt-1">{(task.result_summary.total_return * 100).toFixed(2)}%</div></div>}
-                      {task.result_summary?.max_drawdown != null && <div><div className="text-xs text-slate-400">最大回撤</div><div className="font-mono font-bold mt-1">{(task.result_summary.max_drawdown * 100).toFixed(2)}%</div></div>}
-                      {task.result_summary?.n_trades != null && <div><div className="text-xs text-slate-400">成交笔数</div><div className="font-mono font-bold mt-1">{task.result_summary.n_trades}</div></div>}
-                    </div>
+                    {(() => {
+                      const s = task.result_summary;
+                      const metrics: Array<{ label: string; value: string }> = [];
+                      const addNumber = (label: string, value: number | undefined | null, digits = 2) => {
+                        if (value != null && Number.isFinite(Number(value))) metrics.push({ label, value: Number(value).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits }) });
+                      };
+                      const addInteger = (label: string, value: number | undefined | null) => {
+                        if (value != null && Number.isFinite(Number(value))) metrics.push({ label, value: Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 }) });
+                      };
+                      const addPercent = (label: string, value: number | undefined | null) => {
+                        if (value != null && Number.isFinite(Number(value))) metrics.push({ label, value: (Number(value) * 100).toFixed(2) + '%' });
+                      };
+                      addInteger('初始资金', s?.initial_cash ?? (payload.initial_cash != null ? Number(payload.initial_cash) : null));
+                      addInteger('最终权益', s?.final_equity);
+                      addPercent('总收益', s?.total_return);
+                      addPercent('年化收益', s?.cagr);
+                      addPercent('最大回撤', s?.max_drawdown);
+                      addNumber('夏普比率', s?.sharpe);
+                      addNumber('索提诺比率', s?.sortino);
+                      addNumber('卡尔玛比率', s?.calmar);
+                      addInteger('最长回撤（天）', s?.drawdown_duration);
+                      addNumber('换手率', s?.turnover);
+                      addInteger('总费用', s?.total_fees);
+                      addInteger('买入笔数', s?.buy_count);
+                      addInteger('卖出笔数', s?.sell_count);
+                      addInteger('成交笔数', s?.n_trades);
+                      addInteger('持仓记录数', s?.n_positions);
+                      addInteger('回测天数', s?.total_days);
+                      return metrics.length ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mt-4">
+                          {metrics.map((metric) => (
+                            <div key={metric.label} className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                              <div className="text-xs text-slate-500">{metric.label}</div>
+                              <div className="font-mono text-sm md:text-base font-bold text-slate-800 mt-1 break-words">{metric.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <div className="mt-3 text-sm text-slate-400">暂无可展示的回测指标。</div>;
+                    })()}
                   </section>
 
                   <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
