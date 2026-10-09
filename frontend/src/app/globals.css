@@ -63,6 +63,11 @@ body {
   border-radius: 6px;
 }
 
+/* 选股页节点健康卡已迁移到“系统状态”页。 */
+main:has(section[aria-label="选股控制"]) > div > section:first-child {
+  display: none;
+}
+
 /* === 滚动条 === */
 .custom-scrollbar {
   scrollbar-width: thin;
@@ -88,8 +93,3 @@ body {
 /* === 链接 === */
 a { color: rgb(var(--brand)); }
 a:hover { color: rgb(var(--brand-2)); }
-
-/* 选股页节点健康卡已迁移到“系统状态”页。 */
-main.min-h-screen.p-4.font-sans.bg-slate-50.text-slate-900 > div.max-w-7xl.mx-auto.space-y-6 > section:first-child {
-  display: none;
-}
