@@ -46,7 +46,7 @@ interface LegacyBacktestResult {
   };
 }
 
-interface Summary {
+export interface Summary {
   total_return?: number;
   max_drawdown?: number;
   cagr?: number;
@@ -373,7 +373,7 @@ export default function BacktestResults({
       )}
       {tab === 'trades' && (
         <>
-          {taskId && (
+          {dataId != null && (
             <PaginationBar
               total={tradesCount}
               offset={hook.tradesOffset}
@@ -398,7 +398,7 @@ export default function BacktestResults({
       )}
       {tab === 'positions' && (
         <>
-          {taskId && (
+          {dataId != null && (
             <PaginationBar
               total={positionsCount}
               offset={hook.positionsOffset}
