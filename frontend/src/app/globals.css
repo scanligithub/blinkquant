@@ -12,9 +12,9 @@
   --ink:        15  23  42;
   --ink-2:      51  65  85;
   --muted:     100 116 139;
-  --brand:      37  99 235;
-  --brand-2:    29  78 216;
-  --brand-3:    96 165 250;
+  --brand:     37  99 235;
+  --brand-2:   29  78 216;
+  --brand-3:   96 165 250;
   --up:        220  38  38;
   --up-2:      239  68  68;
   --down:       22 163  74;
@@ -88,3 +88,8 @@ body {
 /* === 链接 === */
 a { color: rgb(var(--brand)); }
 a:hover { color: rgb(var(--brand-2)); }
+
+/* 选股页节点健康卡已迁移到“系统状态”页。 */
+main.min-h-screen.p-4.md\\:p-8.font-sans.bg-slate-50.text-slate-900 > div.max-w-7xl.mx-auto.space-y-6 > section:first-child {
+  display: none;
+}
