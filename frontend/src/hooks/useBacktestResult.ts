@@ -7,13 +7,14 @@ import {
   loadTradesPage,
   loadPositionsPage,
   PREVIEW_PAGE_SIZE,
+  type ArtifactSource,
   type EquityPoint,
   type PositionRow,
   type TradeRow,
   type ArtifactName,
 } from '@/lib/backtestArtifacts';
 
-export function useBacktestResult(taskId: number | null) {
+export function useBacktestResult(taskId: number | null, source: ArtifactSource = 'task') {
   const [equity, setEquity] = useState<EquityPoint[] | null>(null);
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [tradesTotal, setTradesTotal] = useState(0);
@@ -34,14 +35,14 @@ export function useBacktestResult(taskId: number | null) {
     setPositionsOffset(0);
     setError(null);
     setLoading(null);
-  }, [taskId]);
+  }, [taskId, source]);
 
   const loadEquity = useCallback(async () => {
     if (taskId == null) return;
     setLoading('equity_curve');
     setError(null);
     try {
-      const rows = await loadEquityCurve(taskId);
+      const rows = await loadEquityCurve(taskId, source);
       setEquity(rows);
       return rows;
     } catch (e: any) {
@@ -50,7 +51,7 @@ export function useBacktestResult(taskId: number | null) {
     } finally {
       setLoading(null);
     }
-  }, [taskId]);
+  }, [taskId, source]);
 
   const loadTradesPageFn = useCallback(
     async (offset = 0) => {
@@ -58,7 +59,7 @@ export function useBacktestResult(taskId: number | null) {
       setLoading('trades');
       setError(null);
       try {
-        const page = await loadTradesPage(taskId, { limit: PREVIEW_PAGE_SIZE, offset });
+        const page = await loadTradesPage(taskId, { limit: PREVIEW_PAGE_SIZE, offset }, source);
         setTrades(page.rows);
         setTradesTotal(page.total);
         setTradesOffset(page.offset);
@@ -68,7 +69,7 @@ export function useBacktestResult(taskId: number | null) {
         setLoading(null);
       }
     },
-    [taskId]
+    [taskId, source]
   );
 
   const loadPositionsPageFn = useCallback(
@@ -77,7 +78,7 @@ export function useBacktestResult(taskId: number | null) {
       setLoading('positions_daily');
       setError(null);
       try {
-        const page = await loadPositionsPage(taskId, { limit: PREVIEW_PAGE_SIZE, offset });
+        const page = await loadPositionsPage(taskId, { limit: PREVIEW_PAGE_SIZE, offset }, source);
         setPositions(page.rows);
         setPositionsTotal(page.total);
         setPositionsOffset(page.offset);
@@ -87,15 +88,15 @@ export function useBacktestResult(taskId: number | null) {
         setLoading(null);
       }
     },
-    [taskId]
+    [taskId, source]
   );
 
   const download = useCallback(
     (name: ArtifactName) => {
       if (taskId == null) return;
-      return downloadArtifact(taskId, name);
+      return downloadArtifact(taskId, name, source === 'artifact' ? { artifact: true } : undefined);
     },
-    [taskId]
+    [taskId, source]
   );
 
   return {

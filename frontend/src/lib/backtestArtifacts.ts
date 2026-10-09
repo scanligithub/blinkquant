@@ -2,8 +2,9 @@ import { parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 
 export type ArtifactName = 'equity_curve' | 'trades' | 'positions_daily';
+export type ArtifactSource = 'task' | 'artifact';
 
-export const PREVIEW_PAGE_SIZE = 500;
+export const PREVIEW_PAGE_SIZE = 100;
 
 export interface EquityPoint {
   date: string;
@@ -50,12 +51,13 @@ function toIsoDate(v: unknown): string {
 
 export async function fetchArtifactBuffer(
   taskId: number,
-  name: ArtifactName
+  name: ArtifactName,
+  source: ArtifactSource = 'task'
 ): Promise<ArrayBuffer> {
-  const res = await fetch(
-    `/api/v1/tasks/${taskId}/artifact?name=${encodeURIComponent(name)}`,
-    { cache: 'no-store' }
-  );
+  const endpoint = source === 'artifact'
+    ? `/api/artifacts/${taskId}/part?name=${encodeURIComponent(name)}`
+    : `/api/v1/tasks/${taskId}/artifact?name=${encodeURIComponent(name)}`;
+  const res = await fetch(endpoint, { cache: 'no-store' });
   if (res.status === 401) {
     window.location.href = '/login';
     throw new Error('Unauthorized');
@@ -68,15 +70,19 @@ export async function fetchArtifactBuffer(
 
 export async function loadArtifactRows<T extends Record<string, unknown>>(
   taskId: number,
-  name: ArtifactName
+  name: ArtifactName,
+  source: ArtifactSource = 'task'
 ): Promise<T[]> {
-  const buffer = await fetchArtifactBuffer(taskId, name);
+  const buffer = await fetchArtifactBuffer(taskId, name, source);
   const records = await parquetReadObjects({ file: buffer, compressors });
   return (records || []) as T[];
 }
 
-export async function loadEquityCurve(taskId: number): Promise<EquityPoint[]> {
-  const rows = await loadArtifactRows<Record<string, unknown>>(taskId, 'equity_curve');
+export async function loadEquityCurve(
+  taskId: number,
+  source: ArtifactSource = 'task'
+): Promise<EquityPoint[]> {
+  const rows = await loadArtifactRows<Record<string, unknown>>(taskId, 'equity_curve', source);
   return rows.map((r) => ({
     date: toIsoDate(r.date),
     equity: Number(r.equity),
@@ -95,7 +101,8 @@ export async function loadTradesPage(
     side?: string;
     dateFrom?: string;
     dateTo?: string;
-  } = {}
+  } = {},
+  source: ArtifactSource = 'task'
 ): Promise<PageResult<TradeRow>> {
   const limit = opts.limit ?? PREVIEW_PAGE_SIZE;
   const offset = opts.offset ?? 0;
@@ -110,7 +117,10 @@ export async function loadTradesPage(
   if (opts.dateFrom) qs.set('date_from', opts.dateFrom);
   if (opts.dateTo) qs.set('date_to', opts.dateTo);
 
-  const res = await fetch(`/api/v1/tasks/${taskId}/artifact?${qs}`, {
+  const endpoint = source === 'artifact'
+    ? `/api/artifacts/${taskId}/part`
+    : `/api/v1/tasks/${taskId}/artifact`;
+  const res = await fetch(`${endpoint}?${qs}`, {
     cache: 'no-store',
   });
   if (res.status === 401) {
@@ -144,7 +154,8 @@ export async function loadPositionsPage(
     code?: string;
     dateFrom?: string;
     dateTo?: string;
-  } = {}
+  } = {},
+  source: ArtifactSource = 'task'
 ): Promise<PageResult<PositionRow>> {
   const limit = opts.limit ?? PREVIEW_PAGE_SIZE;
   const offset = opts.offset ?? 0;
@@ -158,7 +169,10 @@ export async function loadPositionsPage(
   if (opts.dateFrom) qs.set('date_from', opts.dateFrom);
   if (opts.dateTo) qs.set('date_to', opts.dateTo);
 
-  const res = await fetch(`/api/v1/tasks/${taskId}/artifact?${qs}`, {
+  const endpoint = source === 'artifact'
+    ? `/api/artifacts/${taskId}/part`
+    : `/api/v1/tasks/${taskId}/artifact`;
+  const res = await fetch(`${endpoint}?${qs}`, {
     cache: 'no-store',
   });
   if (res.status === 401) {
@@ -199,7 +213,7 @@ export async function downloadArtifact(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `task_${taskId}_${name}.parquet`;
+  a.download = `${options?.artifact ? 'artifact' : 'task'}_${taskId}_${name}.parquet`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

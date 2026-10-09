@@ -124,7 +124,9 @@ function ParamRow({
 interface BacktestResultsProps {
   result?: LegacyBacktestResult | null;
   taskId?: number | null;
+  artifactId?: number | null;
   summary?: Summary | null;
+  showSummaryMetrics?: boolean;
 }
 
 function PaginationBar({
@@ -135,6 +137,7 @@ function PaginationBar({
   onPrev,
   onNext,
   taskId,
+  artifactMode,
   artifactName,
   fileName,
 }: {
@@ -145,6 +148,7 @@ function PaginationBar({
   onPrev: () => void;
   onNext: () => void;
   taskId: number;
+  artifactMode: boolean;
   artifactName: ArtifactName;
   fileName: string;
 }) {
@@ -175,7 +179,7 @@ function PaginationBar({
           下一页
         </button>
         <button
-          onClick={() => downloadArtifact(taskId, artifactName)}
+          onClick={() => downloadArtifact(taskId, artifactName, artifactMode ? { artifact: true } : undefined)}
           className="px-2 py-1 rounded border text-xs text-blue-600 hover:bg-blue-50"
         >
           下载{fileName}.parquet
@@ -185,14 +189,22 @@ function PaginationBar({
   );
 }
 
-export default function BacktestResults({ result, taskId, summary }: BacktestResultsProps) {
+export default function BacktestResults({
+  result,
+  taskId,
+  artifactId,
+  summary,
+  showSummaryMetrics = true,
+}: BacktestResultsProps) {
   const [tab, setTab] = useState<'equity' | 'trades' | 'positions' | 'params'>('equity');
-  const hook = useBacktestResult(taskId ?? null);
+  const artifactMode = artifactId != null;
+  const dataId = artifactMode ? artifactId : (taskId ?? null);
+  const hook = useBacktestResult(dataId, artifactMode ? 'artifact' : 'task');
   const [taskMeta, setTaskMeta] = useState<TaskMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
 
-  const isLegacy = !!result && !taskId;
+  const isLegacy = !!result && dataId == null;
   const m = isLegacy ? result!.metrics : summary;
   const finalEquity = isLegacy
     ? result!.equity_curve[result!.equity_curve.length - 1]?.equity ?? 0
@@ -202,10 +214,15 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
     setTab('equity');
     setTaskMeta(null);
     setMetaError(null);
-  }, [taskId]);
+  }, [dataId, artifactMode]);
 
   useEffect(() => {
-    if (!taskId) return;
+    if (!taskId || artifactMode) {
+      setTaskMeta(null);
+      setMetaLoading(false);
+      setMetaError(null);
+      return;
+    }
     let cancelled = false;
     setMetaLoading(true);
     setMetaError(null);
@@ -226,19 +243,19 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
     return () => {
       cancelled = true;
     };
-  }, [taskId]);
+  }, [taskId, artifactMode]);
 
   useEffect(() => {
-    if (taskId && tab === 'equity') {
+    if (dataId != null && tab === 'equity') {
       hook.loadEquity().catch(() => {});
     }
-    if (taskId && tab === 'trades') {
+    if (dataId != null && tab === 'trades') {
       hook.loadTradesPage(0);
     }
-    if (taskId && tab === 'positions') {
+    if (dataId != null && tab === 'positions') {
       hook.loadPositionsPage(0);
     }
-  }, [taskId, tab]);
+  }, [dataId, tab, artifactMode]);
 
   const equityData = isLegacy
     ? result!.equity_curve.map((d) => ({ date: d.date, equity: d.equity }))
@@ -252,6 +269,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
 
   return (
     <div className="space-y-3">
+      {showSummaryMetrics && (
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-center">
         <div className="bg-gray-50 rounded-lg p-2">
           <div className="text-xs text-gray-500">最终权益</div>
@@ -308,6 +326,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
           </div>
         </div>
       </div>
+      )}
 
       <div className="flex gap-1 text-xs">
         {(
@@ -317,7 +336,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
             { id: 'positions' as const, label: `持仓 (${positionsCount.toLocaleString()})` },
             { id: 'params' as const, label: '回测参数' },
           ] as const
-        ).map((t) => (
+        ).filter((t) => !artifactMode || t.id !== 'params').map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -332,6 +351,17 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
 
       {tab === 'equity' && (
         <>
+          {artifactMode && dataId != null && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void downloadArtifact(dataId, 'equity_curve', { artifact: true })}
+                className="px-2 py-1 rounded border text-xs text-blue-600 hover:bg-blue-50"
+              >
+                下载权益曲线.parquet
+              </button>
+            </div>
+          )}
           {hook.loading === 'equity_curve' && (
             <div className="h-[200px] flex items-center justify-center text-gray-400 text-sm">加载权益曲线…</div>
           )}
@@ -351,7 +381,8 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
               loading={hook.loading === 'trades'}
               onPrev={hook.tradesPrev}
               onNext={hook.tradesNext}
-              taskId={taskId}
+              taskId={dataId as number}
+              artifactMode={artifactMode}
               artifactName="trades"
               fileName="成交"
             />
@@ -375,7 +406,8 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
               loading={hook.loading === 'positions_daily'}
               onPrev={hook.positionsPrev}
               onNext={hook.positionsNext}
-              taskId={taskId}
+              taskId={dataId as number}
+              artifactMode={artifactMode}
               artifactName="positions_daily"
               fileName="持仓"
             />
@@ -386,7 +418,7 @@ export default function BacktestResults({ result, taskId, summary }: BacktestRes
           {!hook.loading && positionsData.length === 0 && (
             <div className="text-center text-gray-400 text-sm py-4">暂无持仓</div>
           )}
-          {positionsData.length > 0 && <PositionsTable positions={positionsData} />}
+          {positionsData.length > 0 && <PositionsTable positions={positionsData} showAllRows={artifactMode} />}
         </>
       )}
       {tab === 'params' && (

@@ -299,7 +299,7 @@ export default function ArtifactDetailPage({ kind }: { kind: 'selection' | 'back
                     </div>
                   </section>
 
-                  <ArtifactDataViewer artifactId={Number(task.id)} resultUri={task.result_uri} />
+                  <ArtifactDataViewer artifactId={Number(task.id)} resultUri={task.result_uri} summary={task.result_summary} />
                 </>
               )}
 
